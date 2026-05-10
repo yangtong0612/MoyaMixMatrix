@@ -1,0 +1,15 @@
+.sixth/
+.DS_Store
+Thumbs.db
+*.log
+
+node_modules/
+dist/
+dist-electron/
+release/
+target/
+build/
+
+.env
+.env.*
+!.env.example
