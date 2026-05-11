@@ -1,12 +1,36 @@
 import clsx from 'clsx';
-import { ChevronDown, FileAudio, FileImage, FileVideo, Grid2X2, ListFilter, Plus, Search } from 'lucide-react';
+import {
+  Box,
+  ChevronDown,
+  Cloud,
+  FileAudio,
+  FileImage,
+  FileText,
+  FileVideo,
+  Folder,
+  Grid2X2,
+  ListFilter,
+  Plus,
+  Search,
+  Sparkles,
+  Upload,
+  UserRound
+} from 'lucide-react';
 import { useEditorStore } from '../editorStore';
 
 interface MaterialPanelProps {
   onImport: () => void;
 }
 
-const materialMenus = ['导入', '素材', '字幕稿', '我的', 'AI 生成', '云素材', '官方素材'];
+const materialMenus = [
+  { label: '导入', icon: Upload, expandable: true },
+  { label: '素材', icon: Folder },
+  { label: '字幕稿', icon: FileText },
+  { label: '我的', icon: UserRound, expandable: true },
+  { label: 'AI 生成', icon: Sparkles, expandable: true },
+  { label: '云素材', icon: Cloud, expandable: true },
+  { label: '官方素材', icon: Box, expandable: true }
+];
 
 export function MaterialPanel({ onImport }: MaterialPanelProps) {
   const materials = useEditorStore((state) => state.materials);
@@ -18,9 +42,12 @@ export function MaterialPanel({ onImport }: MaterialPanelProps) {
     <aside className="editor-panel material-panel">
       <nav className="material-rail">
         {materialMenus.map((item, index) => (
-          <button className={clsName(index === 0)} type="button" key={item}>
-            <span>{item}</span>
-            {index === 0 || index > 2 ? <ChevronDown size={12} /> : null}
+          <button className={clsName(index === 0)} type="button" key={item.label}>
+            <span className="material-rail-icon">
+              <item.icon size={15} />
+            </span>
+            <span className="material-rail-label">{item.label}</span>
+            {item.expandable ? <ChevronDown className="material-rail-caret" size={12} /> : null}
           </button>
         ))}
       </nav>
@@ -72,7 +99,8 @@ export function MaterialPanel({ onImport }: MaterialPanelProps) {
                 }}
               >
                 <div className="material-thumb">
-                  {item.type === 'video' ? <FileVideo size={20} /> : item.type === 'audio' ? <FileAudio size={20} /> : <FileImage size={20} />}
+                  {item.coverUrl ? <img className="material-cover" src={item.coverUrl} alt="" /> : null}
+                  {!item.coverUrl && (item.type === 'video' ? <FileVideo size={20} /> : item.type === 'audio' ? <FileAudio size={20} /> : <FileImage size={20} />)}
                   <span className="material-duration">{formatDuration(item.duration)}</span>
                   <span
                     className="material-add"
