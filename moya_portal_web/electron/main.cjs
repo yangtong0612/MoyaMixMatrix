@@ -1,7 +1,9 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
+const { TextDecoder } = require('node:util');
 const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell } = require('electron');
 const Store = require('electron-store');
 
@@ -130,6 +132,16 @@ function registerIpc() {
     return true;
   });
 
+  ipcMain.handle('file:read-text', async (_event, filePath) => {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) throw new Error('Only files can be read');
+    if (stat.size > 5 * 1024 * 1024) throw new Error('Text file is too large');
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === '.docx') return readDocxText(filePath);
+    if (ext === '.doc') return readDocText(filePath);
+    return decodeTextBuffer(await fs.readFile(filePath));
+  });
+
   ipcMain.handle('editor:create-draft', async (_event, payload = {}) => {
     const drafts = store.get('editor.drafts', []);
     const draft = {
@@ -160,4 +172,104 @@ function registerIpc() {
   });
 
   ipcMain.handle('cloud:list-transfer-tasks', () => store.get('cloud.transfers', []));
+}
+
+function decodeTextBuffer(buffer) {
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.toString('utf8', 3);
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.toString('utf16le', 2);
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buffer.subarray(2));
+  }
+  const utf8Text = buffer.toString('utf8');
+  const replacementCount = (utf8Text.match(/\uFFFD/g) || []).length;
+  if (replacementCount === 0 || replacementCount / Math.max(utf8Text.length, 1) < 0.01) {
+    return utf8Text;
+  }
+  try {
+    return new TextDecoder('gb18030').decode(buffer);
+  } catch {
+    return utf8Text;
+  }
+}
+
+function execPowerShell(script) {
+  return new Promise((resolve, reject) => {
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      { windowsHide: true, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(cleanPowerShellError(stderr || stdout || error.message)));
+          return;
+        }
+        resolve(stdout);
+      }
+    );
+  });
+}
+
+function cleanPowerShellError(message) {
+  const text = String(message || '').trim();
+  if (!text) return 'PowerShell read failed';
+  return text
+    .replace(/#< CLIXML[\s\S]*?<S S="Error">/g, '')
+    .replace(/<\/S>[\s\S]*$/g, '')
+    .replace(/_x000D__x000A_/g, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .trim() || 'PowerShell read failed';
+}
+
+async function readDocxText(filePath) {
+  const safePath = filePath.replace(/'/g, "''");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.Web
+$stream = [System.IO.File]::Open('${safePath}', [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+$zip = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+try {
+  $entry = $zip.GetEntry('word/document.xml')
+  if ($null -eq $entry) { $entry = $zip.GetEntry('word\\document.xml') }
+  if ($null -eq $entry) { throw 'word/document.xml not found' }
+  $reader = New-Object System.IO.StreamReader($entry.Open(), [System.Text.Encoding]::UTF8)
+  try { $xml = $reader.ReadToEnd() } finally { $reader.Dispose() }
+  $xml = $xml -replace '</w:p>', "\`n"
+  $xml = $xml -replace '</w:tr>', "\`n"
+  $text = [regex]::Replace($xml, '<[^>]+>', '')
+  [System.Web.HttpUtility]::HtmlDecode($text)
+} finally {
+  $zip.Dispose()
+  $stream.Dispose()
+}
+`;
+  return execPowerShell(script);
+}
+
+async function readDocText(filePath) {
+  const safePath = filePath.replace(/'/g, "''");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$word = New-Object -ComObject Word.Application
+$word.Visible = $false
+try {
+  $doc = $word.Documents.Open('${safePath}', $false, $true)
+  try { $doc.Content.Text } finally { $doc.Close($false) }
+} finally {
+  $word.Quit()
+}
+`;
+  return execPowerShell(script);
 }

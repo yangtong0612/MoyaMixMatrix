@@ -38,6 +38,7 @@ declare global {
       file: {
         exists(filePath: string): Promise<boolean>;
         reveal(filePath: string): Promise<boolean>;
+        readText(filePath: string): Promise<string>;
       };
       editor: {
         createDraft(payload?: { name?: string }): Promise<EditorDraft>;

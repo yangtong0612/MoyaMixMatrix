@@ -17,7 +17,8 @@ contextBridge.exposeInMainWorld('surgicol', {
   },
   file: {
     exists: (filePath) => invoke('file:exists', filePath),
-    reveal: (filePath) => invoke('file:reveal', filePath)
+    reveal: (filePath) => invoke('file:reveal', filePath),
+    readText: (filePath) => invoke('file:read-text', filePath)
   },
   editor: {
     createDraft: (payload) => invoke('editor:create-draft', payload),
