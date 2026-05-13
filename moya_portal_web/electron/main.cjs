@@ -1,4 +1,7 @@
 const path = require('node:path');
+const http = require('node:http');
+const https = require('node:https');
+const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const { execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
@@ -22,6 +25,7 @@ protocol.registerSchemesAsPrivileged([
 
 const store = new Store({ name: 'moya-matrix' });
 const isDev = !app.isPackaged;
+const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://localhost:8081/api').replace(/\/+$/, '');
 let mainWindow = null;
 
 function createWindow() {
@@ -172,6 +176,100 @@ function registerIpc() {
   });
 
   ipcMain.handle('cloud:list-transfer-tasks', () => store.get('cloud.transfers', []));
+
+  ipcMain.handle('media:upload-to-oss', async (_event, filePath, options = {}) => {
+    return uploadLocalFileToOss(filePath, options);
+  });
+}
+
+async function uploadLocalFileToOss(filePath, options = {}) {
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile()) throw new Error('Only files can be uploaded');
+  const fileName = path.basename(filePath);
+  const contentType = options.contentType || contentTypeForFile(filePath);
+  const ticket = await createUploadTicket({
+    fileName,
+    contentType,
+    size: stat.size,
+    folder: options.folder || 'fission-media'
+  });
+  await putFileToSignedUrl(ticket.uploadUrl, filePath, {
+    contentType: ticket.contentType || contentType,
+    size: stat.size
+  });
+  return {
+    ...ticket,
+    name: fileName,
+    size: stat.size,
+    localPath: filePath
+  };
+}
+
+async function createUploadTicket(payload) {
+  const response = await fetch(`${apiBaseUrl}/storage/upload-ticket`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body?.success) {
+    throw new Error(body?.message || body?.error || `Create upload ticket failed: HTTP ${response.status}`);
+  }
+  return body.data;
+}
+
+function putFileToSignedUrl(uploadUrl, filePath, options) {
+  return new Promise((resolve, reject) => {
+    const targetUrl = new URL(uploadUrl);
+    const client = targetUrl.protocol === 'https:' ? https : http;
+    const request = client.request(
+      targetUrl,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': options.contentType,
+          'Content-Length': options.size
+        }
+      },
+      (response) => {
+        let responseText = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          responseText += chunk;
+        });
+        response.on('end', () => {
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            resolve(true);
+            return;
+          }
+          reject(new Error(`OSS upload failed: HTTP ${response.statusCode} ${responseText}`.trim()));
+        });
+      }
+    );
+    request.on('error', reject);
+    fsSync.createReadStream(filePath).on('error', reject).pipe(request);
+  });
+}
+
+function contentTypeForFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const types = {
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.avi': 'video/x-msvideo',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.aac': 'audio/aac',
+    '.flac': 'audio/flac',
+    '.m4a': 'audio/mp4',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp'
+  };
+  return types[ext] || 'application/octet-stream';
 }
 
 function decodeTextBuffer(buffer) {

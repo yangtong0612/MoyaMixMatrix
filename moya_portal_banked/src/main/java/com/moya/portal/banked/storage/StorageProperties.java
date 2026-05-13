@@ -22,6 +22,7 @@ public class StorageProperties {
 		private String accessKeyId = "";
 		private String accessKeySecret = "";
 		private String rootPrefix = "moya-drive";
+		private String outputPrefix = "moya-drive/fission/outputs";
 
 		public boolean isEnabled() {
 			return enabled;
@@ -69,6 +70,14 @@ public class StorageProperties {
 
 		public void setRootPrefix(String rootPrefix) {
 			this.rootPrefix = rootPrefix;
+		}
+
+		public String getOutputPrefix() {
+			return outputPrefix;
+		}
+
+		public void setOutputPrefix(String outputPrefix) {
+			this.outputPrefix = outputPrefix;
 		}
 	}
 }

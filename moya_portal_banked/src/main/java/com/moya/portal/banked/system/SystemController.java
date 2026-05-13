@@ -15,15 +15,18 @@ import org.springframework.web.bind.annotation.RestController;
 public class SystemController {
 
 	private final String applicationName;
+	private final boolean databaseEnabled;
 	private final StorageService storageService;
 	private final StorageProperties storageProperties;
 
 	public SystemController(
 			@Value("${spring.application.name}") String applicationName,
+			@Value("${moya.database.enabled:true}") boolean databaseEnabled,
 			StorageService storageService,
 			StorageProperties storageProperties
 	) {
 		this.applicationName = applicationName;
+		this.databaseEnabled = databaseEnabled;
 		this.storageService = storageService;
 		this.storageProperties = storageProperties;
 	}
@@ -33,6 +36,7 @@ public class SystemController {
 		return ApiResponse.ok(Map.of(
 				"application", applicationName,
 				"status", "UP",
+				"databaseEnabled", databaseEnabled,
 				"storageProvider", storageService.provider(),
 				"storageEnabled", storageService.enabled(),
 				"bucket", storageProperties.getOss().getBucket()

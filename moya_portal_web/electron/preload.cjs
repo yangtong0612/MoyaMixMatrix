@@ -27,5 +27,8 @@ contextBridge.exposeInMainWorld('surgicol', {
   cloud: {
     addTransferTask: (task) => invoke('cloud:add-transfer-task', task),
     listTransferTasks: () => invoke('cloud:list-transfer-tasks')
+  },
+  media: {
+    uploadToOss: (filePath, options) => invoke('media:upload-to-oss', filePath, options)
   }
 });

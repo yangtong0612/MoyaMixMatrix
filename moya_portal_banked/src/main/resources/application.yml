@@ -18,6 +18,12 @@ server:
   port: ${MOYA_SERVER_PORT:8080}
 
 moya:
+  aliyun:
+    ice:
+      enabled: ${MOYA_ALIYUN_ICE_ENABLED:false}
+      endpoint: ${MOYA_ALIYUN_ICE_ENDPOINT:ice.cn-beijing.aliyuncs.com}
+      access-key-id: ${MOYA_ALIYUN_ACCESS_KEY_ID:${MOYA_OSS_ACCESS_KEY_ID:}}
+      access-key-secret: ${MOYA_ALIYUN_ACCESS_KEY_SECRET:${MOYA_OSS_ACCESS_KEY_SECRET:}}
   storage:
     oss:
       enabled: ${MOYA_OSS_ENABLED:false}
@@ -26,6 +32,7 @@ moya:
       access-key-id: ${MOYA_OSS_ACCESS_KEY_ID:}
       access-key-secret: ${MOYA_OSS_ACCESS_KEY_SECRET:}
       root-prefix: ${MOYA_OSS_ROOT_PREFIX:moya-drive}
+      output-prefix: ${MOYA_OSS_OUTPUT_PREFIX:moya-drive/fission/outputs}
 
 springdoc:
   swagger-ui:

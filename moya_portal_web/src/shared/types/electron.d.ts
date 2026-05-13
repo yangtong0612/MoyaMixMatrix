@@ -20,6 +20,18 @@ export interface EditorDraft {
   materials: unknown[];
 }
 
+export interface OssUploadResult {
+  uploadUrl: string;
+  bucket: string;
+  objectKey: string;
+  mediaUrl: string;
+  contentType: string;
+  expiresAt: string;
+  name: string;
+  size: number;
+  localPath: string;
+}
+
 declare global {
   interface Window {
     surgicol: {
@@ -47,6 +59,9 @@ declare global {
       cloud: {
         addTransferTask(task: Partial<TransferTask>): Promise<TransferTask>;
         listTransferTasks(): Promise<TransferTask[]>;
+      };
+      media: {
+        uploadToOss(filePath: string, options?: { folder?: string; contentType?: string }): Promise<OssUploadResult>;
       };
     };
   }
