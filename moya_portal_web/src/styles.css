@@ -1100,6 +1100,7 @@ progress::-webkit-progress-value {
 }
 
 .editor-menu {
+  position: relative;
   gap: 10px;
   min-width: 0;
 }
@@ -1113,6 +1114,39 @@ progress::-webkit-progress-value {
   color: #f1f5f9;
   font-size: 12px;
   font-weight: 700;
+}
+
+.editor-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  gap: 4px;
+  min-width: 188px;
+  padding: 8px;
+  border: 1px solid #343436;
+  border-radius: 8px;
+  background: #1b1c1f;
+  box-shadow: 0 18px 40px rgb(0 0 0 / 34%);
+}
+
+.editor-menu-panel button {
+  justify-content: flex-start;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-color: #2d2f34;
+  background: #202227;
+  color: #f4f4f5;
+  font-size: 12px;
+}
+
+.editor-menu-panel-title,
+.editor-menu-empty {
+  padding: 4px 6px 2px;
+  color: #a1a1aa;
+  font-size: 11px;
 }
 
 .save-status {
@@ -1435,27 +1469,111 @@ progress::-webkit-progress-value {
 
 .finished-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.finished-group-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.finished-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.finished-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.finished-group-toggle > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  text-align: left;
+}
+
+.finished-group-toggle svg {
+  flex: 0 0 auto;
+  color: #c7ced9;
 }
 
 .finished-card {
   overflow: hidden;
+  border: 1px solid #2c3138;
+  border-radius: 8px;
+  background: #17191c;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
 }
 
 .finished-thumb {
   position: relative;
-  display: grid;
-  place-items: center;
   aspect-ratio: 16 / 9;
-  color: #8ea2ff;
   background:
     linear-gradient(135deg, rgb(142 162 255 / 18%), transparent 44%),
     #151515;
 }
 
+.finished-thumb img,
+.finished-thumb video,
+.finished-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.finished-thumb img,
+.finished-thumb video {
+  display: block;
+  object-fit: cover;
+}
+
+.finished-thumb-placeholder {
+  display: grid;
+  place-items: center;
+  color: #8ea2ff;
+}
+
+.finished-thumb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0%, transparent 54%, rgb(0 0 0 / 56%) 100%);
+  pointer-events: none;
+}
+
+.finished-thumb-play {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 999px;
+  background: rgb(10 12 16 / 72%);
+  color: #f4f4f5;
+  backdrop-filter: blur(6px);
+}
+
+.finished-thumb-play:hover {
+  background: rgb(142 162 255 / 24%);
+}
+
 .finished-thumb span {
   position: absolute;
+  z-index: 1;
   right: 9px;
   bottom: 9px;
   height: 22px;
@@ -1469,8 +1587,8 @@ progress::-webkit-progress-value {
 
 .finished-meta {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: 10px;
+  padding: 14px 14px 10px;
 }
 
 .finished-meta div {
@@ -1489,10 +1607,26 @@ progress::-webkit-progress-value {
   line-height: 22px;
 }
 
+.finished-meta small {
+  color: #a1a1aa;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .finished-actions {
   display: flex;
   gap: 8px;
-  padding: 0 12px 12px;
+  padding: 0 14px 14px;
+}
+
+.finished-actions button {
+  flex: 1;
+}
+
+.theme-light .finished-thumb-play {
+  border-color: rgb(15 23 42 / 8%);
+  background: rgb(255 255 255 / 82%);
+  color: #111827;
 }
 
 .channel-list article {
@@ -3278,6 +3412,33 @@ progress::-webkit-progress-value {
   color: #cbd5e1;
   font-size: 13px;
   line-height: 1.7;
+}
+
+.replace-finished-dialog {
+  width: min(460px, calc(100vw - 80px));
+  border-color: #3a4658;
+  background:
+    linear-gradient(180deg, rgb(142 162 255 / 10%), transparent 30%),
+    linear-gradient(180deg, rgb(255 255 255 / 3%), transparent 50%),
+    #171a1f;
+}
+
+.replace-finished-dialog header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.replace-finished-dialog header span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.replace-finished-dialog p strong {
+  color: #f8fafc;
+}
+
+.replace-finished-dialog footer button {
+  min-width: 124px;
 }
 
 .danger-action {

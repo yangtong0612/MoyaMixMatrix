@@ -30,7 +30,8 @@ import {
   Type,
   Upload,
   UserRound,
-  Volume2
+  Volume2,
+  X
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useEditorStore, type MaterialItem } from './editorStore';
@@ -39,17 +40,22 @@ import { PreviewPanel } from './components/PreviewPanel';
 import { TimelinePanel } from './components/TimelinePanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { toMediaUrl } from './mediaUrl';
-import { buildAliyunMixRequest, createAliyunOutputMediaUrl, getAliyunMixJobStatus, getAliyunStorageConfig, submitAliyunMix } from './aliyunMix';
+import { buildAliyunMixRequest, createAliyunOutputMediaUrl, getAliyunMixJobStatus, getAliyunStorageConfig, getProtectedMediaAccessUrl, submitAliyunMix } from './aliyunMix';
 
 export function EditorPage() {
   const editor = useEditorStore();
   const [lastSavedAt, setLastSavedAt] = useState<string>('-');
   const [activeWorkflow, setActiveWorkflow] = useState<EditorWorkflow>('materials');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [workspaceBootstrapped, setWorkspaceBootstrapped] = useState(false);
+  const [fissionDraftVersion, setFissionDraftVersion] = useState(0);
+  const [finishedLibraryVersion, setFinishedLibraryVersion] = useState(0);
+  const [draftLibrary, setDraftLibrary] = useState<StoredFissionDraft[]>([]);
+  const fissionSnapshotRef = useRef<FissionWorkspaceDraft | null>(null);
+  const activeFissionDraftIdRef = useRef('');
 
   useEffect(() => {
-    window.surgicol.editor.listDrafts().then((drafts) => {
-      if (drafts[0]) editor.setDraftName(drafts[0].name);
-    });
+    void bootstrapDraftState();
   }, []);
 
   async function importLocalFiles() {
@@ -72,15 +78,164 @@ export function EditorPage() {
   }
 
   async function saveDraft() {
-    await window.surgicol.editor.createDraft({ name: editor.draftName });
+    if (activeWorkflow === 'fission') {
+      await saveCurrentFissionDraft('manual');
+    } else {
+      await window.surgicol.editor.createDraft({ name: editor.draftName });
+    }
     setLastSavedAt(new Date().toLocaleTimeString());
   }
+
+  async function bootstrapDraftState() {
+    const drafts = await window.surgicol.store.get<StoredFissionDraft[]>(FISSION_DRAFT_LIBRARY_KEY).catch(() => []);
+    const activeDraftId = await window.surgicol.store.get<string>(ACTIVE_FISSION_DRAFT_ID_KEY).catch(() => '');
+    const currentWorkspaceSnapshot = await window.surgicol.store.get<FissionWorkspaceDraft>(FISSION_WORKSPACE_DRAFT_KEY).catch(() => null);
+    const draftList = Array.isArray(drafts) ? drafts : [];
+    setDraftLibrary(draftList);
+    const activeDraft = draftList.find((draft) => draft.id === activeDraftId) || draftList[0];
+    if (activeDraft?.name) {
+      editor.setDraftName(activeDraft.name);
+      activeFissionDraftIdRef.current = activeDraft.id;
+      if (currentWorkspaceSnapshot) {
+        fissionSnapshotRef.current = currentWorkspaceSnapshot;
+        await syncActiveFissionDraftSnapshot(currentWorkspaceSnapshot, activeDraft.name, true);
+      } else if (activeDraft.snapshot) {
+        fissionSnapshotRef.current = activeDraft.snapshot;
+        await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, activeDraft.snapshot);
+      }
+    } else {
+      if (currentWorkspaceSnapshot) {
+        fissionSnapshotRef.current = currentWorkspaceSnapshot;
+        await syncActiveFissionDraftSnapshot(currentWorkspaceSnapshot, editor.draftName, true);
+      }
+      const latestDrafts = await window.surgicol.editor.listDrafts().catch(() => []);
+      if (latestDrafts[0]) editor.setDraftName(latestDrafts[0].name);
+    }
+    setWorkspaceBootstrapped(true);
+  }
+
+  async function persistFissionDraftLibrary(nextDrafts: StoredFissionDraft[], activeDraftId?: string) {
+    setDraftLibrary(nextDrafts);
+    await window.surgicol.store.set(FISSION_DRAFT_LIBRARY_KEY, nextDrafts);
+    if (activeDraftId) {
+      activeFissionDraftIdRef.current = activeDraftId;
+      await window.surgicol.store.set(ACTIVE_FISSION_DRAFT_ID_KEY, activeDraftId);
+    }
+  }
+
+  async function syncActiveFissionDraftSnapshot(snapshot: FissionWorkspaceDraft, preferredName?: string, silent = false) {
+    const now = new Date().toISOString();
+    const draftName = (preferredName || editor.draftName).trim() || `裂变草稿 ${formatDraftTimestamp(new Date())}`;
+    const existingDrafts = await window.surgicol.store.get<StoredFissionDraft[]>(FISSION_DRAFT_LIBRARY_KEY).catch(() => []);
+    const draftList = Array.isArray(existingDrafts) ? existingDrafts : [];
+    const draftId = activeFissionDraftIdRef.current || crypto.randomUUID();
+    const existingDraft = draftList.find((draft) => draft.id === draftId);
+    const nextDraft: StoredFissionDraft = {
+      id: draftId,
+      name: draftName,
+      createdAt: existingDraft?.createdAt || now,
+      updatedAt: now,
+      workflow: 'fission',
+      snapshot
+    };
+    const nextDrafts = [nextDraft, ...draftList.filter((draft) => draft.id !== draftId)].slice(0, 20);
+    await persistFissionDraftLibrary(nextDrafts, draftId);
+    await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, snapshot);
+    if (!silent) {
+      setLastSavedAt(new Date().toLocaleTimeString());
+    }
+  }
+
+  async function saveCurrentFissionDraft(mode: 'manual' | 'auto' | 'switch' = 'manual') {
+    if (!fissionSnapshotRef.current) return;
+    await syncActiveFissionDraftSnapshot(fissionSnapshotRef.current, editor.draftName, mode === 'auto');
+  }
+
+  async function createNewFissionWorkspace() {
+    if (fissionSnapshotRef.current) {
+      await saveCurrentFissionDraft('switch');
+    }
+    const now = new Date();
+    const draftId = crypto.randomUUID();
+    const draftName = `裂变工作 ${formatDraftTimestamp(now)}`;
+    const snapshot = createEmptyFissionWorkspaceDraft();
+    editor.setDraftName(draftName);
+    await persistFissionDraftLibrary([
+      {
+        id: draftId,
+        name: draftName,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        workflow: 'fission' as const,
+        snapshot
+      },
+      ...draftLibrary.filter((draft) => draft.id !== draftId)
+    ].slice(0, 20), draftId);
+    await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, snapshot);
+    fissionSnapshotRef.current = snapshot;
+    setFissionDraftVersion((value) => value + 1);
+    setActiveWorkflow('fission');
+    setMenuOpen(false);
+    setLastSavedAt(new Date().toLocaleTimeString());
+  }
+
+  async function restoreFissionDraft(draftId: string) {
+    if (fissionSnapshotRef.current) {
+      await saveCurrentFissionDraft('switch');
+    }
+    const targetDraft = draftLibrary.find((draft) => draft.id === draftId);
+    if (!targetDraft) return;
+    editor.setDraftName(targetDraft.name);
+    activeFissionDraftIdRef.current = targetDraft.id;
+    await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, targetDraft.snapshot);
+    await window.surgicol.store.set(ACTIVE_FISSION_DRAFT_ID_KEY, targetDraft.id);
+    fissionSnapshotRef.current = targetDraft.snapshot;
+    setFissionDraftVersion((value) => value + 1);
+    setActiveWorkflow('fission');
+    setMenuOpen(false);
+  }
+
+  useEffect(() => {
+    if (!workspaceBootstrapped) return;
+    const handleBeforeUnload = () => {
+      if (activeWorkflow === 'fission' && fissionSnapshotRef.current) {
+        void saveCurrentFissionDraft('auto');
+      }
+    };
+    const handleOffline = () => {
+      if (activeWorkflow === 'fission' && fissionSnapshotRef.current) {
+        void saveCurrentFissionDraft('auto');
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [activeWorkflow, workspaceBootstrapped]);
 
   return (
     <section className="page editor-page">
       <header className="editor-topbar">
         <div className="editor-menu">
-          <button className="editor-menu-button" type="button">菜单</button>
+          <button className="editor-menu-button" type="button" onClick={() => setMenuOpen((open) => !open)}>菜单</button>
+          {menuOpen ? (
+            <div className="editor-menu-panel">
+              <button type="button" onClick={() => void createNewFissionWorkspace()}>新建裂变工作</button>
+              <button type="button" onClick={() => void saveCurrentFissionDraft('manual')} disabled={activeWorkflow !== 'fission'}>保存当前草稿</button>
+              <div className="editor-menu-panel-title">最近草稿</div>
+              {draftLibrary.length === 0 ? (
+                <span className="editor-menu-empty">还没有裂变草稿</span>
+              ) : (
+                draftLibrary.slice(0, 5).map((draft) => (
+                  <button type="button" key={draft.id} onClick={() => void restoreFissionDraft(draft.id)}>
+                    {draft.name}
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
           <span className="save-status">
             <CheckCircle2 size={14} />
             {lastSavedAt === '-' ? '自动保存本地' : `已保存 ${lastSavedAt}`}
@@ -137,9 +292,29 @@ export function EditorPage() {
           </div>
         </div>
       ) : activeWorkflow === 'fission' ? (
-        <FissionWorkspace />
+        workspaceBootstrapped ? (
+          <FissionWorkspace
+            key={`fission-${fissionDraftVersion}`}
+            projectName={editor.draftName}
+            projectId={activeFissionDraftIdRef.current}
+            onSavedToFinishedLibrary={(savedCount) => {
+              if (savedCount > 0) {
+                setFinishedLibraryVersion((value) => value + 1);
+                setActiveWorkflow('finished');
+              }
+            }}
+            onDraftStateChange={(snapshot) => {
+              fissionSnapshotRef.current = snapshot;
+            }}
+            onDraftAutoSaved={(snapshot) => {
+              fissionSnapshotRef.current = snapshot;
+              setLastSavedAt(new Date().toLocaleTimeString());
+              void syncActiveFissionDraftSnapshot(snapshot, editor.draftName, true);
+            }}
+          />
+        ) : null
       ) : activeWorkflow === 'finished' ? (
-        <FinishedVideosWorkspace />
+        <FinishedVideosWorkspace refreshToken={finishedLibraryVersion} />
       ) : (
         <MatrixPublishWorkspace />
       )}
@@ -280,6 +455,15 @@ interface FissionWorkspaceDraft {
   soundSettings?: FissionSoundSettings;
 }
 
+interface StoredFissionDraft {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  workflow: 'fission';
+  snapshot: FissionWorkspaceDraft;
+}
+
 type FissionPreviewItem = {
   id: string;
   groupId: string;
@@ -349,6 +533,8 @@ const defaultFissionGroups: FissionShotGroup[] = [
 ];
 
 const FISSION_WORKSPACE_DRAFT_KEY = 'editor:fission-workspace-draft';
+const FISSION_DRAFT_LIBRARY_KEY = 'editor:fission-draft-library';
+const ACTIVE_FISSION_DRAFT_ID_KEY = 'editor:fission-active-draft-id';
 const DEFAULT_MIX_BATCH_COUNT = 10;
 
 function readFissionWorkspaceDraft(value: unknown): FissionWorkspaceDraft | null {
@@ -365,6 +551,19 @@ function readFissionWorkspaceDraft(value: unknown): FissionWorkspaceDraft | null
       ? draft.activeSettingsTab
       : undefined,
     soundSettings: draft.soundSettings
+  };
+}
+
+function createEmptyFissionWorkspaceDraft(): FissionWorkspaceDraft {
+  return {
+    groups: defaultFissionGroups,
+    audioItems: [],
+    activeGroupId: defaultFissionGroups[0]?.id,
+    expandedIds: defaultFissionGroups[0]?.id ? [defaultFissionGroups[0].id] : [],
+    comboMode: 'single',
+    generatedVideos: [],
+    activeSettingsTab: 'group',
+    soundSettings: defaultFissionSoundSettings
   };
 }
 
@@ -386,13 +585,20 @@ interface FinishedVideoItem {
   path?: string;
   jobId?: string;
   savedAt?: string;
+  draftName?: string;
+  batchName?: string;
+  coverPath?: string;
 }
 
-const defaultFinishedVideos: FinishedVideoItem[] = [
-  { id: 'sample-1', name: '新品种草-裂变版 01', duration: '00:23', recommend: 'A', compliance: '高', difference: '82%' },
-  { id: 'sample-2', name: '新品种草-裂变版 02', duration: '00:27', recommend: 'B+', compliance: '高', difference: '76%' },
-  { id: 'sample-3', name: '门店探访-裂变版 03', duration: '00:31', recommend: 'A-', compliance: '中', difference: '88%' }
-];
+interface FinishedVideoGroup {
+  id: string;
+  draftId?: string;
+  draftName: string;
+  savedAt: string;
+  updatedAt: string;
+  videoCount: number;
+  videos: FinishedVideoItem[];
+}
 
 const FINISHED_VIDEOS_KEY = 'editor:finished-videos';
 
@@ -402,7 +608,13 @@ const publishChannels = [
   { name: '小红书', state: '已授权', plan: '明天 11:00' }
 ];
 
-function FissionWorkspace() {
+function FissionWorkspace(props: {
+  projectId: string;
+  projectName: string;
+  onSavedToFinishedLibrary: (savedCount: number) => void;
+  onDraftStateChange: (snapshot: FissionWorkspaceDraft) => void;
+  onDraftAutoSaved: (snapshot: FissionWorkspaceDraft) => void;
+}) {
   const draftLoadedRef = useRef(false);
   const generationTimerRef = useRef<number>();
   const [groups, setGroups] = useState<FissionShotGroup[]>(defaultFissionGroups);
@@ -427,6 +639,12 @@ function FissionWorkspace() {
 END：4秒，收束行动指令和品牌露出`);
   const [audioItems, setAudioItems] = useState<FissionAudioItem[]>([]);
   const [clearGroupsConfirmOpen, setClearGroupsConfirmOpen] = useState(false);
+  const [replaceFinishedConfirm, setReplaceFinishedConfirm] = useState<{
+    draftName: string;
+    nextVideos: FinishedVideoItem[];
+    nextGroup: FinishedVideoGroup;
+    existingGroups: FinishedVideoGroup[];
+  } | null>(null);
   const [previewMedia, setPreviewMedia] = useState<{ type: 'video' | 'audio'; name: string; path?: string } | null>(null);
   const [selectedPreviewId, setSelectedPreviewId] = useState('');
   const strategyCardsRef = useRef<HTMLDivElement>(null);
@@ -482,21 +700,25 @@ END：4秒，收束行动指令和品牌露出`);
 
   useEffect(() => {
     if (!draftLoadedRef.current) return;
+    const snapshot = {
+      groups,
+      audioItems,
+      activeGroupId,
+      expandedIds,
+      comboMode,
+      generatedVideos,
+      activeSettingsTab,
+      soundSettings
+    } satisfies FissionWorkspaceDraft;
+    props.onDraftStateChange(snapshot);
     const saveTimer = window.setTimeout(() => {
-      void window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, {
-        groups,
-        audioItems,
-        activeGroupId,
-        expandedIds,
-        comboMode,
-        generatedVideos,
-        activeSettingsTab,
-        soundSettings
+      void window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, snapshot).then(() => {
+        props.onDraftAutoSaved(snapshot);
       });
     }, 250);
 
     return () => window.clearTimeout(saveTimer);
-  }, [activeGroupId, activeSettingsTab, audioItems, comboMode, expandedIds, generatedVideos, groups, soundSettings]);
+  }, [activeGroupId, activeSettingsTab, audioItems, comboMode, expandedIds, generatedVideos, groups, soundSettings, props]);
 
   useEffect(() => {
     return () => {
@@ -588,10 +810,23 @@ END：4秒，收束行动指令和品牌露出`);
     setPreviewMedia({ type: 'video', name: item.name, path: previewPath(item) || getFallbackPreviewPath() });
   }
 
-  function previewGeneratedVideoItem(item?: GeneratedFissionVideo) {
+  async function previewGeneratedVideoItem(item?: GeneratedFissionVideo) {
     if (!item) return;
     setSelectedPreviewId(item.id);
-    setPreviewMedia({ type: 'video', name: item.name, path: playableGeneratedPath(item) });
+    const rawPath = playableGeneratedPath(item);
+    if (!rawPath) {
+      setPreviewMedia({ type: 'video', name: item.name, path: undefined });
+      return;
+    }
+    try {
+      const previewPath = shouldRequestProtectedPreview(rawPath)
+        ? (await getProtectedMediaAccessUrl(rawPath)).mediaUrl
+        : rawPath;
+      setPreviewMedia({ type: 'video', name: item.name, path: previewPath });
+    } catch (error) {
+      setGenerationError(error instanceof Error ? error.message : '获取视频预览地址失败');
+      setPreviewMedia({ type: 'video', name: item.name, path: rawPath });
+    }
   }
 
   function resetGeneratedResultState() {
@@ -610,16 +845,23 @@ END：4秒，收束行动指令和品牌露出`);
     setSelectedGeneratedIds(generatedVideos.map((video) => video.id));
   }
 
+  async function persistFinishedVideoGroup(nextGroup: FinishedVideoGroup, existingGroups: FinishedVideoGroup[], replaced: boolean) {
+    const nextGroups = [nextGroup, ...existingGroups.filter((group) => group.id !== nextGroup.id)];
+    await window.surgicol.store.set(FINISHED_VIDEOS_KEY, nextGroups);
+    setUploadNotice(replaced ? `已替换“${nextGroup.draftName}”成片组，共 ${nextGroup.videos.length} 个视频。` : `已保存“${nextGroup.draftName}”成片组，共 ${nextGroup.videos.length} 个视频。`);
+    props.onSavedToFinishedLibrary(nextGroup.videos.length);
+  }
+
   async function saveGeneratedVideosToFinishedLibrary() {
     if (generatedVideos.length === 0) return;
     const selectedSet = new Set(selectedGeneratedIds);
     const videosToSave = generatedVideos.filter((video) => selectedSet.size === 0 || selectedSet.has(video.id));
     if (videosToSave.length === 0) return;
-    const storedVideos = await window.surgicol.store.get<FinishedVideoItem[]>(FINISHED_VIDEOS_KEY).catch(() => []);
-    const existing = Array.isArray(storedVideos) ? storedVideos : [];
-    const existingIds = new Set(existing.map((video) => video.id));
+    const storedLibrary = await window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY).catch(() => []);
+    const existingGroups = readFinishedVideoGroups(storedLibrary);
+    const draftName = props.projectName.trim() || '未命名裂变工作';
+    const existingGroup = existingGroups.find((group) => sameFinishedGroup(group, props.projectId, draftName));
     const nextVideos = videosToSave
-      .filter((video) => !existingIds.has(video.id))
       .map((video, index) => ({
         id: video.id,
         name: video.name,
@@ -629,10 +871,31 @@ END：4秒，收束行动指令和品牌露出`);
         difference: `${Math.max(68, 92 - index * 3)}%`,
         path: video.path,
         jobId: video.jobId,
-        savedAt: new Date().toISOString()
+        savedAt: new Date().toISOString(),
+        draftName,
+        batchName: `${draftName} · 第 ${video.label} 条`,
+        coverPath: video.coverPath || video.groupDetails?.find((detail) => detail.coverPath)?.coverPath
       }));
-    await window.surgicol.store.set(FINISHED_VIDEOS_KEY, [...nextVideos, ...existing]);
-    setUploadNotice(`已保存 ${nextVideos.length} 个视频到成片库`);
+    const now = new Date().toISOString();
+    const nextGroup: FinishedVideoGroup = {
+      id: existingGroup?.id || props.projectId || crypto.randomUUID(),
+      draftId: props.projectId || existingGroup?.draftId,
+      draftName,
+      savedAt: existingGroup?.savedAt || now,
+      updatedAt: now,
+      videoCount: nextVideos.length,
+      videos: nextVideos
+    };
+    if (existingGroup) {
+      setReplaceFinishedConfirm({
+        draftName,
+        nextVideos,
+        nextGroup,
+        existingGroups
+      });
+      return;
+    }
+    await persistFinishedVideoGroup(nextGroup, existingGroups, false);
   }
 
   function deleteSelectedGeneratedVideos() {
@@ -1427,7 +1690,7 @@ END：4秒，收束行动指令和品牌露出`);
       <section className="fission-column fission-right">
         <header className="fission-section-title">
           <strong>脚本策略概览</strong>
-          <button type="button" onClick={() => previewGeneratedVideoItem(selectedPreviewItem)} disabled={!selectedPreviewItem}>预览视频</button>
+          <button type="button" onClick={() => void previewGeneratedVideoItem(selectedPreviewItem)} disabled={!selectedPreviewItem}>预览视频</button>
         </header>
         <div className="strategy-summary">
           <span>可生成脚本: 1</span>
@@ -1514,9 +1777,9 @@ END：4秒，收束行动指令和品牌露出`);
                           toggleGeneratedSelection(video.id);
                           setSelectedPreviewId(video.id);
                         }}
-                        onDoubleClick={() => previewGeneratedVideoItem(video)}
+                        onDoubleClick={() => void previewGeneratedVideoItem(video)}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter') previewGeneratedVideoItem(video);
+                          if (event.key === 'Enter') void previewGeneratedVideoItem(video);
                           if (event.key === ' ') {
                             event.preventDefault();
                             toggleGeneratedSelection(video.id);
@@ -1543,7 +1806,7 @@ END：4秒，收束行动指令和品牌露出`);
                           title="预览视频"
                           onClick={(event) => {
                             event.stopPropagation();
-                            previewGeneratedVideoItem(video);
+                            void previewGeneratedVideoItem(video);
                           }}
                         >
                           <Play size={13} />
@@ -1623,6 +1886,41 @@ END：4秒，收束行动指令和品牌露出`);
             <footer>
               <button type="button" onClick={() => setClearGroupsConfirmOpen(false)}>取消</button>
               <button className="danger-action" type="button" onClick={clearAllGroups}>确认删除</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {replaceFinishedConfirm ? (
+        <div className="script-import-backdrop">
+          <section className="confirm-dialog replace-finished-dialog">
+            <header>
+              <div>
+                <strong>替换成片归档</strong>
+                <span>当前裂变工作已存在一组成片结果</span>
+              </div>
+              <button type="button" onClick={() => setReplaceFinishedConfirm(null)}>关闭</button>
+            </header>
+            <p>
+              <strong>{replaceFinishedConfirm.draftName}</strong>
+              已经保存过 {replaceFinishedConfirm.nextVideos.length} 个混剪视频。确认后会用本次结果替换当前归档中的同名成片组。
+            </p>
+            <footer>
+              <button type="button" onClick={() => {
+                setReplaceFinishedConfirm(null);
+                setUploadNotice(`已取消覆盖“${replaceFinishedConfirm.draftName}”原有成片组。`);
+              }}>保留原归档</button>
+              <button
+                className="primary-action"
+                type="button"
+                onClick={() => {
+                  const pending = replaceFinishedConfirm;
+                  setReplaceFinishedConfirm(null);
+                  if (!pending) return;
+                  void persistFinishedVideoGroup(pending.nextGroup, pending.existingGroups, true);
+                }}
+              >
+                替换为本次结果
+              </button>
             </footer>
           </section>
         </div>
@@ -1712,6 +2010,10 @@ function playableGeneratedPath(video?: GeneratedFissionVideo) {
   return video.coverPath || previewPath(video);
 }
 
+function shouldRequestProtectedPreview(path?: string) {
+  return Boolean(path && (/^oss:\/\//i.test(path) || /aliyuncs\.com/i.test(path)));
+}
+
 function isCloudMediaUrl(path?: string) {
   return Boolean(path && /^(https?:\/\/|oss:\/\/)/i.test(path));
 }
@@ -1732,6 +2034,11 @@ function ensureOssUploaderReady() {
 function formatShortTime(date: Date) {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function formatDraftTimestamp(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function aliyunJobStatusText(status: string | undefined, finished: boolean, successful: boolean) {
@@ -1979,23 +2286,110 @@ function detectCsvDelimiter(input: string) {
   return tabCount > commaCount ? '\t' : ',';
 }
 
-function FinishedVideosWorkspace() {
-  const [libraryVideos, setLibraryVideos] = useState<FinishedVideoItem[]>(defaultFinishedVideos);
+function readFinishedVideoGroups(value: unknown): FinishedVideoGroup[] {
+  if (!Array.isArray(value)) return [];
+  if (value.every((item) => item && typeof item === 'object' && Array.isArray((item as FinishedVideoGroup).videos))) {
+    return value as FinishedVideoGroup[];
+  }
+  const legacyVideos = value.filter((item): item is FinishedVideoItem => Boolean(item && typeof item === 'object' && 'id' in item && 'name' in item));
+  if (legacyVideos.length === 0) return [];
+  const grouped = new Map<string, FinishedVideoItem[]>();
+  for (const video of legacyVideos) {
+    const groupName = video.draftName?.trim() || '未分组裂变工作';
+    const existing = grouped.get(groupName) || [];
+    existing.push(video);
+    grouped.set(groupName, existing);
+  }
+  return Array.from(grouped.entries()).map(([draftName, videos]) => {
+    const savedAt = videos[0]?.savedAt || new Date().toISOString();
+    return {
+      id: `legacy-${draftName}`,
+      draftName,
+      savedAt,
+      updatedAt: savedAt,
+      videoCount: videos.length,
+      videos
+    } satisfies FinishedVideoGroup;
+  });
+}
+
+function sameFinishedGroup(group: FinishedVideoGroup, draftId: string, draftName: string) {
+  if (draftId && group.draftId) return group.draftId === draftId;
+  return group.draftName === draftName;
+}
+
+function FinishedVideosWorkspace(props: { refreshToken: number }) {
+  const [libraryGroups, setLibraryGroups] = useState<FinishedVideoGroup[]>([]);
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
+  const [previewVideo, setPreviewVideo] = useState<{ name: string; path?: string } | null>(null);
+  const [previewError, setPreviewError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    window.surgicol.store.get<FinishedVideoItem[]>(FINISHED_VIDEOS_KEY)
+    window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY)
       .then((videos) => {
         if (cancelled) return;
-        setLibraryVideos(Array.isArray(videos) && videos.length > 0 ? videos : defaultFinishedVideos);
+        setLibraryGroups(readFinishedVideoGroups(videos));
       })
       .catch(() => {
-        if (!cancelled) setLibraryVideos(defaultFinishedVideos);
+        if (!cancelled) setLibraryGroups([]);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [props.refreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const videos = libraryGroups.flatMap((group) => group.videos);
+    if (videos.length === 0) {
+      setThumbUrls({});
+      return undefined;
+    }
+    const resolveCovers = async () => {
+      const resolvedEntries = await Promise.all(videos.map(async (video) => {
+        const source = video.coverPath || video.path;
+        if (!source) return [video.id, ''] as const;
+        try {
+          const nextPath = shouldRequestProtectedPreview(source)
+            ? (await getProtectedMediaAccessUrl(source)).mediaUrl
+            : source;
+          return [video.id, nextPath] as const;
+        } catch {
+          return [video.id, source] as const;
+        }
+      }));
+      if (cancelled) return;
+      setThumbUrls(Object.fromEntries(resolvedEntries.filter((entry) => entry[1])));
+    };
+    void resolveCovers();
+    return () => {
+      cancelled = true;
+    };
+  }, [libraryGroups]);
+
+  function toggleGroupCollapsed(groupId: string) {
+    setCollapsedGroupIds((ids) => (ids.includes(groupId) ? ids.filter((id) => id !== groupId) : [...ids, groupId]));
+  }
+
+  async function previewFinishedVideo(video: FinishedVideoItem) {
+    if (!video.path) {
+      setPreviewError('当前成片没有可播放的视频地址。');
+      setPreviewVideo({ name: video.name, path: undefined });
+      return;
+    }
+    setPreviewError('');
+    try {
+      const nextPath = shouldRequestProtectedPreview(video.path)
+        ? (await getProtectedMediaAccessUrl(video.path)).mediaUrl
+        : video.path;
+      setPreviewVideo({ name: video.name, path: nextPath });
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : '获取成片预览地址失败');
+      setPreviewVideo({ name: video.name, path: video.path });
+    }
+  }
 
   return (
     <div className="workflow-workspace">
@@ -2011,30 +2405,94 @@ function FinishedVideosWorkspace() {
         </button>
       </section>
 
-      <div className="finished-grid">
-        {libraryVideos.map((video) => (
-          <article className="finished-card" key={video.id}>
-            <div className="finished-thumb">
-              <FileText size={24} />
-              <span>{video.duration}</span>
+      {libraryGroups.length === 0 ? (
+        <div className="workflow-empty-state">
+          <FileText size={28} />
+          <strong>成片库还没有保存的视频</strong>
+          <p>在裂变结果里选择全部或部分视频，点击“保存到成片库”后会出现在这里。</p>
+        </div>
+      ) : (
+        <div className="finished-group-stack">
+          {libraryGroups.map((group) => (
+            <section className="workflow-panel" key={group.id}>
+              <header className="finished-group-header">
+                <button className="finished-group-toggle" type="button" onClick={() => toggleGroupCollapsed(group.id)} aria-expanded={!collapsedGroupIds.includes(group.id)}>
+                  {collapsedGroupIds.includes(group.id) ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                  <div>
+                    <strong>{group.draftName}</strong>
+                    <span>{group.videoCount} 个视频 · 最近保存 {formatLibraryTimestamp(group.updatedAt)}</span>
+                  </div>
+                </button>
+                <small>{collapsedGroupIds.includes(group.id) ? '按裂变工作归档 · 已折叠' : '按裂变工作归档'}</small>
+              </header>
+              {collapsedGroupIds.includes(group.id) ? null : (
+                <div className="finished-grid">
+                  {group.videos.map((video) => (
+                    <article className="finished-card" key={video.id}>
+                      <div className="finished-thumb">
+                        {thumbUrls[video.id] ? (
+                          <video src={toMediaUrl(thumbUrls[video.id])} muted playsInline preload="metadata" />
+                        ) : (
+                          <div className="finished-thumb-placeholder">
+                            <FileText size={24} />
+                          </div>
+                        )}
+                        <button className="finished-thumb-play" type="button" onClick={() => void previewFinishedVideo(video)} aria-label={`预览 ${video.name}`}>
+                          <Play size={16} />
+                        </button>
+                        <span>{video.duration}</span>
+                      </div>
+                      <div className="finished-meta">
+                        <strong>{video.name}</strong>
+                        <div>
+                          <span>推荐 {video.recommend}</span>
+                          <span>过审 {video.compliance}</span>
+                          <span>差异 {video.difference}</span>
+                        </div>
+                        {video.draftName ? <small>{video.batchName || video.draftName}</small> : null}
+                      </div>
+                      <div className="finished-actions">
+                        <button type="button" onClick={() => void previewFinishedVideo(video)}>预览</button>
+                        <button type="button">{video.path ? '已入库' : '入库'}</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+      {previewVideo ? (
+        <div className="script-import-backdrop">
+          <section className="media-preview-dialog">
+            <header>
+              <strong>{previewVideo.name}</strong>
+              <button type="button" onClick={() => {
+                setPreviewVideo(null);
+                setPreviewError('');
+              }}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="media-preview-body">
+              {previewVideo.path ? (
+                <video src={toMediaUrl(previewVideo.path)} controls autoPlay />
+              ) : (
+                <div className="media-preview-empty">{previewError || '当前成片没有可播放的视频地址。'}</div>
+              )}
             </div>
-            <div className="finished-meta">
-              <strong>{video.name}</strong>
-              <div>
-                <span>推荐 {video.recommend}</span>
-                <span>过审 {video.compliance}</span>
-                <span>差异 {video.difference}</span>
-              </div>
-            </div>
-            <div className="finished-actions">
-              <button type="button">预览</button>
-              <button type="button">{video.path ? '已入库' : '入库'}</button>
-            </div>
-          </article>
-        ))}
-      </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function formatLibraryTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${date.getMonth() + 1}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 function MatrixPublishWorkspace() {

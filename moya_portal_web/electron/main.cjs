@@ -148,13 +148,16 @@ function registerIpc() {
 
   ipcMain.handle('editor:create-draft', async (_event, payload = {}) => {
     const drafts = store.get('editor.drafts', []);
+    const now = new Date().toISOString();
     const draft = {
       id: randomUUID(),
       name: payload.name || '未命名剪辑',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       tracks: [],
-      materials: []
+      materials: [],
+      workflow: payload.workflow || 'materials',
+      fissionWorkspace: payload.fissionWorkspace || null
     };
     store.set('editor.drafts', [draft, ...drafts]);
     return draft;

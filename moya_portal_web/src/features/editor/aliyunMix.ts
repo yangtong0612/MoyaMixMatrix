@@ -106,6 +106,11 @@ export interface AliyunStorageConfig {
   outputPrefix: string;
 }
 
+export interface StorageAccessUrlResult {
+  mediaUrl: string;
+  expiresAt?: string;
+}
+
 interface OssUploadTicketProbe {
   uploadUrl: string;
 }
@@ -214,6 +219,11 @@ export async function getAliyunMixJobStatus(jobId: string) {
 
 export async function getAliyunStorageConfig() {
   const response = await http.get<unknown, { data: AliyunStorageConfig }>('/storage/oss-config');
+  return response.data;
+}
+
+export async function getProtectedMediaAccessUrl(mediaUrl: string) {
+  const response = await http.post<{ mediaUrl: string }, { data: StorageAccessUrlResult }>('/storage/access-url', { mediaUrl });
   return response.data;
 }
 

@@ -18,6 +18,8 @@ export interface EditorDraft {
   updatedAt: string;
   tracks: unknown[];
   materials: unknown[];
+  fissionWorkspace?: unknown;
+  workflow?: string;
 }
 
 export interface OssUploadResult {
