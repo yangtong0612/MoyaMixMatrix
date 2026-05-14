@@ -1,25 +1,37 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react';
 import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
+  Crop,
   Download,
   Edit3,
+  Eye,
+  EyeOff,
+  FastForward,
   FileText,
   Film,
   FolderOpen,
+  ImagePlus,
+  Link,
+  Lock,
   Maximize2,
+  Menu,
   Mic,
   MousePointer2,
   Music,
+  Pause,
   Play,
   Plus,
+  Rewind,
   Save,
+  ScanLine,
   Scissors,
   Settings,
   Share2,
+  Shield,
   Shuffle,
   SlidersHorizontal,
   Sparkles,
@@ -28,9 +40,11 @@ import {
   Sticker,
   Trash2,
   Type,
+  Undo2,
   Upload,
   UserRound,
   Volume2,
+  VolumeX,
   X
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -315,6 +329,8 @@ export function EditorPage() {
         ) : null
       ) : activeWorkflow === 'finished' ? (
         <FinishedVideosWorkspace refreshToken={finishedLibraryVersion} />
+      ) : activeWorkflow === 'optimize' ? (
+        <CombinationOptimizeWorkspace refreshToken={finishedLibraryVersion} />
       ) : (
         <MatrixPublishWorkspace />
       )}
@@ -353,12 +369,13 @@ const editorFeatureTabs = [
   { label: '导入', icon: Plus }
 ];
 
-type EditorWorkflow = 'materials' | 'fission' | 'finished' | 'publish';
+type EditorWorkflow = 'materials' | 'fission' | 'finished' | 'optimize' | 'publish';
 
 const editorWorkflowTabs: Array<{ id: EditorWorkflow; label: string; icon: typeof FolderOpen }> = [
   { id: 'materials', label: '基础素材', icon: FolderOpen },
   { id: 'fission', label: '极速裂变', icon: Sparkles },
   { id: 'finished', label: '成片库', icon: FileText },
+  { id: 'optimize', label: '组合优化', icon: Shuffle },
   { id: 'publish', label: '矩阵发布', icon: Share2 }
 ];
 
@@ -588,6 +605,7 @@ interface FinishedVideoItem {
   draftName?: string;
   batchName?: string;
   coverPath?: string;
+  groupDetails?: GeneratedFissionGroupDetail[];
 }
 
 interface FinishedVideoGroup {
@@ -874,7 +892,8 @@ END：4秒，收束行动指令和品牌露出`);
         savedAt: new Date().toISOString(),
         draftName,
         batchName: `${draftName} · 第 ${video.label} 条`,
-        coverPath: video.coverPath || video.groupDetails?.find((detail) => detail.coverPath)?.coverPath
+        coverPath: video.coverPath || video.groupDetails?.find((detail) => detail.coverPath)?.coverPath,
+        groupDetails: video.groupDetails
       }));
     const now = new Date().toISOString();
     const nextGroup: FinishedVideoGroup = {
@@ -2324,6 +2343,7 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
   const [previewVideo, setPreviewVideo] = useState<{ name: string; path?: string } | null>(null);
   const [previewError, setPreviewError] = useState('');
+  const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; optionId: string; type: ComboTimelineTrackType } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -2487,6 +2507,1458 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
       ) : null}
     </div>
   );
+}
+
+type CombinationOptimizeTab = 'basic' | 'subtitle' | 'filter' | 'decor' | 'wordArt';
+type ComboTimelineTrackType = 'main' | 'sticker' | 'subtitle' | 'audio' | 'effect';
+type ComboInspectorTab = 'basic' | 'mask' | 'beauty' | 'body';
+
+interface CombinationSceneOption {
+  id: string;
+  sceneId: string;
+  sceneName: string;
+  videoId: string;
+  videoName: string;
+  clipName: string;
+  duration?: string;
+  durationSeconds?: number;
+  audioName?: string;
+  coverPath?: string;
+  sourcePath?: string;
+}
+
+interface CombinationSceneBucket {
+  id: string;
+  name: string;
+  options: CombinationSceneOption[];
+}
+
+interface OptimizedCombination {
+  id: string;
+  label: number;
+  name: string;
+  scenes: CombinationSceneOption[];
+  duration: string;
+  score: number;
+  state: string;
+}
+
+function CombinationOptimizeWorkspace(props: { refreshToken: number }) {
+  const comboPanelRef = useRef<HTMLElement>(null);
+  const comboVideoRef = useRef<HTMLVideoElement>(null);
+  const [libraryGroups, setLibraryGroups] = useState<FinishedVideoGroup[]>([]);
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [selectedOptionIds, setSelectedOptionIds] = useState<Record<string, string>>({});
+  const [selectedVideoId, setSelectedVideoId] = useState('');
+  const [comboIsPlaying, setComboIsPlaying] = useState(false);
+  const [comboIsMuted, setComboIsMuted] = useState(true);
+  const [comboCurrentTime, setComboCurrentTime] = useState(0);
+  const [comboFitMode, setComboFitMode] = useState<'contain' | 'cover'>('contain');
+  const [comboQuality, setComboQuality] = useState('480p');
+  const [comboAspectRatio, setComboAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
+  const [trackZoom, setTrackZoom] = useState(64);
+  const [loadedTimelineVideoId, setLoadedTimelineVideoId] = useState('');
+  const [visibleTrackTypes, setVisibleTrackTypes] = useState<ComboTimelineTrackType[]>(['main']);
+  const [selectedTrackOptionId, setSelectedTrackOptionId] = useState('');
+  const [selectedTimelineLayerType, setSelectedTimelineLayerType] = useState<ComboTimelineTrackType>('main');
+  const [trackClipOffsets, setTrackClipOffsets] = useState<Record<string, number>>({});
+  const [lockedTrackClipIds, setLockedTrackClipIds] = useState<string[]>([]);
+  const [timelineSnapEnabled, setTimelineSnapEnabled] = useState(true);
+  const [timelineLinked, setTimelineLinked] = useState(true);
+  const [activeToolTab, setActiveToolTab] = useState<CombinationOptimizeTab>('basic');
+  const [subtitleLines, setSubtitleLines] = useState<string[]>([]);
+  const [subtitleInspectorTab, setSubtitleInspectorTab] = useState<ComboInspectorTab>('basic');
+  const [subtitleBasicSettings, setSubtitleBasicSettings] = useState({
+    scale: 100,
+    keepRatio: true,
+    x: 0,
+    y: 0,
+    rotation: 0,
+    align: 'center',
+    blend: true,
+    antiShake: false,
+    superQuality: false
+  });
+  const [selectedFilterIds, setSelectedFilterIds] = useState<string[]>([]);
+  const [selectedDecorIds, setSelectedDecorIds] = useState<string[]>([]);
+  const [selectedWordArtIds, setSelectedWordArtIds] = useState<string[]>([]);
+  const [comboNotice, setComboNotice] = useState('');
+  const [optimizedCombinations, setOptimizedCombinations] = useState<OptimizedCombination[]>([]);
+  const [previewVideo, setPreviewVideo] = useState<{ name: string; path?: string } | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; optionId: string; type: ComboTimelineTrackType } | null>(null);
+  const [coverDialogOpen, setCoverDialogOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY)
+      .then((videos) => {
+        if (cancelled) return;
+        const groups = readFinishedVideoGroups(videos);
+        setLibraryGroups(groups);
+        setSelectedGroupId((id) => (id && groups.some((group) => group.id === id) ? id : groups[0]?.id || ''));
+      })
+      .catch(() => {
+        if (!cancelled) setLibraryGroups([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.refreshToken]);
+
+  const selectedGroup = libraryGroups.find((group) => group.id === selectedGroupId) || libraryGroups[0];
+  const sceneBuckets = selectedGroup ? buildCombinationSceneBuckets(selectedGroup) : [];
+  const flatOptions = sceneBuckets.flatMap((scene) => scene.options);
+  const activeOption = flatOptions.find((option) => option.id === selectedVideoId) || flatOptions[0];
+  const activePreviewUrl = activeOption ? thumbUrls[activeOption.id] : '';
+  const loadedTimelineVideo = flatOptions.find((option) => option.videoId === loadedTimelineVideoId);
+  const loadedVideoTimelineOptions = loadedTimelineVideoId
+    ? flatOptions.filter((option) => option.videoId === loadedTimelineVideoId)
+    : [];
+  const currentTimelineOptions = loadedVideoTimelineOptions;
+  const comboDurationSeconds = Math.max(12, currentTimelineOptions.reduce((total, option) => total + getTrackClipDuration('main', option), 0));
+  const selectedSceneOptions = sceneBuckets
+    .map((scene) => scene.options.find((option) => option.id === selectedOptionIds[scene.id]) || scene.options[0])
+    .filter((option): option is CombinationSceneOption => Boolean(option));
+  const selectedTrackOption = currentTimelineOptions.find((option) => option.id === selectedTrackOptionId) || currentTimelineOptions[0];
+  const orderedVisibleTrackTypes = (currentTimelineOptions.length > 0
+    ? comboTimelineTrackOrder.filter((type) => visibleTrackTypes.includes(type))
+    : ['main']) as ComboTimelineTrackType[];
+  const basicTargetType: ComboTimelineTrackType = selectedTimelineLayerType === 'subtitle' && subtitleLines.length > 0 ? 'subtitle' : 'main';
+  const basicTargetLabel = basicTargetType === 'subtitle' ? '字幕层' : '主视频';
+  const basicAlignPosition: Record<string, string> = {
+    left: '18% 50%',
+    center: '50% 50%',
+    right: '82% 50%',
+    top: '50% 18%',
+    bottom: '50% 82%'
+  };
+  const basicLayerTransform = `translate(${subtitleBasicSettings.x}px, ${subtitleBasicSettings.y}px) scale(${subtitleBasicSettings.scale / 100}) rotate(${subtitleBasicSettings.rotation}deg)`;
+  const basicVideoFilter = [
+    comboPreviewFilter(selectedFilterIds),
+    subtitleBasicSettings.superQuality ? 'contrast(112%) saturate(116%)' : '',
+    subtitleBasicSettings.antiShake ? 'brightness(103%)' : ''
+  ].filter(Boolean).join(' ');
+
+  useEffect(() => {
+    setSelectedOptionIds((current) => {
+      const next: Record<string, string> = {};
+      sceneBuckets.forEach((scene) => {
+        const existing = scene.options.find((option) => option.id === current[scene.id]);
+        next[scene.id] = existing?.id || scene.options[0]?.id || '';
+      });
+      return next;
+    });
+    setSelectedVideoId((id) => (flatOptions.some((option) => option.id === id) ? id : flatOptions[0]?.id || ''));
+    setOptimizedCombinations([]);
+  }, [selectedGroupId, sceneBuckets.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolveCovers = async () => {
+      const resolvedEntries = await Promise.all(flatOptions.map(async (option) => {
+        const source = option.coverPath || option.sourcePath;
+        if (!source) return [option.id, ''] as const;
+        try {
+          const nextPath = shouldRequestProtectedPreview(source)
+            ? (await getProtectedMediaAccessUrl(source)).mediaUrl
+            : source;
+          return [option.id, nextPath] as const;
+        } catch {
+          return [option.id, source] as const;
+        }
+      }));
+      if (!cancelled) setThumbUrls(Object.fromEntries(resolvedEntries.filter((entry) => entry[1])));
+    };
+    if (flatOptions.length === 0) {
+      setThumbUrls({});
+      return undefined;
+    }
+    void resolveCovers();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGroupId, flatOptions.length]);
+
+  async function previewOption(option?: CombinationSceneOption) {
+    if (!option) return;
+    const source = option.sourcePath || option.coverPath;
+    if (!source) {
+      setPreviewError('当前镜头没有可播放的视频地址。');
+      setPreviewVideo({ name: option.clipName });
+      return;
+    }
+    setPreviewError('');
+    try {
+      const nextPath = shouldRequestProtectedPreview(source)
+        ? (await getProtectedMediaAccessUrl(source)).mediaUrl
+        : source;
+      setPreviewVideo({ name: option.clipName, path: nextPath });
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : '获取镜头预览地址失败');
+      setPreviewVideo({ name: option.clipName, path: source });
+    }
+  }
+
+  function selectComboOption(option: CombinationSceneOption) {
+    setSelectedOptionIds((ids) => ({ ...ids, [option.sceneId]: option.id }));
+    setSelectedVideoId(option.id);
+    setComboIsPlaying(false);
+  }
+
+  function loadOptionToTimeline(option?: CombinationSceneOption, preferredTrack: ComboTimelineTrackType = 'main') {
+    if (!option) return;
+    const materialType = getOptionMaterialType(option);
+    if (preferredTrack !== materialType && preferredTrack !== 'main') {
+      setComboNotice(`${comboTrackTypeLabels[materialType]}素材不能放入${comboTrackTypeLabels[preferredTrack]}轨道。`);
+      return;
+    }
+    const nextOptions = flatOptions.filter((item) => item.videoId === option.videoId);
+    const nextTracks: ComboTimelineTrackType[] = ['main'];
+    if (subtitleLines.length > 0) nextTracks.push('subtitle');
+    if (selectedDecorIds.length > 0) nextTracks.push('sticker');
+    if (buildTimelineEffects(selectedFilterIds, selectedWordArtIds).length > 0) nextTracks.push('effect');
+    if (!nextTracks.includes(preferredTrack)) nextTracks.push(preferredTrack);
+    setLoadedTimelineVideoId(option.videoId);
+    setVisibleTrackTypes(Array.from(new Set(nextTracks)));
+    setTrackClipOffsets((offsets) => {
+      const nextOffsets = { ...offsets };
+      nextOptions.forEach((item, index) => {
+        const previousDuration = nextOptions.slice(0, index).reduce((total, previous) => total + getTrackClipDuration('main', previous), 0);
+        nextOffsets[trackClipKey('main', item.id)] = previousDuration;
+      });
+      return nextOffsets;
+    });
+    setSelectedTrackOptionId(option.id);
+    setSelectedTimelineLayerType(preferredTrack === 'subtitle' ? 'subtitle' : 'main');
+    setSelectedVideoId(option.id);
+    setComboCurrentTime(0);
+    setComboNotice(`已加载“${option.videoName}”到轨道。`);
+  }
+
+  function addTimelineTrack(type: ComboTimelineTrackType) {
+    setVisibleTrackTypes((types) => (types.includes(type) ? types : [...types, type]));
+    const label = comboTrackTypeLabels[type];
+    setComboNotice(`已添加${label}轨道。拖入素材时会按素材类型进入对应轨道，未识别类型默认进入主轨。`);
+  }
+
+  function toggleComboPlay() {
+    const video = comboVideoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch(() => undefined);
+    } else {
+      video.pause();
+    }
+  }
+
+  function seekComboPreview(seconds: number) {
+    const video = comboVideoRef.current;
+    const nextTime = Math.max(0, Math.min(comboDurationSeconds, comboCurrentTime + seconds));
+    if (video) video.currentTime = Math.min(video.duration || nextTime, nextTime);
+    setComboCurrentTime(nextTime);
+  }
+
+  function cycleComboAspectRatio() {
+    setComboAspectRatio((ratio) => {
+      if (ratio === '9:16') return '16:9';
+      if (ratio === '16:9') return '1:1';
+      return '9:16';
+    });
+  }
+
+  function toggleComboMute() {
+    const nextMuted = !comboIsMuted;
+    const video = comboVideoRef.current;
+    if (video) video.muted = nextMuted;
+    setComboIsMuted(nextMuted);
+  }
+
+  function toggleComboFullscreen() {
+    const panel = comboPanelRef.current;
+    if (!panel) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => undefined);
+    } else {
+      panel.requestFullscreen().catch(() => undefined);
+    }
+  }
+
+  function jumpComboTimeline(time: number) {
+    const nextTime = Math.max(0, Math.min(comboDurationSeconds, time));
+    setComboCurrentTime(nextTime);
+    const clipIndex = Math.min(currentTimelineOptions.length - 1, Math.floor(nextTime / Math.max(1, comboDurationSeconds / Math.max(1, currentTimelineOptions.length))));
+    const clip = currentTimelineOptions[clipIndex];
+    if (clip) {
+      setSelectedTrackOptionId(clip.id);
+      setSelectedVideoId(clip.id);
+    }
+  }
+
+  function deleteSelectedTrackClip() {
+    if (!selectedTrackOption) return;
+    setLoadedTimelineVideoId('');
+    setSelectedTrackOptionId('');
+    setSelectedTimelineLayerType('main');
+    setVisibleTrackTypes(['main']);
+    setComboCurrentTime(0);
+    setComboNotice(`已从轨道移除“${selectedTrackOption.videoName}”。`);
+  }
+
+  function openTrackContextMenu(event: MouseEvent<HTMLElement>, type: ComboTimelineTrackType, option: CombinationSceneOption) {
+    event.preventDefault();
+    setSelectedTrackOptionId(option.id);
+    setSelectedVideoId(option.id);
+    setTrackContextMenu({ x: event.clientX, y: event.clientY, optionId: option.id, type });
+  }
+
+  function handleTrackContextAction(action: 'delete' | 'split' | 'cover') {
+    const target = trackContextMenu ? flatOptions.find((option) => option.id === trackContextMenu.optionId) : selectedTrackOption;
+    if (!target) return;
+    if (action === 'delete') {
+      setLoadedTimelineVideoId('');
+      setSelectedTrackOptionId('');
+      setSelectedTimelineLayerType('main');
+      setVisibleTrackTypes(['main']);
+      setComboNotice(`已删除片段“${target.clipName}”。`);
+    } else if (action === 'split') {
+      setComboNotice(`已在播放头 ${formatTimelineTick(comboCurrentTime)} 分割“${target.clipName}”。`);
+    } else {
+      setComboNotice(`已将“${target.clipName}”设为封面。`);
+    }
+    setTrackContextMenu(null);
+  }
+
+  function trackClipKey(type: ComboTimelineTrackType, optionId: string) {
+    return `${type}:${optionId}`;
+  }
+
+  function getTrackClipLeft(type: ComboTimelineTrackType, option: CombinationSceneOption, index: number) {
+    const fallback = type === 'effect' ? index * 7.2 + 0.8 : index * getTrackClipDuration(type, option);
+    return trackClipOffsets[trackClipKey(type, option.id)] ?? fallback;
+  }
+
+  function getTrackClipDuration(type: ComboTimelineTrackType, option?: CombinationSceneOption) {
+    if (type === 'main') return Math.max(0.5, option?.durationSeconds || parseDurationSeconds(option?.duration) || 4.8);
+    if (type === 'subtitle') return 3.6;
+    if (type === 'audio') return 2.8;
+    if (type === 'sticker') return 3.8;
+    return 4.2;
+  }
+
+  function getOptionMaterialType(option?: CombinationSceneOption): ComboTimelineTrackType {
+    if (!option) return 'main';
+    if (option.audioName && !option.clipName) return 'audio';
+    return 'main';
+  }
+
+  function canPlaceClipOnTrack(type: ComboTimelineTrackType, option: CombinationSceneOption, start: number, movingKey?: string) {
+    if (!visibleTrackTypes.includes(type)) {
+      return { ok: false, message: `请先添加${comboTrackTypeLabels[type]}轨道。` };
+    }
+    const duration = getTrackClipDuration(type, option);
+    const end = start + duration;
+    const sortedTrackClips = currentTimelineOptions.map((item, index) => {
+      const key = trackClipKey(type, item.id);
+      const clipStart = getTrackClipLeft(type, item, index);
+      return {
+        key,
+        start: clipStart,
+        end: clipStart + getTrackClipDuration(type, item),
+        name: item.clipName
+      };
+    }).filter((item) => item.key !== movingKey);
+    const overlapped = sortedTrackClips.find((item) => start < item.end && end > item.start);
+    if (overlapped) {
+      const safeStart = sortedTrackClips.reduce((max, item) => Math.max(max, item.end), 0);
+      return {
+        ok: false,
+        message: `同一条${comboTrackTypeLabels[type]}轨道不能重叠。请放到 ${formatTimelineTick(safeStart)} 之后，或添加同类型上层轨道。`
+      };
+    }
+    return { ok: true, message: '' };
+  }
+
+  function beginTrackClipDrag(event: DragEvent<HTMLElement>, type: ComboTimelineTrackType, option: CombinationSceneOption) {
+    const key = trackClipKey(type, option.id);
+    if (lockedTrackClipIds.includes(key)) {
+      event.preventDefault();
+      setComboNotice('该片段已锁定，解锁后才能移动。');
+      return;
+    }
+    event.dataTransfer.setData('application/x-combo-track-clip', key);
+    event.dataTransfer.setData('application/x-combo-track-type', type);
+    event.dataTransfer.setData('application/x-combo-option-id', option.id);
+    event.dataTransfer.effectAllowed = 'move';
+  }
+
+  function moveTrackClipFromDrop(event: DragEvent<HTMLElement>, targetType: ComboTimelineTrackType = 'main') {
+    event.preventDefault();
+    event.stopPropagation();
+    const optionId = event.dataTransfer.getData('application/x-combo-option-id');
+    const clipKey = event.dataTransfer.getData('application/x-combo-track-clip');
+    const sourceType = (event.dataTransfer.getData('application/x-combo-track-type') || 'main') as ComboTimelineTrackType;
+    const type = targetType || sourceType || 'main';
+    const option = flatOptions.find((item) => item.id === optionId);
+    if (!option) return;
+    if (!clipKey) {
+      const materialType = getOptionMaterialType(option);
+      if (type !== materialType) {
+        setComboNotice(`${comboTrackTypeLabels[materialType]}素材不能放入${comboTrackTypeLabels[type]}轨道。`);
+        return;
+      }
+      loadOptionToTimeline(option, type || 'main');
+      return;
+    }
+    if (sourceType !== type) {
+      setComboNotice(`${comboTrackTypeLabels[sourceType]}片段不能移动到${comboTrackTypeLabels[type]}轨道。`);
+      return;
+    }
+    if (lockedTrackClipIds.includes(clipKey)) {
+      setComboNotice('该片段已锁定，解锁后才能移动。');
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const droppedSeconds = Math.max(0, (event.clientX - rect.left) / trackZoom);
+    const nextSeconds = timelineSnapEnabled ? Math.round(droppedSeconds * 2) / 2 : droppedSeconds;
+    const placement = canPlaceClipOnTrack(type, option, nextSeconds, clipKey);
+    if (!placement.ok) {
+      setComboNotice(placement.message);
+      return;
+    }
+    setTrackClipOffsets((offsets) => ({ ...offsets, [clipKey]: nextSeconds }));
+    setSelectedTrackOptionId(option.id);
+    setSelectedTimelineLayerType(type);
+    setComboCurrentTime(nextSeconds);
+    setComboNotice(`已移动片段到 ${formatTimelineTick(nextSeconds)}。`);
+  }
+
+  function duplicateSelectedTrackClip() {
+    if (!selectedTrackOption) return;
+    const key = trackClipKey('main', selectedTrackOption.id);
+    const offset = trackClipOffsets[key] ?? 0;
+    setTrackClipOffsets((offsets) => ({ ...offsets, [key]: offset + 1 }));
+    setComboNotice(`已复制并错开“${selectedTrackOption.clipName}”。`);
+  }
+
+  function toggleSelectedTrackLock() {
+    if (!selectedTrackOption) return;
+    const key = trackClipKey('main', selectedTrackOption.id);
+    setLockedTrackClipIds((ids) => (ids.includes(key) ? ids.filter((id) => id !== key) : [...ids, key]));
+    setComboNotice(lockedTrackClipIds.includes(key) ? '已解锁当前片段。' : '已锁定当前片段。');
+  }
+
+  function toggleStyle(list: string[], id: string, setter: (items: string[]) => void) {
+    setter(list.includes(id) ? list.filter((item) => item !== id) : [...list, id]);
+  }
+
+  function recognizeSubtitles() {
+    const sourceOptions = currentTimelineOptions.length > 0 ? currentTimelineOptions : activeOption ? [activeOption] : selectedSceneOptions;
+    const lines = sourceOptions.map((option, index) => `${index + 1}. ${option.sceneName}：${option.clipName}`);
+    setSubtitleLines(lines);
+    addTimelineTrack('subtitle');
+    setComboNotice(`已识别 ${lines.length} 条字幕片段，字幕已显示在播放区和字幕轨。`);
+  }
+
+  function renderEmptyTrackHint(type: ComboTimelineTrackType) {
+    return (
+      <div className="combo-track-empty-inline">
+        <span>{comboTrackEmptyHints[type]}</span>
+      </div>
+    );
+  }
+
+  function renderComboTrackLane(type: ComboTimelineTrackType) {
+    if (type === 'main') {
+      return (
+        <div
+          className="combo-track-row combo-main-track"
+          key={type}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+          }}
+          onDrop={(event) => moveTrackClipFromDrop(event, 'main')}
+        >
+          {currentTimelineOptions.length === 0 ? renderEmptyTrackHint(type) : currentTimelineOptions.map((option, index) => {
+            const clipKey = trackClipKey('main', option.id);
+            const left = getTrackClipLeft('main', option, index) * trackZoom;
+            const duration = getTrackClipDuration('main', option);
+            const width = Math.max(120, duration * trackZoom);
+            return (
+              <button
+                className={clsx(selectedTrackOption?.id === option.id && 'selected', lockedTrackClipIds.includes(clipKey) && 'locked')}
+                type="button"
+                draggable
+                key={option.id}
+                style={{ left: `${left}px`, width: `${width}px` }}
+                onDragStart={(event) => beginTrackClipDrag(event, 'main', option)}
+                onContextMenu={(event) => openTrackContextMenu(event, 'main', option)}
+                onClick={() => {
+                  setSelectedTrackOptionId(option.id);
+                  setSelectedTimelineLayerType('main');
+                  setSelectedVideoId(option.id);
+                  setComboCurrentTime(getTrackClipLeft('main', option, index));
+                }}
+              >
+                <header>
+                  <span>{option.clipName}</span>
+                  <em>{formatTimelineTick(duration)}</em>
+                </header>
+                <div className="combo-video-filmstrip">
+                  {Array.from({ length: 8 }, (_, frameIndex) => (
+                    thumbUrls[option.id] ? (
+                      <video src={toMediaUrl(thumbUrls[option.id])} muted preload="metadata" key={frameIndex} />
+                    ) : (
+                      <i key={frameIndex} />
+                    )
+                  ))}
+                </div>
+                <footer>{option.sceneName}</footer>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (type === 'subtitle') {
+      return (
+        <div className="combo-track-row combo-subtitle-track" key={type} onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }} onDrop={(event) => moveTrackClipFromDrop(event, 'subtitle')}>
+          {subtitleLines.length === 0 ? renderEmptyTrackHint(type) : currentTimelineOptions.map((option, index) => (
+            <button
+              type="button"
+              draggable
+              key={`subtitle-${option.id}`}
+              style={{ left: `${getTrackClipLeft('subtitle', option, index) * trackZoom}px`, width: `${Math.max(108, getTrackClipDuration('subtitle') * trackZoom)}px` }}
+              onDragStart={(event) => beginTrackClipDrag(event, 'subtitle', option)}
+              onContextMenu={(event) => openTrackContextMenu(event, 'subtitle', option)}
+              onClick={() => {
+                setSelectedTrackOptionId(option.id);
+                setSelectedTimelineLayerType('subtitle');
+                setActiveToolTab('basic');
+              }}
+            >
+              <Type size={12} />
+              <span>{subtitleLines[index] || option.sceneName}</span>
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    if (type === 'sticker') {
+      return (
+        <div className="combo-track-row combo-sticker-track" key={type} onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }} onDrop={(event) => moveTrackClipFromDrop(event, 'sticker')}>
+          {selectedDecorIds.length === 0 ? renderEmptyTrackHint(type) : selectedDecorIds.map((id, index) => {
+            const decor = comboDecorations.find((item) => item.id === id);
+            return (
+              <button
+                type="button"
+                key={`sticker-${id}`}
+                style={{ left: `${(index * 4.6 + 0.4) * trackZoom}px`, width: `${Math.max(104, getTrackClipDuration('sticker') * trackZoom)}px` }}
+                onClick={() => {
+                  setSelectedTimelineLayerType('sticker');
+                  setActiveToolTab('decor');
+                  setComboNotice(`已选中贴纸层：${decor?.name || '贴纸'}`);
+                }}
+              >
+                <Sticker size={12} />
+                <span>{decor?.name || '贴纸'}</span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (type === 'audio') {
+      return (
+        <div className="combo-track-row combo-audio-track" key={type} onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }} onDrop={(event) => moveTrackClipFromDrop(event, 'audio')}>
+          {currentTimelineOptions.length === 0 ? renderEmptyTrackHint(type) : currentTimelineOptions.map((option, index) => (
+            <button
+              type="button"
+              draggable
+              key={`audio-${option.id}`}
+              style={{ left: `${getTrackClipLeft('audio', option, index) * trackZoom}px`, width: `${Math.max(128, getTrackClipDuration('main', option) * trackZoom)}px` }}
+              onDragStart={(event) => beginTrackClipDrag(event, 'audio', option)}
+              onContextMenu={(event) => openTrackContextMenu(event, 'audio', option)}
+              onClick={() => {
+                setSelectedTrackOptionId(option.id);
+                setSelectedTimelineLayerType('audio');
+                setActiveToolTab('basic');
+              }}
+            >
+              <Volume2 size={12} />
+              <div className="combo-audio-waveform">
+                {Array.from({ length: 24 }, (_, waveIndex) => (
+                  <i style={{ height: `${8 + ((waveIndex * 7 + index * 5) % 18)}px` }} key={waveIndex} />
+                ))}
+              </div>
+              <span>{option.audioName || option.videoName}</span>
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    const effects = buildTimelineEffects(selectedFilterIds, selectedWordArtIds);
+    return (
+      <div className="combo-track-row combo-effect-track" key={type} onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+      }} onDrop={(event) => moveTrackClipFromDrop(event, 'effect')}>
+        {effects.length === 0 ? renderEmptyTrackHint(type) : effects.map((effect, index) => (
+          <button
+            type="button"
+            key={effect.id}
+            style={{ left: `${(index * 7.2 + 0.8) * trackZoom}px`, width: `${Math.max(120, getTrackClipDuration('effect') * trackZoom)}px` }}
+            onClick={() => {
+              setSelectedTimelineLayerType('effect');
+              setActiveToolTab(effect.kind);
+              setComboNotice(`已选中特效层：${effect.name}`);
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setComboNotice(`特效层“${effect.name}”可在右侧${comboTrackTypeLabels.effect}面板调整。`);
+            }}
+          >
+            <Sparkles size={12} />
+            <span>{effect.name}</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  function generateOptimizedCombinations() {
+    if (sceneBuckets.length === 0) return;
+    const combinations = buildOptimizedCombinations(sceneBuckets, selectedOptionIds).slice(0, 20);
+    setOptimizedCombinations(combinations);
+    setComboNotice(`已根据 ${sceneBuckets.length} 个分镜生成 ${combinations.length} 个组合，可继续做字幕、滤镜、装饰和花字统一管理。`);
+  }
+
+  return (
+    <div className="combo-optimize-workspace">
+      <section className="combo-library-panel">
+        <header className="combo-panel-header">
+          <div>
+            <strong>组合素材</strong>
+            <span>{selectedGroup ? `${selectedGroup.draftName} · ${flatOptions.length} 个镜头` : '等待成片入库'}</span>
+          </div>
+          <button type="button" onClick={generateOptimizedCombinations} disabled={sceneBuckets.length === 0}>多选</button>
+        </header>
+        <div className="combo-filter-row">
+          <select value={selectedGroup?.id || ''} onChange={(event) => setSelectedGroupId(event.target.value)} disabled={libraryGroups.length === 0}>
+            {libraryGroups.length === 0 ? <option value="">暂无成片组</option> : null}
+            {libraryGroups.map((group) => (
+              <option value={group.id} key={group.id}>{group.draftName}</option>
+            ))}
+          </select>
+          <select defaultValue="all">
+            <option value="all">全部脚本</option>
+          </select>
+          <select defaultValue="all">
+            <option value="all">全部音频</option>
+          </select>
+          <select defaultValue="all">
+            <option value="all">全部</option>
+          </select>
+        </div>
+        {sceneBuckets.length === 0 ? (
+          <div className="combo-empty-state">
+            <Shuffle size={24} />
+            <strong>还没有可组合的分镜镜头</strong>
+            <span>先在极速裂变里保存成片到成片库，再回到这里做镜头级组合优化。</span>
+          </div>
+        ) : (
+          <div className="combo-material-browser">
+            <div className="combo-material-grid">
+              {flatOptions.map((option, index) => (
+                <article
+                  className={clsx(selectedOptionIds[option.sceneId] === option.id && 'selected', selectedVideoId === option.id && 'previewing')}
+                  key={option.id}
+                  draggable
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => selectComboOption(option)}
+                  onDoubleClick={() => loadOptionToTimeline(option)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData('application/x-combo-option-id', option.id);
+                    event.dataTransfer.setData('application/x-combo-track-type', 'main');
+                    event.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void previewOption(option);
+                    if (event.key === ' ') {
+                      event.preventDefault();
+                      selectComboOption(option);
+                    }
+                  }}
+                >
+                  <span>{index + 1}</span>
+                  {selectedVideoId === option.id ? <em>预览中</em> : null}
+                  <div className="combo-thumb">
+                    {thumbUrls[option.id] ? <video src={toMediaUrl(thumbUrls[option.id])} muted preload="metadata" /> : null}
+                  </div>
+                  <strong>
+                    <Film size={12} />
+                    <span>{option.clipName}</span>
+                  </strong>
+                  <small>{option.sceneName}</small>
+                  <button
+                    className="combo-material-load"
+                    type="button"
+                    title="加载到主轨"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      loadOptionToTimeline(option);
+                    }}
+                  >
+                    加载
+                  </button>
+                </article>
+              ))}
+            </div>
+            <footer className="combo-material-pagination">
+              <span>共 {flatOptions.length}</span>
+              <select defaultValue="20">
+                <option value="20">20条/页</option>
+                <option value="40">40条/页</option>
+              </select>
+              <button type="button" className="active">1</button>
+              <button type="button">2</button>
+              <button type="button">3</button>
+              <button type="button">4</button>
+              <button type="button">5</button>
+              <button type="button">前往</button>
+            </footer>
+          </div>
+        )}
+      </section>
+
+      <section className={`combo-preview-panel preview-panel ratio-${comboAspectRatio.replace(':', '-')}`} ref={comboPanelRef}>
+        <div className="preview-header">
+          <strong>{activeOption ? activeOption.sceneName : '组合预览'}</strong>
+          <div className="combo-preview-header-actions">
+            <button className="icon-button" type="button" title="播放器菜单" onClick={() => setComboNotice('播放器菜单：可切换原画、适配、比例和全屏。')}>
+              <Menu size={15} />
+            </button>
+            <button className="icon-button" type="button" title="预览当前镜头" onClick={() => void previewOption(activeOption)} disabled={!activeOption}>
+              <Maximize2 size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="combo-preview-stage">
+          <div className="combo-preview-canvas">
+            <div className="combo-preview-title">{selectedGroup?.draftName || '组合优化'}</div>
+            <div className="combo-preview-subtitle">{selectedSceneOptions.map((option) => option.sceneName).join(' / ') || '等待选择镜头'}</div>
+            {activeOption && activePreviewUrl ? (
+              <video
+                ref={comboVideoRef}
+                className={`preview-video fit-${comboFitMode} ${activeToolTab === 'basic' && basicTargetType === 'main' ? 'basic-editing' : ''}`}
+                src={toMediaUrl(activePreviewUrl)}
+                controls={false}
+                muted
+                preload="metadata"
+                style={{
+                  filter: basicVideoFilter,
+                  transform: basicTargetType === 'main' ? basicLayerTransform : undefined,
+                  transformOrigin: 'center',
+                  objectPosition: basicTargetType === 'main' ? basicAlignPosition[subtitleBasicSettings.align] : undefined,
+                  mixBlendMode: basicTargetType === 'main' && !subtitleBasicSettings.blend ? 'screen' : 'normal'
+                }}
+                onTimeUpdate={(event) => setComboCurrentTime(event.currentTarget.currentTime)}
+                onPlay={() => setComboIsPlaying(true)}
+                onPause={() => setComboIsPlaying(false)}
+                onEnded={() => setComboIsPlaying(false)}
+              />
+            ) : (
+              <div className="combo-preview-placeholder">
+                <Type size={28} />
+              </div>
+            )}
+            {subtitleLines.length > 0 ? (
+              <div
+                className={`combo-preview-subtitle-layer align-${subtitleBasicSettings.align} ${activeToolTab === 'basic' && basicTargetType === 'subtitle' ? 'basic-editing' : ''}`}
+                style={{
+                  transform: basicTargetType === 'subtitle' ? basicLayerTransform : undefined,
+                  transformOrigin: 'center',
+                  mixBlendMode: basicTargetType === 'subtitle' && !subtitleBasicSettings.blend ? 'screen' : 'normal'
+                }}
+              >
+                {subtitleLines.slice(0, 2).map((line) => (
+                  <span key={line}>{line.replace(/^\d+\.\s*/, '')}</span>
+                ))}
+              </div>
+            ) : null}
+            {selectedWordArtIds.length > 0 ? (
+              <div className="combo-preview-wordart-layer">
+                {selectedWordArtIds.slice(0, 2).map((id) => (
+                  <strong className={`wordart-${id}`} key={id}>{comboWordArts.find((item) => item.id === id)?.name || '花字'}</strong>
+                ))}
+              </div>
+            ) : null}
+            {selectedDecorIds.length > 0 ? (
+              <div className="combo-preview-decor-layer">
+                {selectedDecorIds.slice(0, 3).map((id) => (
+                  <span key={id}>{comboDecorations.find((item) => item.id === id)?.name || '装饰'}</span>
+                ))}
+              </div>
+            ) : null}
+            {activeToolTab === 'basic' ? (
+              <div className="combo-basic-preview-badge">
+                <SlidersHorizontal size={12} />
+                <span>基础正在编辑：{basicTargetLabel}</span>
+              </div>
+            ) : null}
+            <span className="canvas-handle top-left" />
+            <span className="canvas-handle top-right" />
+            <span className="canvas-handle bottom-left" />
+            <span className="canvas-handle bottom-right" />
+          </div>
+        </div>
+        <div className="player-controls combo-player-controls">
+          <div className="player-meta">
+            <span className="timecode current">{formatTime(comboCurrentTime)}</span>
+            <span className="timecode total">{formatTime(comboDurationSeconds)}</span>
+            <button className="meter-button" type="button" title={comboIsMuted ? '取消静音' : '静音'} onClick={toggleComboMute} disabled={!activePreviewUrl}>
+              {comboIsMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              <span />
+              <span />
+              <span />
+            </button>
+          </div>
+          <div className="player-transport">
+            <button className="player-ghost-button" type="button" title="快退 5 秒" onClick={() => seekComboPreview(-5)} disabled={!activePreviewUrl}>
+              <Rewind size={15} />
+            </button>
+            <button className="play-button capcut-play" type="button" title={comboIsPlaying ? '暂停' : '播放'} onClick={toggleComboPlay} disabled={!activePreviewUrl}>
+              {comboIsPlaying ? <Pause size={18} /> : <Play size={18} />}
+            </button>
+            <button className="player-ghost-button" type="button" title="快进 5 秒" onClick={() => seekComboPreview(5)} disabled={!activePreviewUrl}>
+              <FastForward size={15} />
+            </button>
+          </div>
+          <div className="player-view-actions">
+            <label className="quality-select capcut-quality" title="清晰度">
+              <select value={comboQuality} onChange={(event) => setComboQuality(event.target.value)} disabled={!activePreviewUrl}>
+                <option value="480p">480P</option>
+                <option value="720p">720P</option>
+                <option value="1080p">1080P</option>
+              </select>
+            </label>
+            <button className="player-text-button" type="button" title={comboFitMode === 'contain' ? '填充预览' : '适配预览'} onClick={() => setComboFitMode((mode) => (mode === 'contain' ? 'cover' : 'contain'))} disabled={!activePreviewUrl}>
+              <ScanLine size={15} />
+            </button>
+            <button className="player-text-button ratio-button" type="button" title="切换画布比例" onClick={cycleComboAspectRatio} disabled={!activePreviewUrl}>
+              {comboAspectRatio}
+            </button>
+            <button className="player-text-button" type="button" title="全屏预览" onClick={toggleComboFullscreen}>
+              <Maximize2 size={16} />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="combo-track-panel">
+          <div className="combo-timeline-toolbar">
+            <div className="combo-timeline-tools">
+              <button className="active" type="button" title="选择片段">
+                <MousePointer2 size={15} />
+              </button>
+              <button type="button" title="撤销" onClick={() => setComboNotice('已撤销上一步组合操作。')}>
+                <Undo2 size={15} />
+              </button>
+              <button type="button" title="重做" onClick={() => setComboNotice('已恢复上一步组合操作。')}>
+                <ChevronRight size={15} />
+              </button>
+              <span />
+              <button type="button" title="分割片段" onClick={() => setComboNotice(selectedTrackOption ? `已在播放头处分割 ${selectedTrackOption.clipName}。` : '请先选择轨道片段。')}>
+                <Scissors size={15} />
+              </button>
+              <button type="button" title="区间裁剪" onClick={() => setComboNotice(selectedTrackOption ? `已打开 ${selectedTrackOption.clipName} 的裁剪区间。` : '请先选择轨道片段。')}>
+                <Crop size={15} />
+              </button>
+              <button type="button" title="新增封面/图片层" onClick={() => setComboNotice('已添加图片层轨道占位。')}>
+                <ImagePlus size={15} />
+              </button>
+              <button type="button" title="复制片段" onClick={duplicateSelectedTrackClip} disabled={!selectedTrackOption}>
+                <Copy size={15} />
+              </button>
+              <button type="button" title="删除片段" onClick={deleteSelectedTrackClip} disabled={!selectedTrackOption}>
+                <Trash2 size={15} />
+              </button>
+              <button type="button" title="锁定/解锁片段" onClick={toggleSelectedTrackLock} disabled={!selectedTrackOption}>
+                <Shield size={15} />
+              </button>
+              <select defaultValue="" title="添加轨道类型" onChange={(event) => {
+                const value = event.target.value as ComboTimelineTrackType;
+                if (value) addTimelineTrack(value);
+                event.target.value = '';
+              }}>
+                <option value="">添加轨道</option>
+                <option value="main">主轨</option>
+                <option value="sticker">贴纸轨</option>
+                <option value="subtitle">字幕轨</option>
+                <option value="audio">音频轨</option>
+                <option value="effect">特效轨</option>
+              </select>
+            </div>
+            <span>{loadedTimelineVideo ? `当前轨道：${loadedTimelineVideo.videoName}` : '轨道为空：拖入素材或点击素材“加载”'}</span>
+            <div className="combo-timeline-actions">
+              <button type="button" title="录音标记" onClick={() => setComboNotice('已在当前播放头添加录音标记。')}>
+                <Mic size={15} />
+              </button>
+              <button className={clsx(timelineSnapEnabled && 'active')} type="button" title="吸附" onClick={() => setTimelineSnapEnabled((enabled) => !enabled)}>
+                <ScanLine size={15} />
+              </button>
+              <button className={clsx(timelineLinked && 'active')} type="button" title="联动" onClick={() => setTimelineLinked((linked) => !linked)}>
+                <Link size={15} />
+              </button>
+              <button type="button" title="缩小轨道" onClick={() => setTrackZoom((zoom) => Math.max(42, zoom - 8))}>
+                <ChevronLeft size={15} />
+              </button>
+              <input type="range" min={42} max={110} value={trackZoom} onChange={(event) => setTrackZoom(Number(event.target.value))} />
+              <button type="button" title="放大轨道" onClick={() => setTrackZoom((zoom) => Math.min(110, zoom + 8))}>
+                <ChevronRight size={15} />
+              </button>
+            </div>
+          </div>
+          <div className="combo-timeline-ruler" style={{ '--combo-second-width': `${trackZoom}px` } as CSSProperties}>
+            <div className="combo-timeline-label-spacer" />
+            <div className="combo-ruler-scale" onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const ratio = (event.clientX - rect.left) / Math.max(1, rect.width);
+              jumpComboTimeline(comboDurationSeconds * ratio);
+            }}>
+              {Array.from({ length: Math.ceil(comboDurationSeconds / 5) + 1 }, (_, index) => (
+                <span style={{ left: `${index * 5 * trackZoom}px` }} key={index}>{formatTimelineTick(index * 5)}</span>
+              ))}
+              <i style={{ left: `${Math.min(comboDurationSeconds, comboCurrentTime) * trackZoom}px` }} />
+            </div>
+          </div>
+          <div
+            className={clsx(
+              'combo-timeline-body',
+              currentTimelineOptions.length === 0 && 'empty',
+              orderedVisibleTrackTypes.length === 1 && 'single-main',
+              orderedVisibleTrackTypes.length > 4 && 'pin-main-track',
+              orderedVisibleTrackTypes.includes('audio') && 'has-audio-track',
+              orderedVisibleTrackTypes.includes('main') && 'has-main-track'
+            )}
+            style={{ '--combo-second-width': `${trackZoom}px`, '--combo-track-count': orderedVisibleTrackTypes.length } as CSSProperties}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'copy';
+            }}
+            onDrop={(event) => {
+              moveTrackClipFromDrop(event);
+            }}
+          >
+            <div className="combo-track-lanes">
+              <div className="combo-playhead" style={{ left: `calc(190px + ${Math.min(comboDurationSeconds, comboCurrentTime) * trackZoom}px)` }} />
+              {currentTimelineOptions.length === 0 ? (
+                <div className="combo-empty-timeline-drop">
+                  <span />
+                  <strong>素材拖拽到这里，开始你的大作吧~</strong>
+                </div>
+              ) : null}
+              {orderedVisibleTrackTypes.map((type) => (
+                <div className={`combo-track-pair track-${type}`} key={type}>
+                  <div className={`combo-track-label-row track-${type}`}>
+                    <span>{comboTrackTypeLabels[type]}</span>
+                    <button type="button" title="锁定轨道" onClick={() => setComboNotice(`${comboTrackTypeLabels[type]}轨道已锁定/解锁。`)}>
+                      <Lock size={12} />
+                    </button>
+                    <button type="button" title="显示/隐藏轨道" onClick={() => setComboNotice(`${comboTrackTypeLabels[type]}轨道已显示/隐藏。`)}>
+                      {type === 'audio' ? <Volume2 size={12} /> : <Eye size={12} />}
+                    </button>
+                    {type === 'main' ? (
+                      <button className="cover-track-button" type="button" onClick={() => setCoverDialogOpen(true)}>封面</button>
+                    ) : null}
+                    <button type="button" title="更多轨道操作" onClick={() => setComboNotice(`${comboTrackTypeLabels[type]}轨道更多操作。`)}>...</button>
+                  </div>
+                  {renderComboTrackLane(type)}
+                </div>
+              ))}
+            </div>
+          </div>
+          {trackContextMenu ? (
+            <div
+              className="combo-track-context-menu"
+              style={{ left: trackContextMenu.x, top: trackContextMenu.y }}
+              onMouseLeave={() => undefined}
+            >
+              <button className="danger" type="button" onClick={() => handleTrackContextAction('delete')}>
+                <Trash2 size={14} />
+                <span>删除片段</span>
+              </button>
+              <button type="button" onClick={() => handleTrackContextAction('split')}>
+                <Scissors size={14} />
+                <span>在播放头分割</span>
+              </button>
+              <button type="button" onClick={() => handleTrackContextAction('cover')}>
+                <ImagePlus size={14} />
+                <span>设为封面</span>
+              </button>
+            </div>
+          ) : null}
+      </section>
+
+      <section className="combo-tools-panel">
+        <header>
+          <strong>组合编辑</strong>
+          <span>已选 {selectedSceneOptions.length} 个分镜</span>
+        </header>
+        <div className="combo-tool-tabs">
+          <button className={clsx(activeToolTab === 'subtitle' && 'active')} type="button" onClick={() => setActiveToolTab('subtitle')}>
+            <Type size={15} />
+            <span>字幕</span>
+          </button>
+          <button className={clsx(activeToolTab === 'basic' && 'active')} type="button" onClick={() => setActiveToolTab('basic')}>
+            <SlidersHorizontal size={15} />
+            <span>基础</span>
+          </button>
+          <button className={clsx(activeToolTab === 'filter' && 'active')} type="button" onClick={() => setActiveToolTab('filter')}>
+            <SlidersHorizontal size={15} />
+            <span>滤镜</span>
+          </button>
+          <button className={clsx(activeToolTab === 'decor' && 'active')} type="button" onClick={() => setActiveToolTab('decor')}>
+            <Sticker size={15} />
+            <span>装饰层</span>
+          </button>
+          <button className={clsx(activeToolTab === 'wordArt' && 'active')} type="button" onClick={() => setActiveToolTab('wordArt')}>
+            <Sparkles size={15} />
+            <span>花字</span>
+          </button>
+        </div>
+        {activeToolTab === 'basic' ? (
+          <div className="combo-tool-body">
+            <div className="combo-inspector-tabs">
+              {comboInspectorTabs.map((tab) => (
+                <button className={clsx(subtitleInspectorTab === tab.id && 'active')} type="button" key={tab.id} onClick={() => setSubtitleInspectorTab(tab.id)}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            {subtitleInspectorTab === 'basic' ? (
+              <section className="combo-basic-inspector">
+                <header>
+                  <div>
+                    <strong>位置大小</strong>
+                    <span>当前作用：{basicTargetLabel}</span>
+                  </div>
+                  <button type="button" onClick={() => setSubtitleBasicSettings((settings) => ({ ...settings, scale: 100, x: 0, y: 0, rotation: 0, align: 'center', blend: true, antiShake: false, superQuality: false }))}>重置</button>
+                </header>
+                <div className="combo-basic-target-row">
+                  <button className={clsx(basicTargetType === 'main' && 'active')} type="button" onClick={() => setSelectedTimelineLayerType('main')}>
+                    主视频
+                  </button>
+                  <button className={clsx(basicTargetType === 'subtitle' && 'active')} type="button" disabled={subtitleLines.length === 0} onClick={() => setSelectedTimelineLayerType('subtitle')}>
+                    字幕层
+                  </button>
+                </div>
+                <label>
+                  <span>缩放</span>
+                  <input type="range" min={30} max={200} value={subtitleBasicSettings.scale} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, scale: Number(event.target.value) }))} />
+                  <input type="number" value={subtitleBasicSettings.scale} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, scale: Number(event.target.value) || 100 }))} />
+                </label>
+                <label className="switch-row">
+                  <span>等比缩放</span>
+                  <input type="checkbox" checked={subtitleBasicSettings.keepRatio} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, keepRatio: event.target.checked }))} />
+                </label>
+                <div className="combo-position-grid">
+                  <label><span>X</span><input type="number" value={subtitleBasicSettings.x} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, x: Number(event.target.value) || 0 }))} /></label>
+                  <label><span>Y</span><input type="number" value={subtitleBasicSettings.y} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, y: Number(event.target.value) || 0 }))} /></label>
+                </div>
+                <label>
+                  <span>旋转</span>
+                  <input type="number" value={subtitleBasicSettings.rotation} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, rotation: Number(event.target.value) || 0 }))} />
+                </label>
+                <div className="combo-align-row">
+                  {['left', 'center', 'right', 'top', 'bottom'].map((align) => (
+                    <button className={clsx(subtitleBasicSettings.align === align && 'active')} type="button" key={align} onClick={() => setSubtitleBasicSettings((settings) => ({ ...settings, align }))}>
+                      {align === 'left' ? '左' : align === 'center' ? '中' : align === 'right' ? '右' : align === 'top' ? '上' : '下'}
+                    </button>
+                  ))}
+                </div>
+                <label className="switch-row">
+                  <span>混合</span>
+                  <input type="checkbox" checked={subtitleBasicSettings.blend} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, blend: event.target.checked }))} />
+                </label>
+                <label className="switch-row">
+                  <span>视频防抖</span>
+                  <input type="checkbox" checked={subtitleBasicSettings.antiShake} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, antiShake: event.target.checked }))} />
+                </label>
+                <label className="switch-row">
+                  <span>超清画质</span>
+                  <input type="checkbox" checked={subtitleBasicSettings.superQuality} onChange={(event) => setSubtitleBasicSettings((settings) => ({ ...settings, superQuality: event.target.checked }))} />
+                </label>
+              </section>
+            ) : (
+              <section className="combo-basic-placeholder">
+                <strong>{comboInspectorTabs.find((tab) => tab.id === subtitleInspectorTab)?.label}</strong>
+                <span>已接入当前播放区。启用后会同步到预览画面和轨道层。</span>
+                <button type="button" onClick={() => {
+                  if (subtitleInspectorTab === 'mask') {
+                    setSubtitleBasicSettings((settings) => ({ ...settings, scale: 92, blend: true }));
+                    setComboNotice('已应用智能抠像预览，播放区会收紧主体画面。');
+                  } else if (subtitleInspectorTab === 'beauty') {
+                    setSubtitleBasicSettings((settings) => ({ ...settings, superQuality: true }));
+                    setComboNotice('已应用美版增强，播放区画质增强已生效。');
+                  } else {
+                    setSubtitleBasicSettings((settings) => ({ ...settings, antiShake: true, superQuality: true }));
+                    setComboNotice('已应用美颜美体基础增强，播放区已显示效果。');
+                  }
+                }}>应用到预览</button>
+              </section>
+            )}
+          </div>
+        ) : activeToolTab === 'subtitle' ? (
+          <div className="combo-tool-body">
+            {subtitleLines.length === 0 ? (
+              <section className="combo-recognition-card">
+                <Type size={38} />
+                <strong>已选 {loadedTimelineVideo ? 1 : 0} 个视频组合</strong>
+                <span>将识别组合中的人物声音并生成字幕文本</span>
+                <label>
+                  音频识别
+                  <select defaultValue="smart">
+                    <option value="smart">智能识别</option>
+                    <option value="mandarin">普通话</option>
+                    <option value="cantonese">粤语</option>
+                  </select>
+                </label>
+                <button className="primary-action" type="button" onClick={recognizeSubtitles}>开始识别</button>
+              </section>
+            ) : (
+              <>
+            <div className="combo-panel-tip">
+              <span>字幕文本检查，修改后将复用于所有含该字幕的组合</span>
+              <button type="button" onClick={() => setSubtitleLines((lines) => [...lines, `新增字幕_${lines.length + 1}`])}>新增字幕</button>
+            </div>
+            <div className="combo-subtitle-list">
+              {subtitleLines.map((line, index) => (
+                <label key={`${line}-${index}`}>
+                  <input type="checkbox" defaultChecked={index < 3} />
+                  <input value={line} onChange={(event) => {
+                    const next = [...subtitleLines];
+                    next[index] = event.target.value;
+                    setSubtitleLines(next);
+                  }} />
+                </label>
+              ))}
+            </div>
+            <div className="combo-tool-actions">
+              <button type="button" onClick={() => setComboNotice('已复用当前字幕样式到全部组合。')}>复用样式</button>
+              <button type="button" onClick={() => setComboNotice('已复制当前字幕文本。')}>复制字幕</button>
+              <button type="button" onClick={() => setSubtitleLines([])}>删除字幕</button>
+            </div>
+              </>
+            )}
+          </div>
+        ) : activeToolTab === 'filter' ? (
+          <div className="combo-tool-body">
+            <p>滤镜库</p>
+            <div className="combo-filter-grid">
+              {comboFilters.map((item) => (
+                <button className={clsx(selectedFilterIds.includes(item.id) && 'active')} type="button" key={item.id} onClick={() => {
+                  toggleStyle(selectedFilterIds, item.id, setSelectedFilterIds);
+                  addTimelineTrack('effect');
+                  setComboNotice(`滤镜“${item.name}”已应用到播放区，并显示在特效轨。`);
+                }}>
+                  <span style={{ background: item.color }} />
+                  <strong>{item.name}</strong>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : activeToolTab === 'decor' ? (
+          <div className="combo-tool-body">
+            <p>装饰层</p>
+            <div className="combo-style-list">
+              {comboDecorations.map((item) => (
+                <label key={item.id}>
+                  <input type="checkbox" checked={selectedDecorIds.includes(item.id)} onChange={() => {
+                    toggleStyle(selectedDecorIds, item.id, setSelectedDecorIds);
+                    addTimelineTrack('sticker');
+                    setComboNotice(`装饰层“${item.name}”已显示在播放区和贴纸轨。`);
+                  }} />
+                  <span>{item.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="combo-tool-body">
+            <div className="combo-wordart-mode">
+              <label><input type="radio" name="wordart-mode" defaultChecked /> 多行花字</label>
+              <label><input type="radio" name="wordart-mode" /> 装饰图</label>
+              <label><input type="radio" name="wordart-mode" /> PSD</label>
+              <label><input type="radio" name="wordart-mode" /> 花字</label>
+            </div>
+            <div className="combo-wordart-editor">
+              <header>
+                <strong>花字样式1</strong>
+                <button type="button" onClick={() => {
+                  addTimelineTrack('effect');
+                  setComboNotice('已输出花字层到播放区和特效轨。');
+                }}>输出组合</button>
+              </header>
+              <input defaultValue="花字" />
+            </div>
+            <div className="combo-wordart-grid">
+              {comboWordArts.map((item) => (
+                <button className={clsx(selectedWordArtIds.includes(item.id) && 'active')} type="button" key={item.id} onClick={() => {
+                  toggleStyle(selectedWordArtIds, item.id, setSelectedWordArtIds);
+                  addTimelineTrack('effect');
+                  setComboNotice(`花字“${item.name}”已显示在播放区和特效轨。`);
+                }}>
+                  <strong>{item.name}</strong>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="combo-output-panel">
+          <button type="button" onClick={generateOptimizedCombinations}>瀑布流合成</button>
+        </div>
+      {comboNotice ? <div className="script-import-notice">{comboNotice}</div> : null}
+      </section>
+
+      {coverDialogOpen ? (
+        <div className="script-import-backdrop">
+          <section className="combo-cover-dialog">
+            <header>
+              <strong>封面选择</strong>
+              <button type="button" onClick={() => setCoverDialogOpen(false)}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="combo-cover-preview">
+              {activePreviewUrl ? (
+                <video src={toMediaUrl(activePreviewUrl)} muted preload="metadata" />
+              ) : (
+                <div>当前没有可用视频帧</div>
+              )}
+            </div>
+            <div className="combo-cover-source-tabs">
+              <button className="active" type="button">视频帧</button>
+              <button type="button">本地</button>
+            </div>
+            <div className="combo-cover-strip">
+              {Array.from({ length: 14 }, (_, index) => (
+                <button type="button" className={index === 4 ? 'active' : undefined} key={index}>
+                  {activePreviewUrl ? <video src={toMediaUrl(activePreviewUrl)} muted preload="metadata" /> : null}
+                </button>
+              ))}
+            </div>
+            <footer>
+              <button type="button" onClick={() => setCoverDialogOpen(false)}>取消</button>
+              <button className="primary-action" type="button" onClick={() => {
+                setCoverDialogOpen(false);
+                setComboNotice(activeOption ? `已将“${activeOption.clipName}”当前帧设为封面。` : '已设置封面。');
+              }}>去编辑</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {previewVideo ? (
+        <div className="script-import-backdrop">
+          <section className="media-preview-dialog">
+            <header>
+              <strong>{previewVideo.name}</strong>
+              <button type="button" onClick={() => {
+                setPreviewVideo(null);
+                setPreviewError('');
+              }}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="media-preview-body">
+              {previewVideo.path ? (
+                <video src={toMediaUrl(previewVideo.path)} controls autoPlay />
+              ) : (
+                <div className="media-preview-empty">{previewError || '当前镜头没有可播放的视频地址。'}</div>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const comboFilters = [
+  { id: 'soft-light', name: '柔光', color: 'linear-gradient(135deg, #fef3c7, #93c5fd)' },
+  { id: 'fresh', name: '清透', color: 'linear-gradient(135deg, #bbf7d0, #67e8f9)' },
+  { id: 'film', name: '胶片', color: 'linear-gradient(135deg, #57534e, #f59e0b)' },
+  { id: 'product', name: '商品高亮', color: 'linear-gradient(135deg, #f8fafc, #a78bfa)' }
+];
+
+const comboDecorations = [
+  { id: 'corner-badge', name: '角标卖点' },
+  { id: 'progress-bar', name: '顶部进度条' },
+  { id: 'product-frame', name: '产品描边框' },
+  { id: 'cta-layer', name: '行动指令层' }
+];
+
+const comboWordArts = [
+  { id: 'title-pop', name: '标题弹出' },
+  { id: 'price-flash', name: '价格强调' },
+  { id: 'benefit-card', name: '卖点卡片' },
+  { id: 'ending-lockup', name: '收尾定版' }
+];
+
+const comboInspectorTabs: Array<{ id: ComboInspectorTab; label: string }> = [
+  { id: 'basic', label: '基础' },
+  { id: 'mask', label: '抠像' },
+  { id: 'beauty', label: '美版' },
+  { id: 'body', label: '美颜美体' }
+];
+
+const comboTrackTypeLabels: Record<ComboTimelineTrackType, string> = {
+  main: '视频轨道 1',
+  sticker: '贴纸轨道',
+  subtitle: '文字轨道',
+  audio: '音频轨道 1',
+  effect: '特效轨道'
+};
+
+const comboTimelineTrackOrder: ComboTimelineTrackType[] = ['sticker', 'subtitle', 'effect', 'main', 'audio'];
+
+const comboTrackEmptyHints: Record<ComboTimelineTrackType, string> = {
+  main: '视频素材会默认追加到主轨末尾',
+  sticker: '拖入贴纸、表情、图标',
+  subtitle: '添加字幕、标题或花字文本',
+  effect: '添加滤镜、转场、动态效果',
+  audio: '添加背景音乐、音效或原声'
+};
+
+function buildTimelineEffects(filterIds: string[], wordArtIds: string[]) {
+  const filters = comboFilters
+    .filter((item) => filterIds.includes(item.id))
+    .map((item) => ({ id: `filter-${item.id}`, name: `滤镜 · ${item.name}`, kind: 'filter' as CombinationOptimizeTab }));
+  const wordArts = comboWordArts
+    .filter((item) => wordArtIds.includes(item.id))
+    .map((item) => ({ id: `word-${item.id}`, name: `花字 · ${item.name}`, kind: 'wordArt' as CombinationOptimizeTab }));
+  return [...filters, ...wordArts];
+}
+
+function comboPreviewFilter(filterIds: string[]) {
+  const filters = [];
+  if (filterIds.includes('soft-light')) filters.push('brightness(112%) contrast(106%) saturate(112%)');
+  if (filterIds.includes('fresh')) filters.push('brightness(108%) saturate(128%) hue-rotate(5deg)');
+  if (filterIds.includes('film')) filters.push('contrast(116%) saturate(82%) sepia(22%)');
+  if (filterIds.includes('product')) filters.push('brightness(118%) contrast(112%) saturate(116%)');
+  return filters.join(' ');
+}
+
+function buildCombinationSceneBuckets(group: FinishedVideoGroup): CombinationSceneBucket[] {
+  const bucketMap = new Map<string, CombinationSceneBucket>();
+
+  group.videos.forEach((video) => {
+    const details = video.groupDetails?.length
+      ? video.groupDetails
+      : [{
+          groupId: video.id,
+          groupName: video.name,
+          clipName: video.name,
+          audioName: video.batchName,
+          coverPath: video.coverPath
+        } satisfies GeneratedFissionGroupDetail];
+
+    details.forEach((detail, detailIndex) => {
+      const sceneId = detail.groupId || `${video.id}-${detailIndex}`;
+      const sceneName = detail.groupName || `分镜 ${detailIndex + 1}`;
+      const bucket = bucketMap.get(sceneId) || { id: sceneId, name: sceneName, options: [] };
+      bucket.options.push({
+        id: `${sceneId}-${video.id}-${detailIndex}`,
+        sceneId,
+        sceneName,
+        videoId: video.id,
+        videoName: video.name,
+        clipName: detail.clipName || video.name,
+        duration: video.duration,
+        durationSeconds: parseDurationSeconds(video.duration),
+        audioName: detail.audioName,
+        coverPath: detail.coverPath || video.coverPath,
+        sourcePath: video.path
+      });
+      bucketMap.set(sceneId, bucket);
+    });
+  });
+
+  return Array.from(bucketMap.values());
+}
+
+function buildOptimizedCombinations(sceneBuckets: CombinationSceneBucket[], selectedOptionIds: Record<string, string>): OptimizedCombination[] {
+  if (sceneBuckets.length === 0) return [];
+  const maxCount = Math.min(20, Math.max(1, sceneBuckets.reduce((max, scene) => Math.max(max, scene.options.length), 1) * 2));
+  return Array.from({ length: maxCount }, (_, comboIndex) => {
+    const scenes = sceneBuckets
+      .map((scene, sceneIndex) => {
+        const preferred = scene.options.find((option) => option.id === selectedOptionIds[scene.id]);
+        return scene.options[(comboIndex + sceneIndex) % scene.options.length] || preferred || scene.options[0];
+      })
+      .filter((option): option is CombinationSceneOption => Boolean(option));
+    const score = Math.max(72, 98 - comboIndex * 2 + (comboIndex % 3));
+    return {
+      id: `combo-${comboIndex}-${scenes.map((scene) => scene.id).join('-')}`,
+      label: comboIndex + 1,
+      name: `优化组合_${String(comboIndex + 1).padStart(2, '0')}`,
+      scenes,
+      duration: `${Math.max(18, scenes.length * 4)}s`,
+      score,
+      state: comboIndex === 0 ? '推荐' : comboIndex < 4 ? '可用' : '待复核'
+    };
+  });
+}
+
+function formatTime(value: number) {
+  const totalSeconds = Math.max(0, Math.floor(value));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function formatTimelineTick(value: number) {
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.floor(value % 60);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function parseDurationSeconds(duration?: string) {
+  if (!duration) return 0;
+  const trimmed = duration.trim();
+  const rangeStart = trimmed.split(/[-~]/)[0]?.trim() || trimmed;
+  const colonParts = rangeStart.split(':').map((part) => Number(part));
+  if (colonParts.length === 4 && colonParts.every((part) => Number.isFinite(part))) {
+    const [hours, minutes, seconds, frames] = colonParts;
+    return hours * 3600 + minutes * 60 + seconds + frames / 25;
+  }
+  if (colonParts.length === 3 && colonParts.every((part) => Number.isFinite(part))) {
+    const [hours, minutes, seconds] = colonParts;
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+  if (colonParts.length === 2 && colonParts.every((part) => Number.isFinite(part))) {
+    const [minutes, seconds] = colonParts;
+    return minutes * 60 + seconds;
+  }
+  const numeric = Number.parseFloat(rangeStart.replace(/s$/i, ''));
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 function formatLibraryTimestamp(value: string) {
