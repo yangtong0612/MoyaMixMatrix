@@ -34,6 +34,29 @@ export interface OssUploadResult {
   localPath: string;
 }
 
+export interface DriveFileInfo {
+  name: string;
+  size: number;
+  localPath: string;
+  contentType: string;
+  sha256: string;
+}
+
+export interface DriveUploadOptions {
+  taskId: string;
+  uploadUrl: string;
+  bucket?: string;
+  objectKey?: string;
+  contentType?: string;
+}
+
+export interface DriveUploadProgress {
+  taskId: string;
+  percent: number;
+  status: 'uploading' | 'done' | 'failed';
+  message?: string;
+}
+
 declare global {
   interface Window {
     surgicol: {
@@ -61,6 +84,9 @@ declare global {
       cloud: {
         addTransferTask(task: Partial<TransferTask>): Promise<TransferTask>;
         listTransferTasks(): Promise<TransferTask[]>;
+        inspectDriveFile(filePath: string): Promise<DriveFileInfo>;
+        uploadDriveFile(filePath: string, options: DriveUploadOptions): Promise<boolean>;
+        onUploadDriveFileProgress(callback: (progress: DriveUploadProgress) => void): () => void;
       };
       media: {
         uploadToOss(filePath: string, options?: { folder?: string; contentType?: string }): Promise<OssUploadResult>;

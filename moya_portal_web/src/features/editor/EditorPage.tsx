@@ -2514,6 +2514,9 @@ type CombinationOptimizeTab = 'basic' | 'subtitle' | 'filter' | 'decor' | 'wordA
 type ComboTimelineTrackType = 'main' | 'sticker' | 'subtitle' | 'audio' | 'effect';
 type ComboInspectorTab = 'basic' | 'mask' | 'beauty' | 'body';
 
+const COMBO_TIMELINE_LABEL_WIDTH = 190;
+const COMBO_TIMELINE_ZERO_OFFSET = -1;
+
 interface ComboSubtitleItem {
   id: string;
   sourceOptionId: string;
@@ -2850,7 +2853,7 @@ function CombinationOptimizeWorkspace(props: { refreshToken: number }) {
 
   function updateComboPlayheadFromClientX(clientX: number, element: HTMLElement) {
     const rect = element.getBoundingClientRect();
-    const timelineStart = rect.left + 190;
+    const timelineStart = rect.left + COMBO_TIMELINE_LABEL_WIDTH + COMBO_TIMELINE_ZERO_OFFSET;
     const nextTime = Math.max(0, Math.min(comboDurationSeconds, (clientX - timelineStart + element.scrollLeft) / trackZoom));
     jumpComboTimeline(nextTime);
   }
@@ -3609,7 +3612,7 @@ function CombinationOptimizeWorkspace(props: { refreshToken: number }) {
                 className="combo-playhead"
                 type="button"
                 title="拖动播放头"
-                style={{ left: `calc(190px + ${Math.min(comboDurationSeconds, comboCurrentTime) * trackZoom}px)` }}
+                style={{ left: `calc(${COMBO_TIMELINE_LABEL_WIDTH + COMBO_TIMELINE_ZERO_OFFSET}px + ${Math.min(comboDurationSeconds, comboCurrentTime) * trackZoom}px)` }}
                 onMouseDown={(event) => {
                   event.preventDefault();
                   event.stopPropagation();

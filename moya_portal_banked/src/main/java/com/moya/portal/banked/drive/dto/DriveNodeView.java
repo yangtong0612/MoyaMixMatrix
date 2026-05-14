@@ -10,6 +10,11 @@ public record DriveNodeView(
 		String nodeType,
 		Long size,
 		String mimeType,
+		String fileHash,
+		String ossBucket,
+		String ossKey,
+		String previewUrl,
+		String downloadUrl,
 		String coverUrl,
 		OffsetDateTime updatedAt
 ) {

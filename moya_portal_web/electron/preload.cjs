@@ -26,7 +26,14 @@ contextBridge.exposeInMainWorld('surgicol', {
   },
   cloud: {
     addTransferTask: (task) => invoke('cloud:add-transfer-task', task),
-    listTransferTasks: () => invoke('cloud:list-transfer-tasks')
+    listTransferTasks: () => invoke('cloud:list-transfer-tasks'),
+    inspectDriveFile: (filePath) => invoke('cloud:inspect-drive-file', filePath),
+    uploadDriveFile: (filePath, options) => invoke('cloud:upload-drive-file', filePath, options),
+    onUploadDriveFileProgress: (callback) => {
+      const listener = (_event, progress) => callback(progress);
+      ipcRenderer.on('cloud:upload-drive-file-progress', listener);
+      return () => ipcRenderer.removeListener('cloud:upload-drive-file-progress', listener);
+    }
   },
   media: {
     uploadToOss: (filePath, options) => invoke('media:upload-to-oss', filePath, options)

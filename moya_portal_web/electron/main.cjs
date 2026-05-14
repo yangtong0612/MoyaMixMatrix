@@ -4,7 +4,7 @@ const https = require('node:https');
 const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const { execFile } = require('node:child_process');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
 const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell } = require('electron');
@@ -179,6 +179,31 @@ function registerIpc() {
   });
 
   ipcMain.handle('cloud:list-transfer-tasks', () => store.get('cloud.transfers', []));
+  ipcMain.handle('cloud:inspect-drive-file', async (_event, filePath) => {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) throw new Error('Only files can be uploaded');
+    return {
+      name: path.basename(filePath),
+      size: stat.size,
+      localPath: filePath,
+      contentType: contentTypeForFile(filePath),
+      sha256: await hashFile(filePath)
+    };
+  });
+
+  ipcMain.handle('cloud:upload-drive-file', async (event, filePath, options = {}) => {
+    await putFileToSignedUrl(options.uploadUrl, filePath, {
+      contentType: options.contentType || contentTypeForFile(filePath),
+      size: (await fs.stat(filePath)).size,
+      onProgress: (progress) => {
+        event.sender.send('cloud:upload-drive-file-progress', {
+          taskId: options.taskId,
+          ...progress
+        });
+      }
+    });
+    return true;
+  });
 
   ipcMain.handle('media:upload-to-oss', async (_event, filePath, options = {}) => {
     return uploadLocalFileToOss(filePath, options);
@@ -225,6 +250,7 @@ function putFileToSignedUrl(uploadUrl, filePath, options) {
   return new Promise((resolve, reject) => {
     const targetUrl = new URL(uploadUrl);
     const client = targetUrl.protocol === 'https:' ? https : http;
+    let uploaded = 0;
     const request = client.request(
       targetUrl,
       {
@@ -250,7 +276,28 @@ function putFileToSignedUrl(uploadUrl, filePath, options) {
       }
     );
     request.on('error', reject);
-    fsSync.createReadStream(filePath).on('error', reject).pipe(request);
+    const stream = fsSync.createReadStream(filePath);
+    stream.on('data', (chunk) => {
+      uploaded += chunk.length;
+      if (typeof options.onProgress === 'function') {
+        options.onProgress({
+          percent: Math.min(95, Math.round((uploaded / Math.max(options.size, 1)) * 95)),
+          status: 'uploading',
+          message: '上传中'
+        });
+      }
+    });
+    stream.on('error', reject).pipe(request);
+  });
+}
+
+function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    fsSync.createReadStream(filePath)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('error', reject)
+      .on('end', () => resolve(hash.digest('hex')));
   });
 }
 

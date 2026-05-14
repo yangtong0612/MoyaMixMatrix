@@ -104,7 +104,9 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
   }, [initialMenu]);
 
   useEffect(() => {
-    const unsubscribe = window.surgicol.cloud.onUploadDriveFileProgress((progress) => {
+    const onProgress = window.surgicol?.cloud?.onUploadDriveFileProgress;
+    if (!onProgress) return undefined;
+    const unsubscribe = onProgress((progress) => {
       const state = useCloudDriveStore.getState();
       const current = state.uploadStates.find((item) => item.taskId === progress.taskId) || state.uploadState;
       if (!current || current.taskId !== progress.taskId) return;
@@ -215,6 +217,10 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
   }
 
   async function uploadFiles() {
+    if (!window.surgicol?.dialog || !window.surgicol?.cloud?.inspectDriveFile || !window.surgicol?.cloud?.uploadDriveFile) {
+      toast('请在 Electron 客户端中使用本地上传');
+      return;
+    }
     const localPaths = await window.surgicol.dialog.openFiles();
     if (!localPaths.length) return;
     const queuedUploads: UploadState[] = localPaths.map((localPath) => ({

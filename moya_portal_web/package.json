@@ -6,9 +6,9 @@
   "main": "electron/main.cjs",
   "description": "moya矩阵 Electron + React shell for cloud drive and video editor modules.",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 0.0.0.0\" \"wait-on tcp:5174 && electron .\"",
+    "dev": "concurrently -k \"vite --host 0.0.0.0\" \"wait-on http://127.0.0.1:5174 && electron .\"",
     "dev:renderer": "vite --host 0.0.0.0",
-    "dev:electron": "wait-on tcp:5174 && electron .",
+    "dev:electron": "wait-on http://127.0.0.1:5174 && electron .",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4174",
     "package": "npm run build && electron-builder"
