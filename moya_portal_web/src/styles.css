@@ -1980,42 +1980,51 @@ progress::-webkit-progress-value {
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr) 52px;
   gap: 0;
-  background: #171717;
+  background: #242424;
 }
 
 .combo-preview-stage {
-  display: grid;
-  place-items: center;
   min-height: 0;
-  background:
-    linear-gradient(90deg, rgb(255 255 255 / 4%) 1px, transparent 1px),
-    linear-gradient(180deg, #151517, #111112);
-  background-size: 34px 34px, auto;
+  background: #242424;
 }
 
 .combo-preview-canvas {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  width: min(42vh, 300px);
-  max-width: 72%;
-  aspect-ratio: 9 / 16;
-  padding: 24px 18px;
-  overflow: hidden;
+  place-items: center;
+  width: min(88%, 880px);
+  max-width: none;
+  max-height: calc(100% - 24px);
+  aspect-ratio: 16 / 9;
+  padding: 0;
   border: 1px solid #d7eaff;
   border-radius: 0;
   background: #050506;
-  box-shadow: 0 24px 60px rgb(0 0 0 / 36%);
+  box-shadow: none;
+}
+
+.combo-preview-panel.ratio-9-16 .combo-preview-canvas {
+  width: min(42%, 360px);
+  aspect-ratio: 9 / 16;
 }
 
 .combo-preview-panel.ratio-16-9 .combo-preview-canvas {
-  width: min(82%, 820px);
+  width: min(88%, 880px);
   aspect-ratio: 16 / 9;
 }
 
 .combo-preview-panel.ratio-1-1 .combo-preview-canvas {
-  width: min(58vh, 520px);
+  width: min(62%, 560px);
   aspect-ratio: 1 / 1;
+}
+
+.combo-preview-panel.ratio-empty .combo-preview-canvas {
+  width: calc(100% - 52px);
+  max-width: none;
+  max-height: calc(100% - 28px);
+  aspect-ratio: 16 / 9;
+  border-color: #303033;
+  background: #262626;
 }
 
 .combo-preview-canvas video {
@@ -2023,13 +2032,15 @@ progress::-webkit-progress-value {
   inset: 0;
   width: 100%;
   height: 100%;
-  opacity: 0.72;
+  opacity: 0.92;
+  border: 0;
+  border-radius: 0;
   transition: filter 140ms ease, transform 140ms ease, object-position 140ms ease, mix-blend-mode 140ms ease;
 }
 
 .combo-preview-canvas video.basic-editing,
 .combo-preview-subtitle-layer.basic-editing {
-  outline: 1px solid #8ea2ff;
+  outline: 1px solid rgb(255 255 255 / 28%);
   outline-offset: -1px;
 }
 
@@ -2057,8 +2068,17 @@ progress::-webkit-progress-value {
 .combo-preview-placeholder {
   display: grid;
   place-items: center;
-  min-height: 0;
-  color: #7f8ba0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: #4b5563;
+  font-size: 14px;
+}
+
+.combo-preview-panel.ratio-empty .combo-preview-placeholder {
+  color: #43474d;
+  font-size: 15px;
 }
 
 .combo-preview-subtitle-layer,
@@ -2177,6 +2197,10 @@ progress::-webkit-progress-value {
   border-bottom: 1px solid #303033;
 }
 
+.combo-preview-scrubber {
+  accent-color: #9ca3af;
+}
+
 .combo-track-panel {
   grid-area: timeline;
   display: grid;
@@ -2291,10 +2315,25 @@ progress::-webkit-progress-value {
   position: absolute;
   top: 0;
   height: 30px;
-  padding: 8px 0 0 5px;
-  border-left: 1px solid #45464a;
-  color: #9ca3af;
+  padding: 4px 0 0 4px;
+  border-left: 1px solid rgb(255 255 255 / 10%);
+  color: #667085;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.combo-ruler-scale span.origin-tick {
+  padding-left: 0;
+}
+
+.combo-ruler-scale span.major-tick {
+  border-left-color: #4b5563;
+  color: #a3afc2;
   font-size: 11px;
+}
+
+.combo-ruler-scale span.minor-tick {
+  border-left-color: rgb(255 255 255 / 8%);
 }
 
 .combo-ruler-scale i {
@@ -2328,7 +2367,7 @@ progress::-webkit-progress-value {
 
 .combo-timeline-body.empty,
 .combo-timeline-body.single-main {
-  align-items: center;
+  align-items: stretch;
 }
 
 .combo-timeline-body.empty .combo-track-labels,
@@ -2343,9 +2382,24 @@ progress::-webkit-progress-value {
   align-self: stretch;
 }
 
+.combo-timeline-body.empty .combo-track-lanes,
+.combo-timeline-body.single-main .combo-track-lanes {
+  display: flex;
+  align-items: center;
+  padding-top: 0;
+}
+
+.combo-timeline-body.single-main .combo-track-pair.track-main {
+  align-items: center;
+  min-height: 100%;
+}
+
+.combo-timeline-body.single-main .combo-track-label-row.track-main {
+  margin-bottom: 0;
+}
+
 .combo-timeline-body.single-main .combo-main-track {
-  top: 50%;
-  transform: translateY(-50%);
+  margin-bottom: 0;
 }
 
 .combo-timeline-body.pin-main-track:not(.single-main) .combo-track-pair.track-main {
@@ -2495,15 +2549,20 @@ progress::-webkit-progress-value {
   min-width: calc(190px + var(--combo-second-width) * 65);
 }
 
+.combo-track-pair.empty-main-track {
+  align-items: center;
+  min-height: 100%;
+}
+
 .combo-empty-timeline-drop {
   position: absolute;
-  left: 214px;
-  right: 12px;
-  top: 92px;
+  left: 14px;
+  right: 14px;
+  top: 44px;
   display: flex;
   align-items: center;
   gap: 14px;
-  height: 70px;
+  height: 68px;
   padding-left: 22px;
   border: 1px dashed #34363a;
   color: #e5e7eb;
@@ -2521,22 +2580,102 @@ progress::-webkit-progress-value {
 
 .combo-playhead {
   position: absolute;
+  top: -48px;
+  bottom: 0;
+  z-index: 10;
+  width: 13px;
+  margin: 0 0 0 -6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.combo-playhead::after {
+  content: "";
+  position: absolute;
+  left: 6px;
   top: 0;
   bottom: 0;
-  z-index: 4;
   width: 2px;
   background: #f4f4f5;
-  pointer-events: none;
+}
+
+.combo-playhead::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0;
+  width: 9px;
+  height: 11px;
+  border-radius: 2px 2px 0 0;
+  background: #f4f4f5;
+}
+
+.combo-timeline-body.dragging-playhead,
+.combo-timeline-body.dragging-playhead * {
+  cursor: ew-resize;
+  user-select: none;
 }
 
 .combo-track-row {
   position: relative;
   box-sizing: border-box;
-  margin: 0 8px 12px 8px;
+  margin: 0 0 12px;
   overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 7%);
+  border-right: 1px solid rgb(255 255 255 / 7%);
+  border-bottom: 1px solid rgb(255 255 255 / 7%);
+  border-left: 1px solid rgb(255 255 255 / 7%);
   border-radius: 7px;
   background: rgb(12 17 28 / 48%);
+}
+
+.combo-track-label-row.empty-main-label {
+  min-height: 220px;
+  height: 220px;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 0;
+  color: #aeb6c2;
+  background: #202123;
+  border-right: 1px solid rgb(255 255 255 / 7%);
+}
+
+.combo-track-label-row.empty-main-label > span::before {
+  display: none;
+}
+
+.combo-track-label-row.empty-main-label button,
+.combo-track-label-row.empty-main-label .cover-track-button {
+  display: none;
+}
+
+.combo-track-row.combo-main-track.combo-main-track-empty-state {
+  min-height: 220px;
+  height: 220px;
+  margin-bottom: 0;
+  border-top: 1px solid rgb(255 255 255 / 6%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 2%), transparent 24%),
+    #242424;
+}
+
+.combo-timeline-body.empty .combo-track-row.combo-main-track.combo-main-track-empty-state {
+  border-radius: 0;
+}
+
+.combo-timeline-body.empty .combo-empty-timeline-drop {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.combo-main-track > button,
+.combo-sticker-track > button,
+.combo-subtitle-track > button,
+.combo-audio-track > button,
+.combo-effect-track > button {
+  left: 0;
 }
 
 .combo-timeline-body.pin-main-track.has-audio-track:not(.single-main) .combo-track-pair.track-main .combo-main-track,
@@ -2633,11 +2772,11 @@ progress::-webkit-progress-value {
 .combo-audio-track > button,
 .combo-effect-track > button {
   position: absolute;
-  top: 8px;
+  top: 0;
   display: grid;
   align-content: center;
   justify-items: start;
-  height: calc(100% - 16px);
+  height: 100%;
   min-height: 0;
   padding: 0 10px;
   overflow: hidden;
@@ -2650,10 +2789,9 @@ progress::-webkit-progress-value {
 
 .combo-main-track > button {
   grid-template-rows: 20px minmax(0, 1fr) 20px;
-  height: calc(100% - 16px);
   padding: 0;
   border: 1px solid #38bdf8;
-  border-radius: 4px;
+  border-radius: 0;
   background: linear-gradient(180deg, #0874b8, #075c9d);
 }
 
@@ -2762,8 +2900,8 @@ progress::-webkit-progress-value {
   align-items: center;
   gap: 6px;
   min-height: 0;
-  height: calc(100% - 16px);
-  top: 8px;
+  height: 100%;
+  top: 0;
   border-color: rgb(96 165 250 / 45%);
   background: #24476f;
   font-size: 12px;
@@ -2989,9 +3127,9 @@ progress::-webkit-progress-value {
 }
 
 .combo-tool-tabs button.active {
-  color: #8ea2ff;
-  background: #25283a;
-  box-shadow: inset 0 -2px 0 #8ea2ff;
+  color: #f4f4f5;
+  background: #2b2c2f;
+  box-shadow: inset 0 -2px 0 #8f939b;
 }
 
 .combo-tool-body {
@@ -3108,13 +3246,13 @@ progress::-webkit-progress-value {
 }
 
 .combo-basic-inspector header span {
-  color: #8ea2ff;
+  color: #aeb4bf;
   font-size: 11px;
   font-weight: 600;
 }
 
 .combo-basic-inspector header button {
-  width: 26px;
+  width: 24px;
   height: 24px;
   min-height: 24px;
   padding: 0;
@@ -3146,7 +3284,7 @@ progress::-webkit-progress-value {
 }
 
 .combo-basic-target-row button.active {
-  background: #343851;
+  background: #303136;
   color: #ffffff;
 }
 
@@ -3170,6 +3308,19 @@ progress::-webkit-progress-value {
   padding: 0 8px;
 }
 
+.combo-slider-row strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border: 1px solid #303033;
+  border-radius: 8px;
+  background: #111827;
+  color: #f4f4f5;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .combo-position-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3177,7 +3328,7 @@ progress::-webkit-progress-value {
 }
 
 .combo-position-grid label {
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
 }
 
 .combo-align-row {
@@ -3196,8 +3347,20 @@ progress::-webkit-progress-value {
 }
 
 .combo-align-row button.active {
-  background: #5264d8;
+  background: #3a3b40;
   color: #ffffff;
+}
+
+.combo-basic-group {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #303033;
+}
+
+.combo-basic-group > strong {
+  color: #f4f4f5;
+  font-size: 13px;
 }
 
 .combo-basic-placeholder {
@@ -3213,9 +3376,9 @@ progress::-webkit-progress-value {
   height: 30px;
   min-height: 30px;
   padding: 0 12px;
-  border-color: rgb(142 162 255 / 45%);
-  background: #2d3351;
-  color: #dbe4ff;
+  border-color: #3a3a3d;
+  background: #2f3034;
+  color: #e5e7eb;
   font-size: 12px;
 }
 
@@ -3398,6 +3561,9 @@ progress::-webkit-progress-value {
 .combo-output-panel button {
   width: auto;
   min-width: 112px;
+  border-color: #3a3a3d;
+  background: #303136;
+  color: #f4f4f5;
 }
 
 .combo-output-list {

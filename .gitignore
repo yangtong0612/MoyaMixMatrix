@@ -10,6 +10,8 @@ release/
 target/
 build/
 
+assets/skincare_fission_pack/
+
 .env
 .env.*
 !.env.example
