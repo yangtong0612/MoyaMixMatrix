@@ -66,3 +66,14 @@ com.moya.portal.banked
 3. 增加 OSS 直传/分片上传接口，打通真实文件上传流程。
 4. 增加回收站、分享链接、容量统计和文件搜索。
 5. 为核心 Service 和 Mapper 增加 Testcontainers PostgreSQL 集成测试。
+
+## 2026-05-13 网盘后端进展
+
+- 已从参考网盘后端迁移核心能力，并按当前项目架构改写为 Spring Boot 3.5 + MyBatis-Plus + PostgreSQL/Flyway。
+- 已新增 JWT 认证、用户注册/登录/重置密码/OAuth 登录、当前用户查询。
+- 已新增 Redis 验证码服务：验证码自动过期、发送冷却、防刷次数限制，并支持多实例共享。
+- 已完善网盘文件节点能力：列表、详情、创建文件夹、重命名、移动、回收站、恢复、永久删除。
+- 已新增 OSS 上传流程：秒传、上传任务、OSS 上传票据、分片登记、完成上传、取消上传。
+- 已新增分享能力：公开分享链接、提取码、过期控制、保存分享、站内直传分享。
+- 已新增 V2 Flyway 迁移，补齐 OAuth、存储对象、上传分片、分享条目、站内分享等表，并为表和字段添加中文备注。
+- 已新增接口文档 `backend-netdisk-api.md` 和实现记录 `backend-netdisk-implementation.md`。

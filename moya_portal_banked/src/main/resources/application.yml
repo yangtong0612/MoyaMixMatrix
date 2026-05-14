@@ -18,6 +18,19 @@ server:
   port: ${MOYA_SERVER_PORT:8080}
 
 moya:
+  database:
+    enabled: ${MOYA_DATABASE_ENABLED:true}
+  auth:
+    jwt:
+      issuer: ${MOYA_JWT_ISSUER:moya-portal-banked}
+      secret: ${MOYA_JWT_SECRET:change-me-change-me-change-me-change-me}
+      ttl: ${MOYA_JWT_TTL:PT2H}
+  drive:
+    default-quota-bytes: ${MOYA_DRIVE_DEFAULT_QUOTA_BYTES:10737418240}
+  verification:
+    ttl: ${MOYA_VERIFICATION_TTL:PT5M}
+    send-cooldown: ${MOYA_VERIFICATION_SEND_COOLDOWN:PT1M}
+    max-check-attempts: ${MOYA_VERIFICATION_MAX_CHECK_ATTEMPTS:5}
   aliyun:
     ice:
       enabled: ${MOYA_ALIYUN_ICE_ENABLED:false}

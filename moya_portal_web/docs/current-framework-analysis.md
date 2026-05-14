@@ -57,3 +57,12 @@
 - 渲染进程只通过 preload 暴露的安全 API 调用本地能力，不直接使用 Node。
 - 网盘 API 保留现有接口路径，先用 React Query 或 Zustand action 封装请求。
 - 剪辑模块先建立素材、预览、时间线、属性面板四区布局，再逐步迁移每个 store 和 IPC。
+
+## 2026-05-14 网盘前端实施进展
+
+- 网盘前端已从旧 `/oss/netdisk` 占位接口迁移到新后端 `/api/auth`、`/api/verification`、`/api/drive`、`/api/share`。
+- 应用入口已加入登录门禁，token 使用 `localStorage.access` 并由 Axios 拦截器注入。
+- 网盘 Zustand 状态已扩展目录、面包屑、分类、回收站、站内分享、公开分享、上传进度和预览状态。
+- Electron 新增网盘专用 `cloud:upload-drive-file` 上传 IPC，并保留剪辑模块 `media:upload-to-oss` 不变。
+- 分享功能只生成链接、分享码和提取码，不生成二维码，不引入二维码依赖。
+- 新增 `frontend-netdisk-api.md` 和 `frontend-netdisk-implementation.md` 记录接口和实现流程。
