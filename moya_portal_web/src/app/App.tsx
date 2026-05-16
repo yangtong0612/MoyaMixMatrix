@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { Cloud, Clapperboard, Download, LogOut, Moon, Settings, Sun } from 'lucide-react';
+import { Cloud, Clapperboard, Download, Home, LogOut, Moon, Settings, Sun } from 'lucide-react';
 import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
 import { getMe, type AuthTokenResponse } from '@/features/cloud-drive/api/netdisk';
 import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
@@ -9,6 +9,7 @@ import { EditorPage } from '@/features/editor/EditorPage';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
 
 const navItems = [
+  { to: '/', label: '首页', icon: Home },
   { to: '/cloud-drive', label: '网盘', icon: Cloud },
   { to: '/editor', label: '剪辑', icon: Clapperboard },
   { to: '/transfers', label: '传输', icon: Download },
@@ -20,6 +21,7 @@ type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
 export function App() {
   const location = useLocation();
   const isEditorRoute = location.pathname.startsWith('/editor');
+  const isProtectedRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
   const cloudStore = useCloudDriveStore();
   const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (localStorage.getItem('access') ? 'checking' : 'anonymous'));
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -77,18 +79,19 @@ export function App() {
   }
 
   const isAuthenticated = authStatus === 'authenticated';
+  const showShell = isAuthenticated || !isProtectedRoute;
 
   return (
     <div className={`app-window theme-${theme}${isEditorRoute ? ' editor-workbench' : ''}`}>
       <header className="app-titlebar">
-        <div className="titlebar-brand">
+        <NavLink className="titlebar-brand" to="/">
           <img src={moyaMatrixLogo} alt="moya矩阵" />
           <div>
             <strong>moya矩阵</strong>
             <span>{theme === 'dark' ? '暗夜模式' : '白天模式'}</span>
           </div>
-        </div>
-        {isAuthenticated && isEditorRoute ? (
+        </NavLink>
+        {showShell && isEditorRoute ? (
           <nav className="titlebar-nav" aria-label="功能切换">
             {navItems.map((item) => (
               <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'active' : undefined)}>
@@ -112,7 +115,7 @@ export function App() {
         </div>
       </header>
 
-      {authStatus === 'checking' ? (
+      {authStatus === 'checking' && isProtectedRoute ? (
         <section className="auth-screen">
           <div className="auth-card">
             <div className="auth-message">正在恢复登录状态...</div>
@@ -120,9 +123,9 @@ export function App() {
         </section>
       ) : null}
 
-      {authStatus === 'anonymous' ? <AuthPage onAuthenticated={handleAuthenticated} /> : null}
+      {authStatus === 'anonymous' && isProtectedRoute ? <AuthPage onAuthenticated={handleAuthenticated} /> : null}
 
-      {isAuthenticated ? (
+      {showShell ? (
         <div className="app-shell">
         <aside className="app-nav">
           <div className="brand-block">
@@ -145,16 +148,60 @@ export function App() {
 
         <main className="app-main">
           <Routes>
-            <Route path="/" element={<Navigate to="/cloud-drive" replace />} />
-            <Route path="/cloud-drive" element={<CloudDrivePage />} />
+            <Route path="/" element={<HomeView />} />
+            <Route path="/cloud-drive" element={isAuthenticated ? <CloudDrivePage /> : <Navigate to="/cloud-drive" replace />} />
             <Route path="/editor" element={<EditorPage />} />
-            <Route path="/transfers" element={<CloudDrivePage initialMenu="transport" />} />
+            <Route path="/transfers" element={isAuthenticated ? <CloudDrivePage initialMenu="transport" /> : <Navigate to="/transfers" replace />} />
             <Route path="/settings" element={<SettingsView />} />
           </Routes>
         </main>
       </div>
       ) : null}
     </div>
+  );
+}
+
+function HomeView() {
+  return (
+    <section className="page home-page">
+      <div className="home-panel">
+        <img src={moyaMatrixLogo} alt="moya矩阵" />
+        <div>
+          <h1>moya矩阵</h1>
+          <p>一站式编、拍、剪、投、管的智能内容工作台。</p>
+        </div>
+        <NavLink to="/editor" className="home-workbench-action">
+          <Clapperboard size={17} />
+          <span>进入主工作台</span>
+        </NavLink>
+      </div>
+
+      <div className="home-workbench-strip">
+        <div>
+          <strong>主工作台</strong>
+          <span>从首页可直接回到剪辑工作区，也可以通过左侧导航切换模块。</span>
+        </div>
+        <NavLink to="/editor">打开工作台</NavLink>
+      </div>
+
+      <div className="home-module-grid">
+        <NavLink to="/cloud-drive" className="home-module-card">
+          <Cloud size={28} />
+          <strong>网盘</strong>
+          <span>登录后管理素材、分享和传输任务</span>
+        </NavLink>
+        <NavLink to="/editor" className="home-module-card">
+          <Clapperboard size={28} />
+          <strong>剪辑</strong>
+          <span>进入视频编辑与批量内容生产工作流</span>
+        </NavLink>
+        <NavLink to="/settings" className="home-module-card">
+          <Settings size={28} />
+          <strong>设置</strong>
+          <span>配置本地目录、导出路径和应用偏好</span>
+        </NavLink>
+      </div>
+    </section>
   );
 }
 

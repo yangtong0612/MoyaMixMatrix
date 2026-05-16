@@ -1,0 +1,211 @@
+.auth-screen {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) 420px;
+  align-items: center;
+  gap: 40px;
+  min-height: 100vh;
+  padding: 56px 72px;
+  background:
+    radial-gradient(circle at 18% 12%, rgb(var(--accent-rgb) / 15%), transparent 34%),
+    linear-gradient(135deg, #0b0b0c 0%, #111318 58%, #0b0b0c 100%);
+}
+
+.auth-return-actions {
+  position: absolute;
+  left: 24px;
+  top: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-return-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgb(23 23 23 / 78%);
+  color: #dbe7f5;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.auth-return-actions a:hover {
+  border-color: rgb(var(--accent-rgb) / 58%);
+  background: #202022;
+  color: #ffffff;
+}
+
+.auth-hero {
+  max-width: 720px;
+}
+
+.auth-logo {
+  display: grid;
+  place-items: center;
+  width: 78px;
+  height: 78px;
+  margin-bottom: 24px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
+  background: #171717;
+  box-shadow: var(--shadow);
+}
+
+.auth-logo img {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+}
+
+.auth-hero h1 {
+  margin: 0;
+  color: #f8fbff;
+  font-size: 44px;
+  line-height: 1.05;
+}
+
+.auth-hero p {
+  max-width: 640px;
+  margin: 18px 0 0;
+  color: #a6b3c7;
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+.auth-card {
+  width: 100%;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgb(23 23 23 / 92%);
+  box-shadow: var(--shadow);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #101011;
+}
+
+.auth-tabs button {
+  min-width: 0;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: #8492a8;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.auth-tabs button.active {
+  color: #ffffff;
+  background: linear-gradient(180deg, #7f91ff, #5564d8);
+}
+
+.auth-card form {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-card input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+}
+
+.auth-inline-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  gap: 8px;
+}
+
+.auth-inline-field button {
+  height: 42px;
+  min-height: 42px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.auth-primary-action {
+  height: 42px;
+  min-height: 42px;
+  margin-top: 4px;
+  border-color: rgb(var(--accent-rgb) / 42%);
+  background: linear-gradient(180deg, #7f91ff, #5564d8);
+  color: #ffffff;
+}
+
+.auth-message {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--accent-rgb) / 20%);
+  border-radius: var(--radius);
+  background: rgb(var(--accent-rgb) / 10%);
+  color: #dce7ff;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.theme-light .auth-screen {
+  background:
+    radial-gradient(circle at 18% 12%, rgb(91 126 255 / 15%), transparent 34%),
+    linear-gradient(135deg, #f3f6fb 0%, #ffffff 58%, #eef3f9 100%);
+}
+
+.theme-light .auth-logo,
+.theme-light .auth-card {
+  background: #ffffff;
+  border-color: #dce5f1;
+}
+
+.theme-light .auth-return-actions a {
+  color: #17202e;
+  background: rgb(255 255 255 / 82%);
+  border-color: #dce5f1;
+}
+
+.theme-light .auth-return-actions a:hover {
+  background: #eef3f9;
+}
+
+.theme-light .auth-hero h1 {
+  color: #17202e;
+}
+
+.theme-light .auth-hero p {
+  color: #526173;
+}
+
+.theme-light .auth-tabs {
+  background: #f8fafc;
+  border-color: #dce5f1;
+}
+
+.theme-light .auth-tabs button {
+  color: #64748b;
+}
+
+.theme-light .auth-tabs button.active,
+.theme-light .auth-primary-action {
+  color: #ffffff;
+  background: linear-gradient(180deg, #7f91ff, #5f6fe8);
+}
+
+.theme-light .auth-message {
+  color: #334155;
+  background: rgb(91 126 255 / 9%);
+  border-color: rgb(91 126 255 / 18%);
+}

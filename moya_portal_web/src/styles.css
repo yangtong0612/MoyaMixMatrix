@@ -196,6 +196,8 @@ progress::-webkit-progress-value {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  color: inherit;
+  text-decoration: none;
 }
 
 .titlebar-brand img {
@@ -355,6 +357,155 @@ progress::-webkit-progress-value {
 
 .page {
   min-height: 100vh;
+}
+
+.home-page {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  min-height: calc(100vh - 34px);
+  padding: 30px;
+  background:
+    radial-gradient(circle at 18% 12%, rgb(var(--accent-rgb) / 10%), transparent 30%),
+    linear-gradient(180deg, #0f0f10, #0b0b0c);
+}
+
+.home-panel {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 148px;
+  padding: 24px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.home-panel > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-panel img {
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.home-panel h1 {
+  margin: 0;
+  color: #f8fbff;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.home-panel p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.home-workbench-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 15px;
+  border: 1px solid rgb(var(--accent-rgb) / 42%);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #7f91ff, #5564d8);
+  color: #ffffff;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.home-workbench-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #171717;
+}
+
+.home-workbench-strip strong,
+.home-workbench-strip span {
+  display: block;
+}
+
+.home-workbench-strip strong {
+  color: #f8fbff;
+  font-size: 16px;
+}
+
+.home-workbench-strip span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.home-workbench-strip a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: #dbe7f5;
+  background: linear-gradient(180deg, #1a2534, #121a25);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.home-workbench-strip a:hover {
+  border-color: rgb(var(--accent-rgb) / 58%);
+  color: #ffffff;
+  background: linear-gradient(180deg, #2a2a2d, #202022);
+}
+
+.home-module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.home-module-card {
+  display: grid;
+  gap: 10px;
+  min-height: 150px;
+  padding: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #171717;
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.home-module-card:hover {
+  border-color: rgb(var(--accent-rgb) / 42%);
+  background: #1f1f20;
+  transform: translateY(-1px);
+}
+
+.home-module-card svg {
+  color: var(--accent);
+}
+
+.home-module-card strong {
+  font-size: 17px;
+}
+
+.home-module-card span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .page-header,
@@ -1029,6 +1180,53 @@ progress::-webkit-progress-value {
 .theme-light .app-main,
 .theme-light .editor-page {
   background: #eef3f9;
+}
+
+.theme-light .home-page {
+  background:
+    radial-gradient(circle at 18% 12%, rgb(91 126 255 / 10%), transparent 30%),
+    linear-gradient(180deg, #eef3f9, #f7faff);
+}
+
+.theme-light .home-panel,
+.theme-light .home-workbench-strip,
+.theme-light .home-module-card {
+  background: #ffffff;
+  border-color: #dce5f1;
+  box-shadow: 0 18px 42px rgb(15 23 42 / 8%);
+}
+
+.theme-light .home-panel h1,
+.theme-light .home-workbench-strip strong,
+.theme-light .home-module-card strong {
+  color: #17202e;
+}
+
+.theme-light .home-panel p,
+.theme-light .home-workbench-strip span,
+.theme-light .home-module-card span {
+  color: #64748b;
+}
+
+.theme-light .home-module-card {
+  color: #17202e;
+}
+
+.theme-light .home-module-card:hover {
+  background: #f8fafc;
+  border-color: rgb(91 126 255 / 34%);
+}
+
+.theme-light .home-workbench-strip a {
+  color: #17202e;
+  background: #ffffff;
+  border-color: #cfd9e7;
+}
+
+.theme-light .home-workbench-strip a:hover {
+  color: #17202e;
+  background: #eef3ff;
+  border-color: rgb(91 126 255 / 34%);
 }
 
 .theme-light .table-shell,
@@ -7476,4 +7674,479 @@ progress::-webkit-progress-value {
       #dfe7f2 32px,
       #dfe7f2 64px
     );
+}
+
+.theme-light.editor-workbench .editor-page,
+.theme-light.editor-workbench .editor-workspace {
+  background: #eef2f7;
+}
+
+.theme-light.editor-workbench .editor-panel,
+.theme-light.editor-workbench .preview-panel,
+.theme-light.editor-workbench .timeline-panel,
+.theme-light.editor-workbench .inspector-panel {
+  background: #ffffff;
+  border-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .material-rail {
+  background:
+    linear-gradient(180deg, rgb(91 126 255 / 6%), transparent 62%),
+    linear-gradient(90deg, #f7f9fc, #ffffff);
+  border-right-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .material-browser,
+.theme-light.editor-workbench .preview-header,
+.theme-light.editor-workbench .player-controls,
+.theme-light.editor-workbench .timeline-toolbar,
+.theme-light.editor-workbench .inspector-panel .section-header {
+  background: #ffffff;
+  border-color: #d7e0ec;
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .video-stage,
+.theme-light.editor-workbench .preview-panel:not(:has(.preview-canvas-box)) .video-stage {
+  background: #ffffff;
+}
+
+.theme-light.editor-workbench .video-placeholder {
+  background: #f8fafc;
+  color: #334155;
+  box-shadow: none;
+}
+
+.theme-light.editor-workbench .timeline-ruler,
+.theme-light.editor-workbench .timeline-label-spacer,
+.theme-light.editor-workbench .track-label,
+.theme-light.editor-workbench .track-row-main-empty .track-label {
+  background: #f7f9fc;
+  border-color: #d7e0ec;
+  color: #334155;
+}
+
+.theme-light.editor-workbench .timeline-scale {
+  background-color: #f2f5f9;
+  background-image:
+    linear-gradient(90deg, rgb(15 23 42 / 10%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(15 23 42 / 5%) 1px, transparent 1px);
+}
+
+.theme-light.editor-workbench .timeline-scale span {
+  color: #64748b;
+  border-left-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .timeline-minor-tick {
+  background: #cbd5e1;
+}
+
+.theme-light.editor-workbench .timeline-minor-tick.major {
+  background: #94a3b8;
+}
+
+.theme-light.editor-workbench .track-row,
+.theme-light.editor-workbench .track-lane,
+.theme-light.editor-workbench .track-lane-main-empty,
+.theme-light.editor-workbench .track-lane-new-video {
+  border-color: #d7e0ec;
+  background-color: #ffffff;
+}
+
+.theme-light.editor-workbench .track-lane {
+  background-image:
+    linear-gradient(90deg, #e0e7f1 1px, transparent 1px),
+    linear-gradient(180deg, rgb(15 23 42 / 1.5%), transparent);
+}
+
+.theme-light.editor-workbench .track-lane-main-empty {
+  background: #ffffff;
+}
+
+.theme-light.editor-workbench .main-track-empty-hint {
+  color: #94a3b8;
+}
+
+.theme-light.editor-workbench .main-track-empty-hint::before {
+  border-color: #64748b;
+  box-shadow: inset 0 0 0 2px #ffffff;
+}
+
+.theme-light.editor-workbench .track-row-new-video .track-label,
+.theme-light.editor-workbench .track-row-video .track-label,
+.theme-light.editor-workbench .track-row[class*="track-row-video-"] .track-label,
+.theme-light.editor-workbench .track-row-cover .track-label,
+.theme-light.editor-workbench .track-row-annotation .track-label,
+.theme-light.editor-workbench .track-row-audio .track-label {
+  background: #f7f9fc;
+  border-color: #d7e0ec;
+  color: #334155;
+}
+
+.theme-light.editor-workbench .timeline-playhead,
+.theme-light.editor-workbench .timeline-playhead::before {
+  background: #17202e;
+}
+
+.theme-light.editor-workbench .material-search,
+.theme-light.editor-workbench .material-import,
+.theme-light.editor-workbench .compact-tabs,
+.theme-light.editor-workbench .inspector-tabs,
+.theme-light.editor-workbench .inspector-segmented {
+  background: #f8fafc;
+  border-color: #cfd9e7;
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .material-search input,
+.theme-light.editor-workbench .inspector-panel input,
+.theme-light.editor-workbench .inspector-panel select {
+  color: #17202e;
+  background: #ffffff;
+}
+
+.theme-light.editor-workbench .material-dropzone,
+.theme-light.editor-workbench .inspector-empty-state {
+  background: #f8fafc;
+  border-color: #cbd7e6;
+  color: #475569;
+}
+
+.theme-light.editor-workbench .material-dropzone span,
+.theme-light.editor-workbench .material-card small,
+.theme-light.editor-workbench .draft-meta-list,
+.theme-light.editor-workbench .field,
+.theme-light.editor-workbench .timeline-tool-status,
+.theme-light.editor-workbench .timecode {
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .material-card,
+.theme-light.editor-workbench .draft-meta-list strong,
+.theme-light.editor-workbench .inspector-section header,
+.theme-light.editor-workbench .active-preview strong {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .timeline-toolbar .icon-button,
+.theme-light.editor-workbench .player-ghost-button,
+.theme-light.editor-workbench .player-text-button,
+.theme-light.editor-workbench .meter-button,
+.theme-light.editor-workbench .quality-select,
+.theme-light.editor-workbench .quality-select select {
+  color: #526173;
+  background: transparent;
+}
+
+.theme-light.editor-workbench .timeline-toolbar .icon-button:hover,
+.theme-light.editor-workbench .timeline-toolbar .icon-button.active,
+.theme-light.editor-workbench .player-ghost-button:hover,
+.theme-light.editor-workbench .player-text-button:hover,
+.theme-light.editor-workbench .meter-button:hover {
+  color: #17202e;
+  background: #eef3ff;
+}
+
+.theme-light.editor-workbench .workflow-workspace,
+.theme-light.editor-workbench .combo-optimize-workspace,
+.theme-light.editor-workbench .fission-board {
+  background: #eef2f7;
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .workflow-hero,
+.theme-light.editor-workbench .workflow-panel,
+.theme-light.editor-workbench .finished-card,
+.theme-light.editor-workbench .combo-library-panel,
+.theme-light.editor-workbench .combo-tools-panel,
+.theme-light.editor-workbench .combo-track-panel,
+.theme-light.editor-workbench .combo-output-panel,
+.theme-light.editor-workbench .fission-column,
+.theme-light.editor-workbench .fission-setting-card,
+.theme-light.editor-workbench .strategy-card-row article,
+.theme-light.editor-workbench .fission-preview-grid article,
+.theme-light.editor-workbench .fission-result-group,
+.theme-light.editor-workbench .shot-group-list article,
+.theme-light.editor-workbench .shot-clip-card,
+.theme-light.editor-workbench .group-audio-list article,
+.theme-light.editor-workbench .combo-recognition-card,
+.theme-light.editor-workbench .combo-panel-tip,
+.theme-light.editor-workbench .combo-output-list article,
+.theme-light.editor-workbench .channel-list article,
+.theme-light.editor-workbench .publish-tool-list button {
+  background: #ffffff;
+  border-color: #d7e0ec;
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .combo-panel-header,
+.theme-light.editor-workbench .combo-tools-panel > header,
+.theme-light.editor-workbench .combo-track-panel header,
+.theme-light.editor-workbench .combo-output-panel header,
+.theme-light.editor-workbench .fission-section-title,
+.theme-light.editor-workbench .fission-setting-tabs,
+.theme-light.editor-workbench .finished-group-header,
+.theme-light.editor-workbench .combo-tool-tabs,
+.theme-light.editor-workbench .combo-inspector-tabs,
+.theme-light.editor-workbench .combo-basic-inspector header,
+.theme-light.editor-workbench .combo-wordart-editor header,
+.theme-light.editor-workbench .combo-cover-dialog header,
+.theme-light.editor-workbench .combo-cover-dialog footer {
+  background: #f8fafc;
+  border-color: #d7e0ec;
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .workflow-hero h2,
+.theme-light.editor-workbench .workflow-panel > header strong,
+.theme-light.editor-workbench .finished-group-toggle,
+.theme-light.editor-workbench .finished-meta strong,
+.theme-light.editor-workbench .combo-panel-header strong,
+.theme-light.editor-workbench .combo-tools-panel > header strong,
+.theme-light.editor-workbench .combo-track-panel strong,
+.theme-light.editor-workbench .combo-output-panel strong,
+.theme-light.editor-workbench .combo-material-grid strong,
+.theme-light.editor-workbench .combo-empty-state strong,
+.theme-light.editor-workbench .combo-basic-inspector header div,
+.theme-light.editor-workbench .combo-basic-group > strong,
+.theme-light.editor-workbench .combo-filter-grid strong,
+.theme-light.editor-workbench .combo-style-grid strong,
+.theme-light.editor-workbench .combo-wordart-grid strong,
+.theme-light.editor-workbench .combo-output-list div,
+.theme-light.editor-workbench .fission-section-title strong,
+.theme-light.editor-workbench .strategy-card-row strong,
+.theme-light.editor-workbench .fission-result-group-header strong,
+.theme-light.editor-workbench .fission-preview-grid strong,
+.theme-light.editor-workbench .shot-clip-card strong,
+.theme-light.editor-workbench .group-audio-list strong,
+.theme-light.editor-workbench .channel-list strong {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .workflow-hero p,
+.theme-light.editor-workbench .workflow-panel > header span,
+.theme-light.editor-workbench .finished-meta span,
+.theme-light.editor-workbench .finished-meta small,
+.theme-light.editor-workbench .combo-panel-header span,
+.theme-light.editor-workbench .combo-tools-panel > header span,
+.theme-light.editor-workbench .combo-material-grid small,
+.theme-light.editor-workbench .combo-empty-state span,
+.theme-light.editor-workbench .combo-basic-inspector header span,
+.theme-light.editor-workbench .combo-tool-body p,
+.theme-light.editor-workbench .combo-output-list small,
+.theme-light.editor-workbench .fission-board .shot-group-list small,
+.theme-light.editor-workbench .fission-board .audio-drop-panel header,
+.theme-light.editor-workbench .fission-board .strategy-summary,
+.theme-light.editor-workbench .strategy-card-row span,
+.theme-light.editor-workbench .fission-result-group-header span,
+.theme-light.editor-workbench .fission-preview-meta,
+.theme-light.editor-workbench .fission-result-empty span,
+.theme-light.editor-workbench .shot-clip-card small,
+.theme-light.editor-workbench .group-audio-list span,
+.theme-light.editor-workbench .group-audio-empty,
+.theme-light.editor-workbench .channel-list span,
+.theme-light.editor-workbench .channel-list small {
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .combo-filter-row select,
+.theme-light.editor-workbench .combo-material-pagination select,
+.theme-light.editor-workbench .combo-timeline-tools select,
+.theme-light.editor-workbench .combo-recognition-card select,
+.theme-light.editor-workbench .combo-basic-inspector input[type="number"],
+.theme-light.editor-workbench .combo-basic-inspector input[type="text"],
+.theme-light.editor-workbench .combo-subtitle-list input[type="text"],
+.theme-light.editor-workbench .combo-subtitle-list label > input:last-child,
+.theme-light.editor-workbench .combo-wordart-editor input,
+.theme-light.editor-workbench .fission-setting-card select,
+.theme-light.editor-workbench .fission-setting-card input[type="number"],
+.theme-light.editor-workbench .fission-generate-bar select {
+  background: #ffffff;
+  border-color: #cfd9e7;
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .combo-panel-header button,
+.theme-light.editor-workbench .combo-output-panel button,
+.theme-light.editor-workbench .combo-material-pagination button,
+.theme-light.editor-workbench .combo-timeline-tools button,
+.theme-light.editor-workbench .combo-timeline-actions button,
+.theme-light.editor-workbench .combo-tool-tabs button,
+.theme-light.editor-workbench .combo-inspector-tabs button,
+.theme-light.editor-workbench .combo-basic-target-row button,
+.theme-light.editor-workbench .combo-align-row button,
+.theme-light.editor-workbench .combo-filter-grid button,
+.theme-light.editor-workbench .combo-style-grid button,
+.theme-light.editor-workbench .combo-wordart-grid button,
+.theme-light.editor-workbench .combo-cover-source-tabs button,
+.theme-light.editor-workbench .fission-section-title button,
+.theme-light.editor-workbench .fission-mode-row button,
+.theme-light.editor-workbench .fission-setting-tabs button,
+.theme-light.editor-workbench .combo-mode button,
+.theme-light.editor-workbench .fission-setting-card button,
+.theme-light.editor-workbench .fission-pagination button,
+.theme-light.editor-workbench .finished-actions button {
+  background: #ffffff;
+  border-color: #cfd9e7;
+  color: #334155;
+}
+
+.theme-light.editor-workbench .combo-panel-header button:hover,
+.theme-light.editor-workbench .combo-output-panel button:hover,
+.theme-light.editor-workbench .combo-material-pagination button:hover,
+.theme-light.editor-workbench .combo-timeline-tools button:hover,
+.theme-light.editor-workbench .combo-timeline-actions button:hover,
+.theme-light.editor-workbench .combo-tool-tabs button:hover,
+.theme-light.editor-workbench .combo-tool-tabs button.active,
+.theme-light.editor-workbench .combo-inspector-tabs button:hover,
+.theme-light.editor-workbench .combo-inspector-tabs button.active,
+.theme-light.editor-workbench .combo-basic-target-row button.active,
+.theme-light.editor-workbench .combo-align-row button.active,
+.theme-light.editor-workbench .combo-filter-grid button.active,
+.theme-light.editor-workbench .combo-style-grid button.active,
+.theme-light.editor-workbench .combo-wordart-grid button.active,
+.theme-light.editor-workbench .combo-cover-source-tabs button.active,
+.theme-light.editor-workbench .fission-mode-row button.active,
+.theme-light.editor-workbench .fission-setting-tabs button.active,
+.theme-light.editor-workbench .combo-mode button.active,
+.theme-light.editor-workbench .fission-pagination button.active {
+  background: #eef3ff;
+  border-color: rgb(91 126 255 / 34%);
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-generate-button,
+.theme-light.editor-workbench .combo-tool-actions button,
+.theme-light.editor-workbench .fission-result-actions button:not(.danger-action),
+.theme-light.editor-workbench .fission-pagination .waterfall-action {
+  background: linear-gradient(180deg, #7f91ff, #5f6fe8);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.theme-light.editor-workbench .combo-material-browser,
+.theme-light.editor-workbench .combo-tool-body,
+.theme-light.editor-workbench .combo-basic-inspector,
+.theme-light.editor-workbench .combo-basic-placeholder,
+.theme-light.editor-workbench .combo-subtitle-list label,
+.theme-light.editor-workbench .combo-style-list label,
+.theme-light.editor-workbench .combo-wordart-editor,
+.theme-light.editor-workbench .fission-left .shot-group-list,
+.theme-light.editor-workbench .fission-left .audio-drop-panel,
+.theme-light.editor-workbench .fission-settings-stack,
+.theme-light.editor-workbench .strategy-card-shell,
+.theme-light.editor-workbench .fission-preview-grid {
+  background: #f8fafc;
+  border-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .combo-material-grid article {
+  background: #ffffff;
+  border-color: #d7e0ec;
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .combo-material-grid article.selected .combo-thumb,
+.theme-light.editor-workbench .combo-material-grid article.previewing .combo-thumb,
+.theme-light.editor-workbench .shot-group-list article.active,
+.theme-light.editor-workbench .strategy-card-row article.active,
+.theme-light.editor-workbench .fission-preview-grid article.selected,
+.theme-light.editor-workbench .fission-preview-grid article.batch-selected {
+  border-color: rgb(91 126 255 / 58%);
+  box-shadow: 0 0 0 1px rgb(91 126 255 / 24%);
+}
+
+.theme-light.editor-workbench .combo-preview-panel,
+.theme-light.editor-workbench .combo-preview-panel.preview-panel {
+  background: #ffffff;
+  border-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .combo-preview-stage {
+  background: #ffffff;
+}
+
+.theme-light.editor-workbench .combo-preview-canvas {
+  background: #f8fafc;
+  border-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .combo-preview-panel.ratio-empty .combo-preview-placeholder,
+.theme-light.editor-workbench .combo-preview-placeholder,
+.theme-light.editor-workbench .combo-track-empty,
+.theme-light.editor-workbench .combo-track-empty-inline,
+.theme-light.editor-workbench .combo-empty-timeline-drop,
+.theme-light.editor-workbench .fission-result-empty,
+.theme-light.editor-workbench .workflow-empty-state {
+  background: #ffffff;
+  border-color: #cbd7e6;
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .combo-player-controls.player-controls {
+  background: #ffffff;
+  border-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .combo-timeline-toolbar,
+.theme-light.editor-workbench .combo-timeline-ruler,
+.theme-light.editor-workbench .combo-timeline-label-spacer,
+.theme-light.editor-workbench .combo-track-label-row {
+  background: #f7f9fc;
+  border-color: #d7e0ec;
+  color: #334155;
+}
+
+.theme-light.editor-workbench .combo-ruler-scale {
+  background-color: #f2f5f9;
+  background-image:
+    linear-gradient(90deg, rgb(15 23 42 / 10%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(15 23 42 / 5%) 1px, transparent 1px);
+}
+
+.theme-light.editor-workbench .combo-ruler-scale span,
+.theme-light.editor-workbench .combo-ruler-scale i::before {
+  color: #64748b;
+  border-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .combo-timeline-body,
+.theme-light.editor-workbench .combo-track-lanes,
+.theme-light.editor-workbench .combo-track-row,
+.theme-light.editor-workbench .combo-main-track,
+.theme-light.editor-workbench .combo-subtitle-track,
+.theme-light.editor-workbench .combo-sticker-track,
+.theme-light.editor-workbench .combo-audio-track,
+.theme-light.editor-workbench .combo-effect-track {
+  background-color: #ffffff;
+  border-color: #d7e0ec;
+}
+
+.theme-light.editor-workbench .combo-track-lanes {
+  background-image:
+    linear-gradient(90deg, #e0e7f1 1px, transparent 1px),
+    linear-gradient(180deg, rgb(15 23 42 / 1.5%), transparent);
+}
+
+.theme-light.editor-workbench .combo-playhead,
+.theme-light.editor-workbench .combo-playhead::before,
+.theme-light.editor-workbench .combo-playhead::after {
+  background: #17202e;
+}
+
+.theme-light.editor-workbench .combo-main-track > button,
+.theme-light.editor-workbench .combo-sticker-track > button,
+.theme-light.editor-workbench .combo-subtitle-track > button,
+.theme-light.editor-workbench .combo-audio-track > button,
+.theme-light.editor-workbench .combo-effect-track > button {
+  color: #ffffff;
+}
+
+.theme-light.editor-workbench .combo-basic-target-row button:disabled,
+.theme-light.editor-workbench .fission-generate-button:disabled,
+.theme-light.editor-workbench .fission-result-actions button:disabled {
+  background: #eef2f7;
+  border-color: #d7e0ec;
+  color: #94a3b8;
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { KeyRound, LogIn, RotateCcw, Send, UserPlus } from 'lucide-react';
+import { Clapperboard, Home, KeyRound, LogIn, RotateCcw, Send, UserPlus } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
 import { login, register, resetPassword, sendVerificationCode, type AuthTokenResponse } from '../api/netdisk';
 import './auth.css';
@@ -86,6 +87,17 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
 
   return (
     <section className="auth-screen">
+      <div className="auth-return-actions">
+        <Link to="/">
+          <Home size={15} />
+          返回首页
+        </Link>
+        <Link to="/editor">
+          <Clapperboard size={15} />
+          主工作台
+        </Link>
+      </div>
+
       <div className="auth-hero">
         <div className="auth-logo">
           <img src={moyaMatrixLogo} alt="moya矩阵" />
