@@ -18,6 +18,14 @@
 | 注册/找回密码发送验证码 | POST | `/api/verification/send` | Redis 验证码，支持冷却和过期 |
 | 可选校验 | POST | `/api/verification/check` | 校验并消费验证码 |
 
+### 前端字段约定
+
+- 登录表单提交 `{ account, password }` 到 `/api/auth/login`，成功后写入 `localStorage.access`。
+- 注册表单提交 `{ username, password, email|phone, displayName, verificationChannel, verificationTarget, verificationCode }` 到 `/api/auth/register`。
+- 找回密码提交 `{ verificationChannel, verificationTarget, verificationCode, newPassword }` 到 `/api/auth/reset-password`。
+- 验证码发送提交 `{ scene, channel, target }` 到 `/api/verification/send`；开发环境若响应 `devCode`，登录页自动填入验证码输入框。
+- `401/403` 会触发前端登录态清理，应用回到登录页。
+
 ## 文件与回收站
 
 | 页面触发 | 方法 | 路径 | 说明 |

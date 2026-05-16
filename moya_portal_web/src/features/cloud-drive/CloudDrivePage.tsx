@@ -52,6 +52,7 @@ import {
 import { useCloudDriveStore, type CloudMenuKey, type FileCategory, type UploadState } from './cloudDriveStore';
 import { CloudFileTable, formatSize, type CloudFileViewMode } from './components/CloudFileTable';
 import { TransferPanel } from './components/TransferPanel';
+import './cloudDrive.css';
 
 interface CloudDrivePageProps {
   initialMenu?: CloudMenuKey;
@@ -230,7 +231,7 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
       percent: 0,
       status: 'queued'
     }));
-    store.setUploadStates(queuedUploads);
+    store.setUploadStates([...queuedUploads, ...useCloudDriveStore.getState().uploadStates]);
     for (let index = 0; index < localPaths.length; index += 1) {
       await uploadOne(localPaths[index], queuedUploads[index].id);
     }

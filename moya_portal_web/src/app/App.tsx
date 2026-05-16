@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { Cloud, Clapperboard, Download, Moon, Settings, Sun } from 'lucide-react';
+import { Cloud, Clapperboard, Download, LogOut, Moon, Settings, Sun } from 'lucide-react';
 import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
+import { getMe, type AuthTokenResponse } from '@/features/cloud-drive/api/netdisk';
+import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
+import { useCloudDriveStore } from '@/features/cloud-drive/cloudDriveStore';
 import { EditorPage } from '@/features/editor/EditorPage';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
 
@@ -12,18 +15,68 @@ const navItems = [
   { to: '/settings', label: '设置', icon: Settings }
 ];
 
+type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
+
 export function App() {
   const location = useLocation();
   const isEditorRoute = location.pathname.startsWith('/editor');
+  const cloudStore = useCloudDriveStore();
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (localStorage.getItem('access') ? 'checking' : 'anonymous'));
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return localStorage.getItem('moya-theme') === 'light' ? 'light' : 'dark';
   });
+
+  useEffect(() => {
+    let canceled = false;
+    async function restoreSession() {
+      const token = localStorage.getItem('access');
+      if (!token) {
+        setAuthStatus('anonymous');
+        return;
+      }
+      try {
+        const user = await getMe();
+        if (canceled) return;
+        cloudStore.setCurrentUser(user);
+        setAuthStatus('authenticated');
+      } catch {
+        if (canceled) return;
+        expireSession();
+      }
+    }
+
+    restoreSession();
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = () => expireSession();
+    window.addEventListener('moya-auth-expired', handler);
+    return () => window.removeEventListener('moya-auth-expired', handler);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('moya-theme', theme);
     document.documentElement.dataset.theme = theme;
     window.surgicol?.app?.setTitlebarTheme(theme).catch(() => undefined);
   }, [theme]);
+
+  async function handleAuthenticated(token: AuthTokenResponse) {
+    localStorage.setItem('access', token.token);
+    const user = await getMe();
+    cloudStore.setCurrentUser(user);
+    setAuthStatus('authenticated');
+  }
+
+  function expireSession() {
+    localStorage.removeItem('access');
+    cloudStore.clearWorkspace();
+    setAuthStatus('anonymous');
+  }
+
+  const isAuthenticated = authStatus === 'authenticated';
 
   return (
     <div className={`app-window theme-${theme}${isEditorRoute ? ' editor-workbench' : ''}`}>
@@ -35,7 +88,7 @@ export function App() {
             <span>{theme === 'dark' ? '暗夜模式' : '白天模式'}</span>
           </div>
         </div>
-        {isEditorRoute ? (
+        {isAuthenticated && isEditorRoute ? (
           <nav className="titlebar-nav" aria-label="功能切换">
             {navItems.map((item) => (
               <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'active' : undefined)}>
@@ -45,13 +98,32 @@ export function App() {
             ))}
           </nav>
         ) : null}
-        <button className="theme-toggle" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          <span>{theme === 'dark' ? '白天' : '暗夜'}</span>
-        </button>
+        <div className="titlebar-actions">
+          <button className="theme-toggle" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            <span>{theme === 'dark' ? '白天' : '暗夜'}</span>
+          </button>
+          {isAuthenticated ? (
+            <button className="logout-button" type="button" onClick={expireSession}>
+              <LogOut size={15} />
+              <span>退出</span>
+            </button>
+          ) : null}
+        </div>
       </header>
 
-      <div className="app-shell">
+      {authStatus === 'checking' ? (
+        <section className="auth-screen">
+          <div className="auth-card">
+            <div className="auth-message">正在恢复登录状态...</div>
+          </div>
+        </section>
+      ) : null}
+
+      {authStatus === 'anonymous' ? <AuthPage onAuthenticated={handleAuthenticated} /> : null}
+
+      {isAuthenticated ? (
+        <div className="app-shell">
         <aside className="app-nav">
           <div className="brand-block">
             <img className="brand-mark" src={moyaMatrixLogo} alt="moya矩阵" />
@@ -81,6 +153,7 @@ export function App() {
           </Routes>
         </main>
       </div>
+      ) : null}
     </div>
   );
 }

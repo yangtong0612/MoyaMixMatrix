@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Cloud, KeyRound, LogIn, RotateCcw, Send, UserPlus } from 'lucide-react';
+import { KeyRound, LogIn, RotateCcw, Send, UserPlus } from 'lucide-react';
+import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
 import { login, register, resetPassword, sendVerificationCode, type AuthTokenResponse } from '../api/netdisk';
+import './auth.css';
 
 interface AuthPageProps {
-  onAuthenticated: (token: AuthTokenResponse) => void;
+  onAuthenticated: (token: AuthTokenResponse) => void | Promise<void>;
 }
 
 type AuthMode = 'login' | 'register' | 'reset';
@@ -86,10 +88,10 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
     <section className="auth-screen">
       <div className="auth-hero">
         <div className="auth-logo">
-          <Cloud size={30} />
+          <img src={moyaMatrixLogo} alt="moya矩阵" />
         </div>
-        <h1>moya矩阵网盘</h1>
-        <p>登录后使用网盘、剪辑、传输和设置。文件上传走独立 Electron 网盘链路，剪辑上传链路保持不变。</p>
+        <h1>moya矩阵</h1>
+        <p>通过生成式AI应用工具，重新定义内容商业工作流，一站式编、拍、剪、投、管，10-50倍视频产出效率和量级提升，直接促进企业视频内容商业增长</p>
       </div>
 
       <div className="auth-card">
@@ -112,7 +114,7 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
           <form onSubmit={submitLogin}>
             <input name="account" placeholder="用户名 / 邮箱 / 手机号" required />
             <input name="password" type="password" placeholder="密码" required />
-            <button className="primary-action" disabled={loading} type="submit">
+            <button className="auth-primary-action" disabled={loading} type="submit">
               <LogIn size={16} />
               登录
             </button>
@@ -124,7 +126,7 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
             <input name="username" placeholder="用户名" required />
             <input name="displayName" placeholder="展示名称" />
             <input name="password" type="password" placeholder="密码" required />
-            <div className="inline-field">
+            <div className="auth-inline-field">
               <input name="target" value={registerTarget} onChange={(event) => setRegisterTarget(event.target.value)} placeholder="邮箱或手机号" required />
               <button type="button" onClick={() => requestCode('register', registerTarget, setRegisterCode)}>
                 <Send size={15} />
@@ -132,7 +134,7 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
               </button>
             </div>
             <input name="verificationCode" value={registerCode} onChange={(event) => setRegisterCode(event.target.value)} placeholder="验证码" required />
-            <button className="primary-action" disabled={loading} type="submit">
+            <button className="auth-primary-action" disabled={loading} type="submit">
               <UserPlus size={16} />
               注册并登录
             </button>
@@ -141,7 +143,7 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
 
         {mode === 'reset' ? (
           <form onSubmit={submitReset}>
-            <div className="inline-field">
+            <div className="auth-inline-field">
               <input name="target" value={resetTarget} onChange={(event) => setResetTarget(event.target.value)} placeholder="邮箱或手机号" required />
               <button type="button" onClick={() => requestCode('reset', resetTarget, setResetCode)}>
                 <Send size={15} />
@@ -150,7 +152,7 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
             </div>
             <input name="verificationCode" value={resetCode} onChange={(event) => setResetCode(event.target.value)} placeholder="验证码" required />
             <input name="newPassword" type="password" placeholder="新密码" required />
-            <button className="primary-action" disabled={loading} type="submit">
+            <button className="auth-primary-action" disabled={loading} type="submit">
               <RotateCcw size={16} />
               更新密码
             </button>

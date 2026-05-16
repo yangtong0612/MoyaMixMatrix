@@ -66,3 +66,10 @@
 - Electron 新增网盘专用 `cloud:upload-drive-file` 上传 IPC，并保留剪辑模块 `media:upload-to-oss` 不变。
 - 分享功能只生成链接、分享码和提取码，不生成二维码，不引入二维码依赖。
 - 新增 `frontend-netdisk-api.md` 和 `frontend-netdisk-implementation.md` 记录接口和实现流程。
+
+## 2026-05-15 网盘前端样式规范调整
+
+- 网盘视觉样式迁移到 `src/features/cloud-drive/cloudDrive.css`，由 `CloudDrivePage.tsx` 显式引入。
+- 新增网盘样式统一使用 `.cloud-drive-product` 作用域，降低与剪辑模块、设置页和全局按钮样式的冲突风险。
+- 传输列表页面删除内部“文件上传 / 云添加”二级栏，左侧主菜单“传输列表”直接进入上传历史。
+- 上传历史由 `cloudDriveStore.ts` 持久化到本地 `localStorage`，刷新或重启后保留最近上传记录。

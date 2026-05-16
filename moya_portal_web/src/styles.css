@@ -217,13 +217,33 @@ progress::-webkit-progress-value {
   font-size: 10px;
 }
 
-.theme-toggle {
+.titlebar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.theme-toggle,
+.logout-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-height: 24px;
   height: 24px;
   padding: 0 9px;
+  border: 1px solid #273348;
   border-radius: 6px;
+  color: #dce7f7;
+  background: #111827;
   font-size: 12px;
   -webkit-app-region: no-drag;
+}
+
+.logout-button {
+  color: #eef4ff;
 }
 
 .titlebar-nav {
@@ -943,6 +963,13 @@ progress::-webkit-progress-value {
 
 .theme-light .titlebar-brand span {
   color: #64748b;
+}
+
+.theme-light .theme-toggle,
+.theme-light .logout-button {
+  color: #17202e;
+  border-color: #dbe5f1;
+  background: #ffffff;
 }
 
 .theme-light .app-shell {
