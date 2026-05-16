@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { Cloud, Clapperboard, Download, Home, LogOut, Moon, Settings, Sun } from 'lucide-react';
+import { ArrowRight, Cloud, Clapperboard, Download, Flame, Home, LogOut, Moon, Package, Repeat2, Settings, ShoppingBag, Sparkles, Store, Sun } from 'lucide-react';
 import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
 import { getMe, type AuthTokenResponse } from '@/features/cloud-drive/api/netdisk';
 import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
@@ -162,6 +162,45 @@ export function App() {
 }
 
 function HomeView() {
+  const productVideoScenarios = [
+    {
+      key: 'product-spokesperson',
+      title: '商品口播',
+      subtitle: '商品图 + 卖点，一键生成真人讲解口播',
+      prompt: '上传商品图 / 详情页',
+      output: '卖点脚本 · 数字人口播 · 爆款字幕',
+      icon: ShoppingBag,
+      tone: 'speech'
+    },
+    {
+      key: 'product-showcase',
+      title: '商品展示',
+      subtitle: '围绕产品外观、细节、使用场景生成展示视频',
+      prompt: '上传商品主图 / 场景图',
+      output: '细节镜头 · 功能亮点 · 节奏卡点',
+      icon: Package,
+      tone: 'showcase'
+    },
+    {
+      key: 'store-traffic',
+      title: '门店引流',
+      subtitle: '门头、环境、团购活动自动包装成本地生活视频',
+      prompt: '上传门店图 / 活动海报',
+      output: '位置引导 · 到店理由 · 优惠 CTA',
+      icon: Store,
+      tone: 'store'
+    },
+    {
+      key: 'hot-replica',
+      title: '爆款复刻',
+      subtitle: '参考爆款结构，复刻标题、节奏、字幕和转化钩子',
+      prompt: '粘贴爆款链接 / 上传参考视频',
+      output: '拆解结构 · 同款节奏 · 差异化成片',
+      icon: Flame,
+      tone: 'replica'
+    }
+  ];
+
   return (
     <section className="page home-page">
       <div className="home-panel">
@@ -170,9 +209,9 @@ function HomeView() {
           <h1>moya矩阵</h1>
           <p>一站式编、拍、剪、投、管的智能内容工作台。</p>
         </div>
-        <NavLink to="/editor" className="home-workbench-action">
-          <Clapperboard size={17} />
-          <span>进入主工作台</span>
+        <NavLink to="/editor?workflow=viral" className="home-workbench-action">
+          <Sparkles size={17} />
+          <span>进入网感剪辑</span>
         </NavLink>
       </div>
 
@@ -185,6 +224,11 @@ function HomeView() {
       </div>
 
       <div className="home-module-grid">
+        <NavLink to="/editor?workflow=viral" className="home-module-card">
+          <Sparkles size={28} />
+          <strong>网感剪辑</strong>
+          <span>导入原视频，一键生成字幕、花字、贴纸、音效和动效包装</span>
+        </NavLink>
         <NavLink to="/cloud-drive" className="home-module-card">
           <Cloud size={28} />
           <strong>网盘</strong>
@@ -200,6 +244,50 @@ function HomeView() {
           <strong>设置</strong>
           <span>配置本地目录、导出路径和应用偏好</span>
         </NavLink>
+      </div>
+
+      <div className="home-product-section">
+        <div className="home-section-heading">
+          <div>
+            <span>商品视频创作</span>
+            <h2>选择一个增长场景，快速生成可发布视频</h2>
+          </div>
+          <NavLink to="/editor?workflow=viral">
+            <Repeat2 size={15} />
+            <span>进入批量创作</span>
+          </NavLink>
+        </div>
+
+        <div className="home-product-grid">
+          {productVideoScenarios.map((scenario) => (
+            <NavLink
+              key={scenario.key}
+              to={`/editor?workflow=viral&scenario=${scenario.key}`}
+              className={`home-product-card ${scenario.tone}`}
+            >
+              <div className="product-card-preview">
+                <div className="product-card-phone">
+                  <scenario.icon size={28} />
+                  <strong>{scenario.title}</strong>
+                  <span>{scenario.output}</span>
+                  <i />
+                </div>
+              </div>
+              <div className="product-card-copy">
+                <div>
+                  <scenario.icon size={20} />
+                  <strong>{scenario.title}</strong>
+                </div>
+                <p>{scenario.subtitle}</p>
+                <small>{scenario.prompt}</small>
+              </div>
+              <span className="product-card-action">
+                开始创作
+                <ArrowRight size={15} />
+              </span>
+            </NavLink>
+          ))}
+        </div>
       </div>
     </section>
   );

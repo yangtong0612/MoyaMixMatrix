@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type PointerEvent, type SyntheticEvent } from 'react';
 import {
   CheckCircle2,
   ChevronDown,
@@ -21,6 +21,7 @@ import {
   Menu,
   Mic,
   MousePointer2,
+  MoreVertical,
   Music,
   Pause,
   Play,
@@ -48,6 +49,7 @@ import {
   VolumeX,
   X
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import { useEditorStore, type MaterialItem } from './editorStore';
 import { MaterialPanel } from './components/MaterialPanel';
@@ -59,6 +61,7 @@ import { buildAliyunMixRequest, createAliyunOutputMediaUrl, getAliyunMixJobStatu
 
 export function EditorPage() {
   const editor = useEditorStore();
+  const [searchParams] = useSearchParams();
   const [lastSavedAt, setLastSavedAt] = useState<string>('-');
   const [activeWorkflow, setActiveWorkflow] = useState<EditorWorkflow>('materials');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -72,6 +75,13 @@ export function EditorPage() {
   useEffect(() => {
     void bootstrapDraftState();
   }, []);
+
+  useEffect(() => {
+    const workflow = searchParams.get('workflow');
+    if (isEditorWorkflow(workflow)) {
+      setActiveWorkflow(workflow);
+    }
+  }, [searchParams]);
 
   async function importLocalFiles() {
     const files = await window.surgicol.dialog.openFiles({
@@ -306,6 +316,16 @@ export function EditorPage() {
             <TimelinePanel />
           </div>
         </div>
+      ) : activeWorkflow === 'viral' ? (
+        <ViralPackagingWorkspace
+          projectName={editor.draftName}
+          onSavedToFinishedLibrary={(savedCount) => {
+            if (savedCount > 0) {
+              setFinishedLibraryVersion((value) => value + 1);
+              setActiveWorkflow('finished');
+            }
+          }}
+        />
       ) : activeWorkflow === 'fission' ? (
         workspaceBootstrapped ? (
           <FissionWorkspace
@@ -370,15 +390,20 @@ const editorFeatureTabs = [
   { label: '导入', icon: Plus }
 ];
 
-type EditorWorkflow = 'materials' | 'fission' | 'finished' | 'optimize' | 'publish';
+type EditorWorkflow = 'materials' | 'viral' | 'fission' | 'finished' | 'optimize' | 'publish';
 
 const editorWorkflowTabs: Array<{ id: EditorWorkflow; label: string; icon: typeof FolderOpen }> = [
   { id: 'materials', label: '基础素材', icon: FolderOpen },
+  { id: 'viral', label: '网感剪辑', icon: Sparkles },
   { id: 'fission', label: '极速裂变', icon: Sparkles },
   { id: 'finished', label: '成片库', icon: FileText },
   { id: 'optimize', label: '组合优化', icon: Shuffle },
   { id: 'publish', label: '矩阵发布', icon: Share2 }
 ];
+
+function isEditorWorkflow(value: string | null): value is EditorWorkflow {
+  return value === 'materials' || value === 'viral' || value === 'fission' || value === 'finished' || value === 'optimize' || value === 'publish';
+}
 
 const fissionSteps = [
   { title: '开头', count: 8, duration: '2.10s-8.20s', active: false },
@@ -626,6 +651,1288 @@ const publishChannels = [
   { name: '视频号', state: '待授权', plan: '未设置' },
   { name: '小红书', state: '已授权', plan: '明天 11:00' }
 ];
+
+type ViralTemplateKey = 'street' | 'seed' | 'deal' | 'story';
+
+interface ViralTemplate {
+  key: ViralTemplateKey;
+  name: string;
+  scene: string;
+  rhythm: string;
+  accent: string;
+  caption: string;
+  effects: string[];
+}
+
+interface ViralTemplateCard extends ViralTemplate {
+  cardId: string;
+  cardName: string;
+  variantIndex: number;
+}
+
+interface ViralTimelineClip {
+  id: string;
+  start: number;
+  end: number;
+}
+
+interface ViralPackageVersion {
+  id: string;
+  label: number;
+  name: string;
+  hook: string;
+  duration: string;
+  subtitleStyle: string;
+  sound: string;
+  effects: string[];
+  score: number;
+  path?: string;
+  coverPath?: string;
+}
+
+interface ViralRecentTask {
+  id: string;
+  name: string;
+  path?: string;
+  templateKey: ViralTemplateKey;
+  templateCardId?: string;
+  keywords: string;
+  savedAt: string;
+  duration: string;
+  finishedCount?: number;
+  hook?: string;
+  templateName?: string;
+  titlePosition?: { x: number; y: number };
+  captionPosition?: { x: number; y: number };
+}
+
+const VIRAL_TIMELINE_DURATION = 13;
+const VIRAL_TEMPLATE_PREVIEW_DURATION = 10;
+const VIRAL_RECENT_TASKS_KEY = 'editor:viral-recent-tasks';
+
+const viralTemplates: ViralTemplate[] = [
+  {
+    key: 'street',
+    name: '街访爆点',
+    scene: '前三秒强钩子，字幕大字居中，适合口播、探店、测评',
+    rhythm: '快切 0.8x-1.2x / 每 2 秒一次强调',
+    accent: '蓝白描边大标题',
+    caption: '关键词跳字 + 数字高亮',
+    effects: ['开场冲击标题', '关键词花字', '轻微推拉', '转场音效', '结尾行动指令']
+  },
+  {
+    key: 'seed',
+    name: '种草清单',
+    scene: '产品卖点逐条展开，适合美妆、服饰、家居',
+    rhythm: '稳定口播 + 卖点处放大 108%',
+    accent: '柔和贴纸标签',
+    caption: '双行字幕 + 卖点色块',
+    effects: ['卖点标签', '价格/利益点花字', 'BGM 自动压低', '柔光滤镜', '封面标题']
+  },
+  {
+    key: 'deal',
+    name: '成交转化',
+    scene: '痛点-方案-证明-行动，适合课程、服务、本地生活',
+    rhythm: '前 5 秒密集信息，CTA 段加重音效',
+    accent: '黑黄警示标题',
+    caption: '痛点词红色强调',
+    effects: ['痛点弹幕', '案例截图框', '信任背书贴纸', 'CTA 按钮动效', '收尾提示音']
+  },
+  {
+    key: 'story',
+    name: '故事反转',
+    scene: '先设悬念再解释，适合个人 IP、剧情口播',
+    rhythm: '悬念停顿 + 反转点闪白',
+    accent: '电影感字幕条',
+    caption: '分句字幕 + 情绪词强调',
+    effects: ['悬念标题', '反转闪白', '镜头慢推', '情绪音效', '结尾复盘卡']
+  }
+];
+
+const viralTemplateVariantNames = [
+  '高级红·双语',
+  '轻奢白·双语',
+  '经典蓝·双语',
+  '黄色闪亮',
+  '简洁黄白',
+  '轻透雅黑',
+  '基础白金',
+  '百搭黄·双语',
+  '清单黄白',
+  '清单科技',
+  '转化醒目',
+  '转化画中画'
+];
+
+const viralTemplateCards: ViralTemplateCard[] = viralTemplateVariantNames.map((cardName, index) => {
+  const template = viralTemplates[index % viralTemplates.length];
+  return {
+    ...template,
+    cardId: `${template.key}-${index}`,
+    cardName,
+    variantIndex: index
+  };
+});
+
+function createViralDefaultClips(duration = VIRAL_TIMELINE_DURATION): ViralTimelineClip[] {
+  return [{ id: 'clip-1', start: 0, end: Math.max(0.1, duration) }];
+}
+
+function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinishedLibrary: (savedCount: number) => void }) {
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const filmstripRef = useRef<HTMLDivElement>(null);
+  const playbackFrameRef = useRef<number | null>(null);
+  const playbackStartedAtRef = useRef(0);
+  const playbackTimelineStartedAtRef = useRef(0);
+  const templatePreviewFrameRef = useRef<number | null>(null);
+  const templatePreviewStartedAtRef = useRef(0);
+  const [sourceVideo, setSourceVideo] = useState<MaterialItem | null>(null);
+  const [recentTasks, setRecentTasks] = useState<ViralRecentTask[]>([]);
+  const [selectedTemplateCardId, setSelectedTemplateCardId] = useState(viralTemplateCards[0].cardId);
+  const [hoverTemplateCardId, setHoverTemplateCardId] = useState<string | null>(null);
+  const [activePackageTab, setActivePackageTab] = useState<'template' | 'captions' | 'sound'>('template');
+  const [packagingProgress, setPackagingProgress] = useState<number | null>(null);
+  const [previewRecentTask, setPreviewRecentTask] = useState<ViralRecentTask | null>(null);
+  const [previewRecentTime, setPreviewRecentTime] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState<'idle' | 'uploading' | 'analyzing' | 'ready'>('idle');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [keywords, setKeywords] = useState('零基础, 数字人, 视频创作, 小白');
+  const [videoVolume, setVideoVolume] = useState(80);
+  const [noiseReduction, setNoiseReduction] = useState(false);
+  const [addMusic, setAddMusic] = useState(true);
+  const [addSoundFx, setAddSoundFx] = useState(true);
+  const [titlePosition, setTitlePosition] = useState({ x: 50, y: 18 });
+  const [captionPosition, setCaptionPosition] = useState({ x: 50, y: 64 });
+  const [draggingOverlay, setDraggingOverlay] = useState<'title' | 'caption' | null>(null);
+  const [versions, setVersions] = useState<ViralPackageVersion[]>([]);
+  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>([]);
+  const [notice, setNotice] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [hoverTemplateTime, setHoverTemplateTime] = useState(0);
+  const [sourceDuration, setSourceDuration] = useState(VIRAL_TIMELINE_DURATION);
+  const [timelineClips, setTimelineClips] = useState<ViralTimelineClip[]>(createViralDefaultClips);
+  const [selectedClipId, setSelectedClipId] = useState('clip-1');
+  const appliedTemplate = viralTemplateCards.find((item) => item.cardId === selectedTemplateCardId) || viralTemplateCards[0];
+  const template = appliedTemplate;
+  const previewVersion = versions.find((item) => selectedVersionIds.includes(item.id)) || versions[0];
+  const captionSegments = buildViralCaptionSegments(keywords);
+  const timelineDuration = getViralTimelineDuration(timelineClips);
+  const rulerTimes = buildViralRulerTimes(timelineDuration);
+  const timelineCurrentTime = sourceToViralTimelineTime(timelineClips, currentTime);
+  const hoverTemplateEffectPhase = getViralPreviewEffectPhase(hoverTemplateTime, VIRAL_TEMPLATE_PREVIEW_DURATION);
+  const selectedClip = timelineClips.find((clip) => clip.id === selectedClipId) || timelineClips[0];
+  const activeTimelineClip = findViralClipAtSourceTime(timelineClips, currentTime) || selectedClip;
+  const editedCaptionSegments = buildEditedViralCaptionSegments(captionSegments, timelineClips);
+  const activeCaptionIndex = findEditedViralCaptionIndex(editedCaptionSegments, timelineCurrentTime);
+  const activeCaption = editedCaptionSegments[activeCaptionIndex] || editedCaptionSegments[0];
+  const previewHook = previewVersion?.hook || buildViralHook(template, activeCaption?.text || '核心卖点', activeCaptionIndex);
+  const previewSubtitle = previewVersion?.subtitleStyle || template.caption;
+
+  useEffect(() => {
+    let canceled = false;
+    window.surgicol.store.get<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY)
+      .then((tasks) => {
+        if (!canceled) setRecentTasks(Array.isArray(tasks) ? tasks : []);
+      })
+      .catch(() => {
+        if (!canceled) setRecentTasks([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const video = previewVideoRef.current;
+    if (!video || uploadPhase !== 'ready' || isPlaying) return;
+    if (Math.abs(video.currentTime - currentTime) > 0.25) {
+      video.currentTime = Math.min(currentTime, Number.isFinite(video.duration) ? video.duration : VIRAL_TIMELINE_DURATION);
+    }
+  }, [currentTime, isPlaying, uploadPhase]);
+
+  useEffect(() => {
+    const video = previewVideoRef.current;
+    if (!video || uploadPhase !== 'ready') return;
+    video.muted = videoVolume === 0;
+    video.volume = Math.max(0, Math.min(1, videoVolume / 100));
+  }, [videoVolume, uploadPhase]);
+
+  useEffect(() => {
+    const video = previewVideoRef.current;
+    if (!video || uploadPhase !== 'ready') return;
+    if (isPlaying) {
+      void video.play().catch(() => undefined);
+    } else {
+      video.pause();
+    }
+  }, [isPlaying, uploadPhase]);
+
+  useEffect(() => {
+    if (!isPlaying || uploadPhase !== 'ready') {
+      if (playbackFrameRef.current !== null) {
+        window.cancelAnimationFrame(playbackFrameRef.current);
+        playbackFrameRef.current = null;
+      }
+      return;
+    }
+
+    const syncPlayback = () => {
+      const video = previewVideoRef.current;
+      if (!video) return;
+      syncViralTimelinePlayback(video, performance.now());
+      playbackFrameRef.current = window.requestAnimationFrame(syncPlayback);
+    };
+
+    playbackFrameRef.current = window.requestAnimationFrame(syncPlayback);
+    return () => {
+      if (playbackFrameRef.current !== null) {
+        window.cancelAnimationFrame(playbackFrameRef.current);
+        playbackFrameRef.current = null;
+      }
+    };
+  }, [isPlaying, uploadPhase, timelineClips]);
+
+  useEffect(() => () => {
+    if (templatePreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(templatePreviewFrameRef.current);
+    }
+  }, []);
+
+  async function importSourceVideo() {
+    const files = await window.surgicol.dialog.openFiles({
+      filters: [{ name: '视频文件', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }]
+    });
+    const filePath = files[0];
+    if (!filePath) return;
+    const nextVideo: MaterialItem = {
+      id: crypto.randomUUID(),
+      name: filePath.split(/[\\/]/).pop() || filePath,
+      type: 'video',
+      source: 'local',
+      path: filePath,
+      duration: 18
+    };
+    setSourceVideo(nextVideo);
+    void persistViralRecentTask({
+      id: nextVideo.id,
+      name: nextVideo.name,
+      path: nextVideo.path,
+      templateKey: appliedTemplate.key,
+      templateCardId: selectedTemplateCardId,
+      keywords,
+      savedAt: new Date().toISOString(),
+      duration: formatViralDuration(sourceDuration)
+    });
+    setVersions([]);
+    setSelectedVersionIds([]);
+    setUploadProgress(9);
+    setUploadPhase('uploading');
+    setNotice('');
+    window.setTimeout(() => {
+      setUploadProgress(100);
+      setUploadPhase('analyzing');
+    }, 520);
+    window.setTimeout(() => {
+      setUploadPhase('ready');
+      setCurrentTime(0);
+      setSourceDuration(VIRAL_TIMELINE_DURATION);
+      setTimelineClips(createViralDefaultClips());
+      setSelectedClipId('clip-1');
+      setNotice('已完成语音检测和内容分析，请选择模板、文字快剪和声音设置。');
+    }, 1160);
+  }
+
+  async function persistViralRecentTask(task: ViralRecentTask) {
+    const storedTasks = await window.surgicol.store.get<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY).catch(() => []);
+    const nextTasks = [task, ...(Array.isArray(storedTasks) ? storedTasks.filter((item) => item.id !== task.id) : [])].slice(0, 12);
+    setRecentTasks(nextTasks);
+    await window.surgicol.store.set(VIRAL_RECENT_TASKS_KEY, nextTasks);
+  }
+
+  function restoreRecentTask(task: ViralRecentTask) {
+    setPreviewRecentTask(null);
+    setSourceVideo({
+      id: task.id,
+      name: task.name,
+      type: 'video',
+      source: 'local',
+      path: task.path,
+      duration: VIRAL_TIMELINE_DURATION
+    });
+    const restoredCard = viralTemplateCards.find((item) => item.cardId === task.templateCardId)
+      || viralTemplateCards.find((item) => item.key === task.templateKey)
+      || viralTemplateCards[0];
+    setSelectedTemplateCardId(restoredCard.cardId);
+    setHoverTemplateCardId(null);
+    setKeywords(task.keywords);
+    if (task.titlePosition) setTitlePosition(task.titlePosition);
+    if (task.captionPosition) setCaptionPosition(task.captionPosition);
+    setUploadPhase('ready');
+    setUploadProgress(100);
+    setVersions([]);
+    setSelectedVersionIds([]);
+    setCurrentTime(0);
+    setSourceDuration(VIRAL_TIMELINE_DURATION);
+    setTimelineClips(createViralDefaultClips());
+    setSelectedClipId('clip-1');
+    setNotice(`已恢复最近任务「${task.name}」。`);
+  }
+
+  function handleViralMetadataLoaded(event: SyntheticEvent<HTMLVideoElement>) {
+    const duration = event.currentTarget.duration;
+    if (!Number.isFinite(duration) || duration <= 0.1) return;
+    const nextDuration = Math.max(0.1, duration);
+    setSourceDuration(nextDuration);
+    setTimelineClips((clips) => (
+      isViralSingleFullClip(clips, sourceDuration)
+        ? createViralDefaultClips(nextDuration)
+        : clampViralClipsToDuration(clips, nextDuration)
+    ));
+    setCurrentTime((time) => Math.min(time, Math.max(0, nextDuration - 0.01)));
+  }
+
+  function previewTemplate(cardId: string | null) {
+    setHoverTemplateCardId(cardId);
+    if (cardId) {
+      const previewCard = viralTemplateCards.find((item) => item.cardId === cardId);
+      setNotice(`正在预览「${previewCard?.cardName || '模板'}」效果，点击应用后才会包装。`);
+      return;
+    }
+    setHoverTemplateTime(0);
+  }
+
+  function previewTemplateCardVideo(event: MouseEvent<HTMLButtonElement>, cardId: string) {
+    previewTemplate(cardId);
+    const video = event.currentTarget.querySelector<HTMLVideoElement>('video');
+    if (video) {
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      setHoverTemplateTime(0);
+      video.currentTime = 0;
+      void video.play().catch(() => undefined);
+      startTemplateCardPreviewClock(video);
+    }
+  }
+
+  function stopTemplateCardVideo(event: MouseEvent<HTMLButtonElement>) {
+    previewTemplate(null);
+    const video = event.currentTarget.querySelector<HTMLVideoElement>('video');
+    if (video) video.pause();
+    if (templatePreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(templatePreviewFrameRef.current);
+      templatePreviewFrameRef.current = null;
+    }
+  }
+
+  function syncTemplateCardPreview(event: SyntheticEvent<HTMLVideoElement>, cardId: string) {
+    if (cardId !== hoverTemplateCardId) return;
+    const nextTime = event.currentTarget.currentTime % VIRAL_TEMPLATE_PREVIEW_DURATION;
+    setHoverTemplateTime(nextTime);
+  }
+
+  function startTemplateCardPreviewClock(video: HTMLVideoElement) {
+    if (templatePreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(templatePreviewFrameRef.current);
+    }
+    templatePreviewStartedAtRef.current = performance.now();
+    const tick = (now: number) => {
+      const elapsed = ((now - templatePreviewStartedAtRef.current) / 1000) % VIRAL_TEMPLATE_PREVIEW_DURATION;
+      setHoverTemplateTime(elapsed);
+      if (video.paused) void video.play().catch(() => undefined);
+      if (Number.isFinite(video.duration) && video.duration > 0 && video.currentTime >= Math.min(video.duration, VIRAL_TEMPLATE_PREVIEW_DURATION) - 0.08) {
+        video.currentTime = 0;
+      }
+      templatePreviewFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    templatePreviewFrameRef.current = window.requestAnimationFrame(tick);
+  }
+
+  function applyTemplate(cardId: string) {
+    const nextTemplate = viralTemplateCards.find((item) => item.cardId === cardId) || viralTemplateCards[0];
+    setSelectedTemplateCardId(nextTemplate.cardId);
+    setHoverTemplateCardId(null);
+    setActivePackageTab('template');
+    setVersions([]);
+    setSelectedVersionIds([]);
+    setCurrentTime(0);
+    setPackagingProgress(0);
+    setNotice('');
+    const timer = window.setInterval(() => {
+      setPackagingProgress((progress) => {
+        const nextProgress = Math.min(100, (progress || 0) + 20);
+        if (nextProgress >= 100) {
+          window.clearInterval(timer);
+          setNotice(`已应用「${nextTemplate.cardName}」，左侧预览和时间轴已同步。`);
+          window.setTimeout(() => setPackagingProgress(null), 240);
+        }
+        return nextProgress;
+      });
+    }, 180);
+  }
+
+  function seekViralTimeline(clientX: number) {
+    const strip = filmstripRef.current;
+    if (!strip) return;
+    const rect = strip.getBoundingClientRect();
+    const nextTimelineTime = Math.max(0, Math.min(timelineDuration, ((clientX - rect.left) / rect.width) * timelineDuration));
+    seekViralTimelineTime(nextTimelineTime);
+  }
+
+  function seekViralTimelineTime(nextTimelineTime: number) {
+    const nextTime = viralTimelineTimeToSourceTime(timelineClips, nextTimelineTime);
+    setViralSourceTime(nextTime);
+    const nextClip = findViralClipAtSourceTime(timelineClips, nextTime);
+    if (nextClip) setSelectedClipId(nextClip.id);
+  }
+
+  function setViralSourceTime(nextTime: number) {
+    const playableTime = findNearestPlayableViralSourceTime(timelineClips, nextTime);
+    setCurrentTime(playableTime);
+    if (isPlaying) {
+      playbackTimelineStartedAtRef.current = sourceToViralTimelineTime(timelineClips, playableTime);
+      playbackStartedAtRef.current = performance.now();
+    }
+    const video = previewVideoRef.current;
+    if (video) {
+      video.currentTime = getViralMediaDisplayTime(video, playableTime);
+      if (isPlaying) {
+        void video.play().catch(() => setIsPlaying(false));
+      }
+    }
+  }
+
+  function beginViralPlayheadDrag(event: PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    seekViralTimeline(event.clientX);
+  }
+
+  function handlePreviewTimeUpdate(event: SyntheticEvent<HTMLVideoElement>) {
+    if (isPlaying) return;
+    syncViralPreviewPlayback(event.currentTarget);
+  }
+
+  function syncViralTimelinePlayback(video: HTMLVideoElement, now: number) {
+    const elapsed = Math.max(0, (now - playbackStartedAtRef.current) / 1000);
+    const nextTimelineTime = playbackTimelineStartedAtRef.current + elapsed;
+    if (nextTimelineTime >= timelineDuration) {
+      const firstTime = timelineClips[0]?.start || 0;
+      setIsPlaying(false);
+      video.pause();
+      video.currentTime = getViralMediaDisplayTime(video, firstTime);
+      setCurrentTime(firstTime);
+      setSelectedClipId(timelineClips[0]?.id || 'clip-1');
+      return;
+    }
+
+    const nextSourceTime = viralTimelineTimeToSourceTime(timelineClips, nextTimelineTime);
+    const nextClip = findViralClipAtSourceTime(timelineClips, nextSourceTime);
+    setCurrentTime(nextSourceTime);
+    if (nextClip) setSelectedClipId(nextClip.id);
+
+    const mediaTime = getViralMediaDisplayTime(video, nextSourceTime);
+    if (Math.abs(video.currentTime - mediaTime) > 0.18 || video.ended) {
+      video.currentTime = mediaTime;
+    }
+    if (video.paused) {
+      void video.play().catch(() => undefined);
+    }
+  }
+
+  function syncViralPreviewPlayback(video: HTMLVideoElement) {
+    const nextTime = video.currentTime;
+    const activeClip = findViralClipAtSourceTime(timelineClips, nextTime);
+    if (activeClip) {
+      if (nextTime >= activeClip.end - 0.06) {
+        const nextPlayableTime = findNextPlayableViralSourceTime(timelineClips, activeClip.end + 0.06);
+        if (nextPlayableTime <= activeClip.start && activeClip.id === timelineClips[timelineClips.length - 1]?.id) {
+          setIsPlaying(false);
+          video.pause();
+          video.currentTime = timelineClips[0]?.start || 0;
+          setCurrentTime(timelineClips[0]?.start || 0);
+          setSelectedClipId(timelineClips[0]?.id || 'clip-1');
+          return;
+        }
+        video.currentTime = nextPlayableTime;
+        setCurrentTime(nextPlayableTime);
+        const nextClip = findViralClipAtSourceTime(timelineClips, nextPlayableTime);
+        if (nextClip) setSelectedClipId(nextClip.id);
+        return;
+      }
+      setCurrentTime(nextTime);
+      setSelectedClipId(activeClip.id);
+      return;
+    }
+    const nextPlayableTime = findNextPlayableViralSourceTime(timelineClips, nextTime);
+    video.currentTime = nextPlayableTime;
+    setCurrentTime(nextPlayableTime);
+    const nextClip = findViralClipAtSourceTime(timelineClips, nextPlayableTime);
+    if (nextClip) setSelectedClipId(nextClip.id);
+  }
+
+  function toggleViralPlayback() {
+    const video = previewVideoRef.current;
+    if (!video) {
+      setIsPlaying((playing) => !playing);
+      return;
+    }
+    if (isPlaying) {
+      video.pause();
+      setIsPlaying(false);
+      return;
+    }
+    const playableTime = findNearestPlayableViralSourceTime(timelineClips, currentTime);
+    if (Math.abs(video.currentTime - playableTime) > 0.08) {
+      video.currentTime = getViralMediaDisplayTime(video, playableTime);
+    }
+    playbackTimelineStartedAtRef.current = sourceToViralTimelineTime(timelineClips, playableTime);
+    playbackStartedAtRef.current = performance.now();
+    void video.play()
+      .then(() => setIsPlaying(true))
+      .catch(() => {
+        video.muted = true;
+        void video.play()
+          .then(() => setIsPlaying(true))
+          .catch(() => setIsPlaying(false));
+      });
+  }
+
+  function splitSelectedViralClip() {
+    const clip = activeTimelineClip;
+    if (!clip) {
+      setNotice('请先选择要剪辑的片段。');
+      return;
+    }
+    const splitTime = Math.max(clip.start, Math.min(clip.end, currentTime));
+    if (splitTime - clip.start < 0.25 || clip.end - splitTime < 0.25) {
+      setNotice('游标太靠近片段边缘，往中间拖一点再剪辑。');
+      return;
+    }
+    const nextClipId = `clip-${Date.now()}`;
+    setTimelineClips((clips) => clips.flatMap((item) => (
+      item.id === clip.id
+        ? [{ ...item, end: splitTime }, { id: nextClipId, start: splitTime, end: item.end }]
+        : [item]
+    )));
+    setSelectedClipId(nextClipId);
+    setNotice(`已在 ${formatViralTime(sourceToViralTimelineTime(timelineClips, splitTime))} 分割片段。`);
+  }
+
+  function deleteSelectedViralClip() {
+    const clip = selectedClip;
+    if (!clip) {
+      setNotice('请先选择要删除的片段。');
+      return;
+    }
+    if (timelineClips.length <= 1) {
+      setNotice('至少保留一个片段，当前片段不能删除。');
+      return;
+    }
+    const clipIndex = timelineClips.findIndex((item) => item.id === clip.id);
+    const nextClips = timelineClips.filter((item) => item.id !== clip.id);
+    const nextSelectedClip = nextClips[Math.max(0, Math.min(clipIndex, nextClips.length - 1))];
+    setTimelineClips(nextClips);
+    setSelectedClipId(nextSelectedClip.id);
+    setCurrentTime(nextSelectedClip.start);
+    const video = previewVideoRef.current;
+    if (video) video.currentTime = nextSelectedClip.start;
+    setNotice('已删除选中片段，底部时间轴已自动闭合。');
+  }
+
+  function selectViralClip(clip: ViralTimelineClip) {
+    setSelectedClipId(clip.id);
+    setViralSourceTime(Math.max(clip.start, Math.min(clip.end - 0.01, currentTime)));
+  }
+
+  function beginOverlayDrag(event: PointerEvent<HTMLDivElement>, layer: 'title' | 'caption') {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDraggingOverlay(layer);
+    moveOverlayLayer(event, layer);
+  }
+
+  function moveOverlayLayer(event: PointerEvent<HTMLDivElement>, layer: 'title' | 'caption') {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const rect = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!rect) return;
+    const nextPosition = {
+      x: Math.max(8, Math.min(92, ((event.clientX - rect.left) / rect.width) * 100)),
+      y: Math.max(8, Math.min(92, ((event.clientY - rect.top) / rect.height) * 100))
+    };
+    if (layer === 'title') setTitlePosition(nextPosition);
+    if (layer === 'caption') setCaptionPosition(nextPosition);
+  }
+
+  function generatePackages() {
+    if (!sourceVideo) {
+      setNotice('请先导入一条口播或营销视频。');
+      return;
+    }
+    setIsGenerating(true);
+    setNotice('正在套用模板、自动加字幕、花字、音乐和音效...');
+    window.setTimeout(() => {
+      const keywordList = keywords.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean);
+      const nextVersions = Array.from({ length: 6 }, (_, index) => {
+        const keyword = keywordList[index % Math.max(1, keywordList.length)] || '核心卖点';
+        return {
+          id: `viral-${Date.now()}-${index}`,
+          label: index + 1,
+          name: `${appliedTemplate.cardName}_${String(index + 1).padStart(2, '0')}`,
+          hook: buildViralHook(appliedTemplate, keyword, index),
+          duration: `${Math.max(12, 24 - index)}s`,
+          subtitleStyle: index % 2 === 0 ? appliedTemplate.caption : `${appliedTemplate.caption} · 强节奏版`,
+          sound: addMusic ? (addSoundFx ? '轻快卡点 BGM + 关键词提示音' : '轻快卡点 BGM') : (addSoundFx ? '仅保留提示音效' : '保留原声'),
+          effects: rotateEffects(addSoundFx ? appliedTemplate.effects : appliedTemplate.effects.filter((effect) => !effect.includes('音效')), index),
+          score: Math.max(82, 96 - index * 2),
+          path: sourceVideo.path,
+          coverPath: sourceVideo.coverUrl || sourceVideo.path
+        } satisfies ViralPackageVersion;
+      });
+      setVersions(nextVersions);
+      setSelectedVersionIds(nextVersions.slice(0, 3).map((item) => item.id));
+      setIsGenerating(false);
+      setNotice(`已生成 ${nextVersions.length} 个网感包装版本，可保存到成片库继续组合优化。`);
+    }, 520);
+  }
+
+  function toggleVersion(versionId: string) {
+    setSelectedVersionIds((ids) => (ids.includes(versionId) ? ids.filter((id) => id !== versionId) : [...ids, versionId]));
+  }
+
+  async function saveSelectedToFinishedLibrary() {
+    if (!sourceVideo) {
+      setNotice('请先导入视频。');
+      return;
+    }
+    const selectedSet = new Set(selectedVersionIds);
+    const fallbackVersion: ViralPackageVersion = {
+      id: `viral-applied-${sourceVideo.id}-${Date.now()}`,
+      label: 1,
+      name: `${appliedTemplate.cardName}_已包装`,
+      hook: buildViralHook(appliedTemplate, activeCaption?.text || '网感剪辑', activeCaptionIndex),
+      duration: formatViralDuration(timelineDuration),
+      subtitleStyle: appliedTemplate.caption,
+      sound: addMusic ? (addSoundFx ? '音乐 + 音效' : '音乐') : (addSoundFx ? '音效' : '原声'),
+      effects: addSoundFx ? appliedTemplate.effects : appliedTemplate.effects.filter((effect) => !effect.includes('音效')),
+      score: 92,
+      path: sourceVideo.path,
+      coverPath: sourceVideo.coverUrl || sourceVideo.path
+    };
+    const versionsToSave = versions.length
+      ? versions.filter((version) => selectedSet.size === 0 || selectedSet.has(version.id))
+      : [fallbackVersion];
+    if (versionsToSave.length === 0) {
+      setNotice('请先选择要入库的包装版本。');
+      return;
+    }
+    const storedLibrary = await window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY).catch(() => []);
+    const existingGroups = readFinishedVideoGroups(storedLibrary);
+    const now = new Date().toISOString();
+    const draftName = `${props.projectName.trim() || '未命名项目'} · 网感剪辑`;
+    const groupId = `viral-${sourceVideo.id}`;
+    const nextGroup: FinishedVideoGroup = {
+      id: groupId,
+      draftId: groupId,
+      draftName,
+      savedAt: now,
+      updatedAt: now,
+      videoCount: versionsToSave.length,
+      videos: versionsToSave.map((version, index) => ({
+        id: version.id,
+        name: version.name,
+        duration: version.duration,
+        recommend: version.score >= 90 ? 'A' : 'B',
+        compliance: '待审',
+        difference: `${Math.max(70, 94 - index * 4)}%`,
+        path: version.path,
+        coverPath: version.coverPath,
+        savedAt: now,
+        draftName,
+        batchName: `${appliedTemplate.cardName} · ${version.hook}`,
+        groupDetails: [{
+          groupId: appliedTemplate.key,
+          groupName: appliedTemplate.cardName,
+          clipName: version.hook,
+          coverPath: version.coverPath
+        }]
+      }))
+    };
+    await window.surgicol.store.set(FINISHED_VIDEOS_KEY, [nextGroup, ...existingGroups.filter((group) => group.id !== groupId)]);
+    await persistViralRecentTask({
+      id: sourceVideo.id,
+      name: sourceVideo.name,
+      path: sourceVideo.path,
+      templateKey: appliedTemplate.key,
+      templateCardId: selectedTemplateCardId,
+      keywords,
+      savedAt: now,
+      duration: formatViralDuration(timelineDuration),
+      finishedCount: versionsToSave.length,
+      hook: fallbackVersion.hook,
+      templateName: appliedTemplate.cardName,
+      titlePosition,
+      captionPosition
+    });
+    setNotice(`已保存 ${versionsToSave.length} 个网感包装版本到成片库。`);
+    setSourceVideo(null);
+    setUploadPhase('idle');
+    setVersions([]);
+    setSelectedVersionIds([]);
+    setCurrentTime(0);
+  }
+
+  return (
+    <div className="viral-workspace">
+      {!sourceVideo ? (
+        <div className="viral-start-screen">
+          <button className="viral-upload-zone" type="button" onClick={importSourceVideo}>
+            <h2>网感剪辑</h2>
+            <span>0基础1分钟制作网感口播视频</span>
+            <strong><Upload size={16} /> 上传视频</strong>
+          </button>
+          <section className="viral-recent-section">
+            <h3>最近任务</h3>
+            <div className="viral-recent-grid">
+              {recentTasks.length ? recentTasks.map((task) => (
+                <article key={task.id} onClick={() => setPreviewRecentTask(task)}>
+                  <div className="viral-recent-thumb">
+                    {task.path ? <video src={toMediaUrl(task.path)} muted playsInline preload="metadata" /> : <Film size={24} />}
+                    {task.finishedCount ? <ViralSavedOverlay task={task} /> : null}
+                  </div>
+                  <small>{task.duration}</small>
+                  <strong>{task.name}</strong>
+                  <span>{task.finishedCount ? `已保存 ${task.finishedCount} 个成片` : `${formatViralTaskExpiry(task.savedAt)}后失效`}</span>
+                  <MoreVertical size={16} />
+                </article>
+              )) : (
+                <p>上传视频后会在这里保留最近包装任务。</p>
+              )}
+            </div>
+          </section>
+          {previewRecentTask ? (
+            <div className="viral-recent-preview-mask">
+              <section>
+                <header>
+                  <strong>{previewRecentTask.templateName || previewRecentTask.name}_已包装</strong>
+                  <button type="button" onClick={() => {
+                    setPreviewRecentTask(null);
+                    setPreviewRecentTime(0);
+                  }}><X size={16} /></button>
+                </header>
+                <div className="viral-recent-preview-body">
+                  <div className="viral-recent-preview-stage">
+                    {previewRecentTask.path ? (
+                      <video
+                        src={toMediaUrl(previewRecentTask.path)}
+                        controls
+                        autoPlay
+                        onTimeUpdate={(event) => setPreviewRecentTime(event.currentTarget.currentTime)}
+                        onSeeked={(event) => setPreviewRecentTime(event.currentTarget.currentTime)}
+                      />
+                    ) : null}
+                    <ViralSavedOverlay task={previewRecentTask} currentTime={previewRecentTime} />
+                  </div>
+                </div>
+                <footer>
+                  <button type="button" onClick={() => restoreRecentTask(previewRecentTask)}>继续编辑</button>
+                </footer>
+              </section>
+            </div>
+          ) : null}
+        </div>
+      ) : uploadPhase !== 'ready' ? (
+        <div className="viral-processing-screen">
+          <section className="viral-phone-preview">
+            <video src={toMediaUrl(sourceVideo.path || '')} muted autoPlay loop />
+          </section>
+          <section className="viral-processing-card">
+            <Upload size={76} />
+            <h2>{uploadPhase === 'uploading' ? '正在上传你的视频...' : '检测语音和分析内容'}</h2>
+            <button type="button" onClick={() => setSourceVideo(null)}>取消上传</button>
+            <div className="viral-progress-steps">
+              <span className="active">视频上传中...{uploadProgress}%</span>
+              <span className={uploadPhase === 'analyzing' ? 'active' : undefined}>分析视频，并智能断句</span>
+              <span>免费加字幕，支持10+种方言</span>
+            </div>
+          </section>
+        </div>
+      ) : (
+        <div className="viral-editor-flow">
+          <section className="viral-phone-preview">
+            <video
+              ref={previewVideoRef}
+              src={toMediaUrl(sourceVideo.path || '')}
+              onLoadedMetadata={handleViralMetadataLoaded}
+              onTimeUpdate={handlePreviewTimeUpdate}
+              onEnded={() => {
+                if (!isPlaying) {
+                  setViralSourceTime(timelineClips[0]?.start || 0);
+                }
+              }}
+            />
+            <div className={`viral-preview-overlay template-${template.key}`}>
+              <div className="viral-live-template-effect" aria-hidden="true">
+                <u />
+                <u />
+                <u />
+              </div>
+              <div
+                className={`viral-overlay-layer title-layer ${draggingOverlay === 'title' ? 'dragging' : ''}`}
+                style={{ left: `${titlePosition.x}%`, top: `${titlePosition.y}%` }}
+                onPointerDown={(event) => beginOverlayDrag(event, 'title')}
+                onPointerMove={(event) => moveOverlayLayer(event, 'title')}
+                onPointerUp={() => setDraggingOverlay(null)}
+              >
+                <strong>{previewHook}</strong>
+                <em>{template.accent}</em>
+              </div>
+              <div
+                className={`viral-overlay-layer caption-layer ${draggingOverlay === 'caption' ? 'dragging' : ''}`}
+                style={{ left: `${captionPosition.x}%`, top: `${captionPosition.y}%` }}
+                onPointerDown={(event) => beginOverlayDrag(event, 'caption')}
+                onPointerMove={(event) => moveOverlayLayer(event, 'caption')}
+                onPointerUp={() => setDraggingOverlay(null)}
+              >
+                <span>{activeCaption?.text || previewSubtitle}</span>
+              </div>
+              <small>{template.cardName}</small>
+            </div>
+          </section>
+          <section className="viral-package-card">
+            <div className="viral-package-tabs">
+              <button className={activePackageTab === 'template' ? 'active' : undefined} type="button" onClick={() => setActivePackageTab('template')}>网感模板</button>
+              <button className={activePackageTab === 'captions' ? 'active' : undefined} type="button" onClick={() => setActivePackageTab('captions')}>文字快剪</button>
+              <button className={activePackageTab === 'sound' ? 'active' : undefined} type="button" onClick={() => setActivePackageTab('sound')}>声音</button>
+            </div>
+            {activePackageTab === 'template' ? (
+              <>
+                <div className="viral-template-gallery">
+                  {viralTemplateCards.map((item) => {
+                    const previewCaptionTime = mapTemplatePreviewTimeToTimeline(hoverTemplateTime, timelineDuration);
+                    const cardCaptionIndex = findEditedViralCaptionIndex(editedCaptionSegments, previewCaptionTime);
+                    const cardCaption = editedCaptionSegments[cardCaptionIndex] || editedCaptionSegments[0];
+                    const cardTitle = buildViralHook(item, cardCaption?.text || '网感剪辑', cardCaptionIndex);
+                    return (
+                      <button
+                        key={item.cardId}
+                        className={`template-${item.key} phase-${item.cardId === hoverTemplateCardId ? hoverTemplateEffectPhase : 'idle'} ${item.cardId === selectedTemplateCardId ? 'active' : ''} ${item.cardId === hoverTemplateCardId ? 'previewing' : ''}`}
+                        type="button"
+                        onMouseEnter={(event) => previewTemplateCardVideo(event, item.cardId)}
+                        onMouseLeave={stopTemplateCardVideo}
+                        onFocus={() => previewTemplate(item.cardId)}
+                        onBlur={() => previewTemplate(null)}
+                      >
+                        {sourceVideo.path ? (
+                          <video
+                            src={toMediaUrl(sourceVideo.path)}
+                            muted
+                            loop
+                            playsInline
+                            preload="auto"
+                            autoPlay={item.cardId === hoverTemplateCardId}
+                            onTimeUpdate={(event) => syncTemplateCardPreview(event, item.cardId)}
+                          />
+                        ) : null}
+                        <div className="viral-card-template-effect">
+                          <strong>{cardTitle}</strong>
+                          <span>{cardCaption?.text || item.caption}</span>
+                          <u />
+                          <u />
+                          <u />
+                        </div>
+                        <span>{item.variantIndex % 3 === 0 ? '智能加标题' : item.variantIndex % 3 === 1 ? '双行排版更网感' : '自动识别添加字幕'}</span>
+                        <em>{item.accent}</em>
+                        <strong>{item.cardName}</strong>
+                        <small>{item.caption}</small>
+                        <b>预览中</b>
+                        <i onClick={(event) => {
+                          event.stopPropagation();
+                          applyTemplate(item.cardId);
+                        }}>
+                          {item.cardId === selectedTemplateCardId ? '已应用' : '应用该模板'}
+                        </i>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="viral-add-row">
+                  <span>已应用：{appliedTemplate.cardName}</span>
+                  <label><input type="checkbox" checked={addMusic} onChange={(event) => setAddMusic(event.target.checked)} /> 音乐</label>
+                  <label><input type="checkbox" checked={addSoundFx} onChange={(event) => setAddSoundFx(event.target.checked)} /> 音效</label>
+                  <button className="viral-primary" type="button" onClick={generatePackages} disabled={isGenerating}>
+                    {isGenerating ? '处理中...' : '开始处理'}
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {activePackageTab === 'captions' ? (
+              <div className="viral-caption-list">
+                {editedCaptionSegments.map((caption, index) => (
+                  <article key={caption.key} className={index === activeCaptionIndex ? 'active' : undefined} onClick={() => setViralSourceTime(caption.sourceStart)}>
+                    <span>{caption.time}</span>
+                    <strong>{caption.text}</strong>
+                    {index === 0 ? <div><Edit3 size={14} /><Trash2 size={14} /></div> : null}
+                  </article>
+                ))}
+                {editedCaptionSegments.length === 0 ? <p>当前片段没有可显示的字幕。</p> : null}
+              </div>
+            ) : null}
+            {activePackageTab === 'sound' ? (
+              <div className="viral-sound-panel">
+                <label>
+                  视频音量
+                  <input type="range" min={0} max={100} value={videoVolume} onChange={(event) => setVideoVolume(Number(event.target.value))} />
+                  <strong>{videoVolume}</strong>
+                </label>
+                <button className={noiseReduction ? 'active' : undefined} type="button" onClick={() => setNoiseReduction((value) => !value)}>
+                  <ScanLine size={18} />
+                  <span>降噪</span>
+                  <small>将人声音质提升为录音棚品质</small>
+                </button>
+              </div>
+            ) : null}
+            {notice ? <div className="viral-notice">{notice}</div> : null}
+          </section>
+          {packagingProgress !== null ? (
+            <div className="viral-packaging-mask">
+              <section>
+                <Upload size={46} />
+                <strong>智能包装中...{packagingProgress}%</strong>
+                <button type="button" onClick={() => setPackagingProgress(null)}>取消</button>
+              </section>
+            </div>
+          ) : null}
+          <section className="viral-timeline">
+            <div className="viral-timeline-toolbar">
+              <div className="viral-timeline-tools">
+                <button type="button" title="分割片段" onClick={splitSelectedViralClip}><Scissors size={16} /></button>
+                <button type="button" title="删除片段" onClick={deleteSelectedViralClip} disabled={timelineClips.length <= 1}><Trash2 size={16} /></button>
+              </div>
+              <div className="viral-timeline-playback">
+                <button type="button" onClick={toggleViralPlayback} title={isPlaying ? '暂停' : '播放'}>{isPlaying ? <Pause size={14} /> : <Play size={14} />}</button>
+                <span className="current">{formatViralTime(timelineCurrentTime)}</span>
+                <span className="slash">/</span>
+                <span>{formatViralTime(timelineDuration)}</span>
+              </div>
+              <button className="viral-timeline-save" type="button" onClick={saveSelectedToFinishedLibrary} disabled={!sourceVideo || packagingProgress !== null}>
+                <Download size={15} />
+                <span>保存到成片库</span>
+              </button>
+            </div>
+            <div
+              className="viral-ruler"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                seekViralTimelineTime(((event.clientX - rect.left) / rect.width) * timelineDuration);
+              }}
+            >
+              {rulerTimes.map((time, index) => (
+                <span
+                  key={time}
+                  className={timelineCurrentTime >= time ? 'active' : undefined}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    seekViralTimelineTime(Math.min(time, timelineDuration));
+                  }}
+                >
+                  {formatViralRulerLabel(time)}
+                </span>
+              ))}
+            </div>
+            <div
+              className="viral-filmstrip"
+              ref={filmstripRef}
+              onClick={(event) => seekViralTimeline(event.clientX)}
+            >
+              <button
+                className="viral-playhead"
+                style={{ left: `${(timelineCurrentTime / timelineDuration) * 100}%` }}
+                type="button"
+                onPointerDown={beginViralPlayheadDrag}
+                onPointerMove={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) seekViralTimeline(event.clientX);
+                }}
+              />
+              {Array.from({ length: 42 }, (_, index) => (
+                <i
+                  key={index}
+                  className={Math.floor((timelineCurrentTime / timelineDuration) * 42) === index ? 'active' : undefined}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    seekViralTimelineTime((index / 42) * timelineDuration);
+                  }}
+                >
+                  {sourceVideo.path ? <video src={toMediaUrl(sourceVideo.path)} muted playsInline preload="metadata" style={{ objectPosition: `${Math.round((viralTimelineTimeToSourceTime(timelineClips, (index / 41) * timelineDuration) / sourceDuration) * 100)}% center` }} /> : null}
+                </i>
+              ))}
+              {timelineClips.map((clip, index) => {
+                const clipStart = sourceToViralTimelineTime(timelineClips, clip.start);
+                const clipWidth = ((clip.end - clip.start) / timelineDuration) * 100;
+                return (
+                  <button
+                    key={clip.id}
+                    className={`viral-clip-segment ${clip.id === selectedClipId ? 'selected' : ''} ${clip.id === activeTimelineClip?.id ? 'playing' : ''}`}
+                    style={{ left: `${(clipStart / timelineDuration) * 100}%`, width: `${clipWidth}%` }}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      selectViralClip(clip);
+                    }}
+                    title={`片段 ${index + 1} · ${formatViralTime(clip.end - clip.start)}`}
+                  >
+                    <span>{index + 1}</span>
+                  </button>
+                );
+              })}
+              {editedCaptionSegments.map((caption, index) => {
+                return (
+                  <span
+                    key={caption.key}
+                    className={index === activeCaptionIndex ? 'active' : undefined}
+                    style={{ left: `${(caption.timelineStart / timelineDuration) * 100}%`, width: `${Math.max(4, ((caption.timelineEnd - caption.timelineStart) / timelineDuration) * 100)}%` }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setViralSourceTime(caption.sourceStart);
+                      setActivePackageTab('captions');
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </section>
+          {versions.length ? (
+            <section className="viral-version-drawer">
+              {versions.map((version) => (
+                <button key={version.id} className={selectedVersionIds.includes(version.id) ? 'active' : undefined} type="button" onClick={() => toggleVersion(version.id)}>
+                  <strong>{version.name}</strong>
+                  <span>{version.hook}</span>
+                </button>
+              ))}
+            </section>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ViralSavedOverlay({ task, currentTime = 0 }: { task: ViralRecentTask; currentTime?: number }) {
+  const captions = buildViralCaptionSegments(task.keywords);
+  const activeCaption = captions[findViralCaptionIndex(captions, currentTime)] || captions[0];
+  const titlePosition = task.titlePosition || { x: 50, y: 18 };
+  const captionPosition = task.captionPosition || { x: 50, y: 64 };
+  return (
+    <div className={`viral-saved-overlay template-${task.templateKey}`}>
+      <div className="viral-saved-title" style={{ left: `${titlePosition.x}%`, top: `${titlePosition.y}%` }}>
+        <strong>{task.hook || buildViralHook(viralTemplates.find((item) => item.key === task.templateKey) || viralTemplates[0], captions[0]?.text || '网感剪辑', 0)}</strong>
+        <em>{task.templateName || '已包装'}</em>
+      </div>
+      <div className="viral-saved-caption" style={{ left: `${captionPosition.x}%`, top: `${captionPosition.y}%` }}>
+        <span>{activeCaption?.text || '自动识别添加字幕'}</span>
+      </div>
+    </div>
+  );
+}
+
+function buildViralHook(template: ViralTemplate, keyword: string, index: number) {
+  const hooks: Record<ViralTemplateKey, string[]> = {
+    street: [`先别划走，${keyword}真的不一样`, `90%的人忽略了${keyword}`, `用这个方法把${keyword}讲清楚`],
+    seed: [`我最近反复用的${keyword}`, `${keyword}这点太适合新手了`, `如果你也在找${keyword}，看这个`],
+    deal: [`还在为${keyword}浪费时间吗`, `${keyword}卡住成交，问题在这里`, `想提升${keyword}，先改这一点`],
+    story: [`一开始我也不信${keyword}`, `${keyword}背后有个反转`, `这个${keyword}案例，把我看懂了`]
+  };
+  return hooks[template.key][index % hooks[template.key].length];
+}
+
+function buildViralCaptionSegments(keywords: string) {
+  const words = keywords.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean);
+  const [first = '零基础', second = '视频创作', third = '数字人', fourth = '专业创作者'] = words;
+  return [
+    { time: '00:00:00 - 00:00:02', text: `${first}入门，让普通人也能快速做起来` },
+    { time: '00:00:02 - 00:00:05', text: `${second}其实只需要找准内容节奏` },
+    { time: '00:00:05 - 00:00:07', text: `生成文案，选择${third}或网感模板` },
+    { time: '00:00:07 - 00:00:10', text: '调整配音和字幕，即可完成视频创作' },
+    { time: '00:00:10 - 00:00:12', text: `小白也能变成${fourth}` }
+  ];
+}
+
+function buildEditedViralCaptionSegments(captions: Array<{ time: string; text: string }>, clips: ViralTimelineClip[]) {
+  return captions.flatMap((caption, captionIndex) => {
+    const captionStart = readViralCaptionStart(caption.time);
+    const captionEnd = readViralCaptionEnd(caption.time);
+    return clips.flatMap((clip) => {
+      const sourceStart = Math.max(captionStart, clip.start);
+      const sourceEnd = Math.min(captionEnd, clip.end);
+      if (sourceEnd - sourceStart <= 0.04) return [];
+      const timelineStart = sourceToViralTimelineTime(clips, sourceStart);
+      const timelineEnd = sourceToViralTimelineTime(clips, Math.max(sourceStart, sourceEnd - 0.01));
+      return [{
+        key: `${caption.time}-${clip.id}`,
+        time: `${formatViralTime(timelineStart)} - ${formatViralTime(timelineEnd)}`,
+        text: caption.text,
+        sourceStart,
+        sourceEnd,
+        timelineStart,
+        timelineEnd: Math.max(timelineStart + 0.04, timelineEnd),
+        captionIndex
+      }];
+    });
+  });
+}
+
+function findEditedViralCaptionIndex(captions: Array<{ timelineStart: number; timelineEnd: number }>, currentTime: number) {
+  const index = captions.findIndex((caption) => currentTime >= caption.timelineStart && currentTime < caption.timelineEnd);
+  return index >= 0 ? index : Math.max(0, captions.length - 1);
+}
+
+function getViralPreviewEffectPhase(currentTime: number, duration: number) {
+  const progress = Math.max(0, Math.min(1, currentTime / Math.max(0.1, duration)));
+  if (progress < 0.18) return 'hook';
+  if (progress < 0.46) return 'caption';
+  if (progress < 0.72) return 'accent';
+  return 'cta';
+}
+
+function mapTemplatePreviewTimeToTimeline(previewTime: number, timelineDuration: number) {
+  return (Math.max(0, previewTime) / VIRAL_TEMPLATE_PREVIEW_DURATION) * Math.max(0.1, timelineDuration);
+}
+
+function getViralTimelineDuration(clips: ViralTimelineClip[]) {
+  return Math.max(0.1, clips.reduce((total, clip) => total + Math.max(0, clip.end - clip.start), 0));
+}
+
+function isViralSingleFullClip(clips: ViralTimelineClip[], duration: number) {
+  return clips.length === 1
+    && clips[0].start === 0
+    && Math.abs(clips[0].end - duration) < 0.08;
+}
+
+function clampViralClipsToDuration(clips: ViralTimelineClip[], duration: number) {
+  const safeDuration = Math.max(0.1, duration);
+  const nextClips = clips
+    .map((clip) => ({
+      ...clip,
+      start: Math.max(0, Math.min(clip.start, safeDuration - 0.04)),
+      end: Math.max(0.04, Math.min(clip.end, safeDuration))
+    }))
+    .filter((clip) => clip.end - clip.start > 0.04);
+  return nextClips.length ? nextClips : createViralDefaultClips(safeDuration);
+}
+
+function buildViralRulerTimes(duration: number) {
+  const safeDuration = Math.max(0.1, duration);
+  return Array.from({ length: 6 }, (_, index) => Number(((safeDuration / 5) * index).toFixed(2)));
+}
+
+function findViralClipAtSourceTime(clips: ViralTimelineClip[], sourceTime: number) {
+  return clips.find((clip) => sourceTime >= clip.start && sourceTime < clip.end)
+    || clips.find((clip) => Math.abs(sourceTime - clip.end) < 0.04);
+}
+
+function sourceToViralTimelineTime(clips: ViralTimelineClip[], sourceTime: number) {
+  let timelineTime = 0;
+  for (const clip of clips) {
+    if (sourceTime <= clip.start) return timelineTime;
+    if (sourceTime < clip.end) return timelineTime + (sourceTime - clip.start);
+    timelineTime += clip.end - clip.start;
+  }
+  return getViralTimelineDuration(clips);
+}
+
+function viralTimelineTimeToSourceTime(clips: ViralTimelineClip[], timelineTime: number) {
+  let cursor = Math.max(0, timelineTime);
+  for (const clip of clips) {
+    const duration = clip.end - clip.start;
+    if (cursor <= duration) return Math.min(clip.end - 0.01, clip.start + cursor);
+    cursor -= duration;
+  }
+  const lastClip = clips[clips.length - 1];
+  return lastClip ? Math.max(lastClip.start, lastClip.end - 0.01) : 0;
+}
+
+function getViralMediaDisplayTime(video: HTMLVideoElement, sourceTime: number) {
+  const duration = video.duration;
+  if (!Number.isFinite(duration) || duration <= 0.12) return Math.max(0, sourceTime);
+  const loopPoint = Math.max(0.1, duration - 0.08);
+  return Math.min(loopPoint, Math.max(0, sourceTime % loopPoint));
+}
+
+function findNearestPlayableViralSourceTime(clips: ViralTimelineClip[], sourceTime: number) {
+  const activeClip = findViralClipAtSourceTime(clips, sourceTime);
+  if (activeClip) return Math.max(activeClip.start, Math.min(activeClip.end - 0.01, sourceTime));
+  const nextClip = clips.find((clip) => sourceTime < clip.start);
+  if (nextClip) return nextClip.start;
+  const lastClip = clips[clips.length - 1];
+  return lastClip ? Math.max(lastClip.start, lastClip.end - 0.01) : 0;
+}
+
+function findNextPlayableViralSourceTime(clips: ViralTimelineClip[], sourceTime: number) {
+  const activeClip = findViralClipAtSourceTime(clips, sourceTime);
+  if (activeClip) return Math.max(activeClip.start, Math.min(activeClip.end - 0.01, sourceTime));
+  const nextClip = clips.find((clip) => sourceTime < clip.start);
+  if (nextClip) return nextClip.start;
+  return clips[0]?.start || 0;
+}
+
+function findViralCaptionIndex(captions: Array<{ time: string }>, currentTime: number) {
+  const index = captions.findIndex((caption) => currentTime >= readViralCaptionStart(caption.time) && currentTime < readViralCaptionEnd(caption.time));
+  return index >= 0 ? index : Math.max(0, captions.length - 1);
+}
+
+function readViralCaptionStart(range: string) {
+  return parseViralTimestamp(range.split('-')[0]);
+}
+
+function readViralCaptionEnd(range: string) {
+  return parseViralTimestamp(range.split('-')[1]);
+}
+
+function parseViralTimestamp(value = '') {
+  const parts = value.trim().split(':').map((part) => Number(part));
+  if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) return 0;
+  return parts[0] * 3600 + parts[1] * 60 + parts[2];
+}
+
+function formatViralTime(value: number) {
+  const safeValue = Math.max(0, value);
+  const minutes = Math.floor(safeValue / 60);
+  const seconds = Math.floor(safeValue % 60);
+  const tenths = Math.floor((safeValue % 1) * 10);
+  return `00:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`;
+}
+
+function formatViralRulerLabel(value: number) {
+  const safeValue = Math.max(0, value);
+  const minutes = Math.floor(safeValue / 60);
+  const seconds = Math.floor(safeValue % 60);
+  const tenths = Math.floor((safeValue % 1) * 10);
+  return safeValue < 10 && tenths > 0
+    ? `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatViralDuration(value: number) {
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.floor(value % 60);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatViralTaskExpiry(savedAt: string) {
+  const savedTime = new Date(savedAt).getTime();
+  if (!Number.isFinite(savedTime)) return '29天';
+  const expireTime = savedTime + 30 * 24 * 60 * 60 * 1000;
+  const daysLeft = Math.max(0, Math.ceil((expireTime - Date.now()) / (24 * 60 * 60 * 1000)));
+  return `${daysLeft}天`;
+}
+
+function rotateEffects(effects: string[], offset: number) {
+  if (effects.length === 0) return [];
+  return effects.map((_, index) => effects[(index + offset) % effects.length]).slice(0, 4);
+}
 
 function FissionWorkspace(props: {
   projectId: string;
