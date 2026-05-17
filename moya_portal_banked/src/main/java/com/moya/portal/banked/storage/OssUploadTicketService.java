@@ -31,7 +31,13 @@ public class OssUploadTicketService {
 	public OssUploadTicketResponse createTicket(OssUploadTicketRequest request) {
 		StorageProperties.Oss oss = properties.getOss();
 		if (!oss.isEnabled()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OSS 未启用，请配置 MOYA_OSS_ENABLED=true");
+			String missing = oss.missingConfigMessage();
+			throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST,
+					missing.isBlank()
+							? "OSS 未启用，请配置 MOYA_OSS_ENABLED=true"
+							: "OSS 配置不完整，缺少：" + missing
+			);
 		}
 		if (isBlank(oss.getEndpoint()) || isBlank(oss.getAccessKeyId()) || isBlank(oss.getAccessKeySecret())) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OSS endpoint 或访问密钥未配置");

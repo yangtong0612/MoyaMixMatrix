@@ -34,6 +34,29 @@ export interface OssUploadResult {
   localPath: string;
 }
 
+export interface OssUploadProgress {
+  taskId?: string;
+  filePath: string;
+  percent: number;
+  status: 'uploading' | 'done' | 'failed';
+  message?: string;
+}
+
+export interface MediaDataUrlResult {
+  dataUrl: string;
+  contentType: string;
+  name: string;
+  size: number;
+  localPath: string;
+}
+
+export interface MediaDownloadResult {
+  canceled: boolean;
+  localPath?: string;
+  name?: string;
+  size?: number;
+}
+
 export interface DriveFileInfo {
   name: string;
   size: number;
@@ -89,7 +112,10 @@ declare global {
         onUploadDriveFileProgress(callback: (progress: DriveUploadProgress) => void): () => void;
       };
       media: {
-        uploadToOss(filePath: string, options?: { folder?: string; contentType?: string }): Promise<OssUploadResult>;
+        uploadToOss(filePath: string, options?: { folder?: string; contentType?: string; taskId?: string }): Promise<OssUploadResult>;
+        downloadToLocal(source: string, options?: { fileName?: string; viralOverlay?: unknown }): Promise<MediaDownloadResult>;
+        readAsDataUrl(filePath: string): Promise<MediaDataUrlResult>;
+        onUploadToOssProgress(callback: (progress: OssUploadProgress) => void): () => void;
       };
     };
   }

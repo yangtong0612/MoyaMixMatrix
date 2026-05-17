@@ -4,11 +4,11 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.time.Duration;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.stereotype.Service;
 
 @Service
-@ConditionalOnProperty(prefix = "moya.storage.oss", name = "enabled", havingValue = "false", matchIfMissing = true)
+@ConditionalOnMissingBean(StorageService.class)
 public class NoopStorageService implements StorageService {
 
 	@Override

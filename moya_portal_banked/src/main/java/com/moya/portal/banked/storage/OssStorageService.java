@@ -6,11 +6,9 @@ import java.util.Date;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 @Service
-@ConditionalOnProperty(prefix = "moya.storage.oss", name = "enabled", havingValue = "true")
 public class OssStorageService implements StorageService {
 
 	private final StorageProperties properties;
@@ -26,7 +24,7 @@ public class OssStorageService implements StorageService {
 
 	@Override
 	public boolean enabled() {
-		return true;
+		return properties.getOss().isEnabled();
 	}
 
 	@Override

@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -21,6 +21,7 @@ import {
   Sparkles,
   Store,
   Sun,
+  Trash2,
   Upload,
   UserRound,
   Volume2,
@@ -31,7 +32,16 @@ import { getMe, type AuthTokenResponse } from '@/features/cloud-drive/api/netdis
 import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
 import { useCloudDriveStore } from '@/features/cloud-drive/cloudDriveStore';
 import { EditorPage } from '@/features/editor/EditorPage';
+import {
+  createProductVideoTask,
+  getProductVideoAssetAccessUrl,
+  getProductVideoTaskStatus,
+  readProductVideoAssetAsDataUrl,
+  uploadProductVideoAsset,
+  type ProductVideoTaskStatus
+} from '@/features/product-video/productVideoApi';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
+import type { OssUploadProgress } from '@/shared/types/electron';
 
 const navItems = [
   { to: '/', label: '首页', icon: Home },
@@ -43,6 +53,7 @@ const navItems = [
 
 type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
 type ProductVideoScenarioKey = 'product-spokesperson' | 'product-showcase' | 'store-traffic' | 'hot-replica';
+type ProductVideoProgressStage = 'idle' | 'uploading' | 'signing' | 'submitting' | 'generating' | 'done' | 'failed';
 
 const productVideoScenarios: Array<{
   key: ProductVideoScenarioKey;
@@ -103,8 +114,116 @@ const storeSamples = [
   { id: 'bakery', name: '城市烘焙', color: '#f59e0b', copy: '城市烘焙' }
 ];
 
+const digitalHumanAvatars = [
+  {
+    id: 'linzhixia',
+    name: '林知夏',
+    role: '商务女主持',
+    prompt: '中国年轻女性，干练西装，适合商品口播、企业介绍和直播带货，镜头表现自然亲和。',
+    scenes: 3,
+    image: 'https://images.pexels.com/photos/26728100/pexels-photo-26728100.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: [
+      'https://images.pexels.com/photos/26728100/pexels-photo-26728100.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/27086757/pexels-photo-27086757.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/21044845/pexels-photo-21044845.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
+    ]
+  },
+  {
+    id: 'suwanwan',
+    name: '苏绾绾',
+    role: '汉服国风女主',
+    prompt: '中国女性，汉服或新中式国风造型，适合茶饮、文旅、国潮商品和礼品场景，气质温婉精致。',
+    scenes: 3,
+    image: 'https://images.pexels.com/photos/18077457/pexels-photo-18077457.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: [
+      'https://images.pexels.com/photos/18077457/pexels-photo-18077457.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/19055839/pexels-photo-19055839.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/19243941/pexels-photo-19243941.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
+    ]
+  },
+  {
+    id: 'jiangchen',
+    name: '江晨',
+    role: '商务男主持',
+    prompt: '中国年轻男性，商务西装，适合科技数码、课程咨询、招商加盟和高客单产品讲解，表达专业可信。',
+    scenes: 3,
+    image: 'https://images.pexels.com/photos/16241480/pexels-photo-16241480.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: [
+      'https://images.pexels.com/photos/16241480/pexels-photo-16241480.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/21044803/pexels-photo-21044803.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/21044809/pexels-photo-21044809.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
+    ]
+  },
+  {
+    id: 'xumengting',
+    name: '许梦婷',
+    role: '白大褂顾问',
+    prompt: '中国女性，白大褂或专业顾问制服，适合美业、护肤、健康管理和门店咨询场景，语气温柔专业。',
+    scenes: 3,
+    image: 'https://images.pexels.com/photos/8442819/pexels-photo-8442819.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: [
+      'https://images.pexels.com/photos/8442819/pexels-photo-8442819.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/5452201/pexels-photo-5452201.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/5214959/pexels-photo-5214959.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
+    ]
+  },
+  {
+    id: 'zhouye',
+    name: '周野',
+    role: '餐饮工作服男主',
+    prompt: '中国男性，餐饮、厨师或门店工作服造型，适合餐厅探店、本地生活团购和到店引流，表现热情接地气。',
+    scenes: 3,
+    image: 'https://images.pexels.com/photos/12291879/pexels-photo-12291879.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: [
+      'https://images.pexels.com/photos/12291879/pexels-photo-12291879.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/33615812/pexels-photo-33615812.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/33615818/pexels-photo-33615818.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
+    ]
+  },
+  {
+    id: 'xiaoning',
+    name: '夏宁',
+    role: '门店制服女导购',
+    prompt: '中国女性，门店导购、前台或服务制服造型，适合门店引流、活动介绍和新品推荐，表达清爽有亲和力。',
+    scenes: 3,
+    image: 'https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: [
+      'https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/14230736/pexels-photo-14230736.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+      'https://images.pexels.com/photos/33615812/pexels-photo-33615812.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
+    ]
+  }
+];
+
 function localFileUrl(filePath: string) {
-  return `file:///${filePath.replace(/\\/g, '/')}`;
+  return `moya-media://file?path=${encodeURIComponent(filePath)}`;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function productVideoStatusText(task: ProductVideoTaskStatus) {
+  if (task.videoUrl) return '生成完成，右侧已显示成片预览。';
+  if (task.finished && !task.successful) return task.message || '生成失败，请检查素材或火山任务状态。';
+  const normalized = (task.status || '').toLowerCase();
+  if (normalized.includes('queue') || normalized.includes('pending')) return '任务排队中，正在等待云端调度...';
+  if (normalized.includes('running') || normalized.includes('process') || normalized.includes('generat')) return '云端生成中，请稍等...';
+  return task.status ? `云端状态：${task.status}` : '云端生成中，请稍等...';
+}
+
+function updateProductVideoRecentTask(taskId: string, nextTask: Record<string, unknown>) {
+  const existing = JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as Array<Record<string, unknown>>;
+  const next = existing.map((task) => (task.taskId === taskId ? { ...task, ...nextTask } : task));
+  if (!next.some((task) => task.taskId === taskId)) {
+    next.unshift(nextTask);
+  }
+  localStorage.setItem('moya-product-video-tasks', JSON.stringify(next.slice(0, 12)));
+}
+
+function isOssConfigError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /OSS.*(未配置|endpoint|访问密钥|AccessKey|access key|未启用)/i.test(message);
 }
 
 export function App() {
@@ -363,11 +482,26 @@ function ProductVideoCreateView() {
   const [scriptEnabled, setScriptEnabled] = useState(true);
   const [avatarMode, setAvatarMode] = useState<'image' | 'custom'>('image');
   const [avatarSource, setAvatarSource] = useState<'digital' | 'upload'>('digital');
-  const [model, setModel] = useState('Seedance 2.0');
+  const [avatarModalOpen, setAvatarModalOpen] = useState(false);
+  const [avatarModalTab, setAvatarModalTab] = useState<'digital' | 'upload'>('digital');
+  const [selectedAvatarId, setSelectedAvatarId] = useState(digitalHumanAvatars[1].id);
+  const [selectedAvatarVariant, setSelectedAvatarVariant] = useState(digitalHumanAvatars[1].variants[0]);
+  const [customAvatarPath, setCustomAvatarPath] = useState<string | null>(null);
+  const [model, setModel] = useState('Seedance 1.5 Pro（有声口播）');
   const [quality, setQuality] = useState('720p');
   const [ratio, setRatio] = useState('9:16');
-  const [duration, setDuration] = useState('15s');
+  const [duration, setDuration] = useState('5s');
   const [status, setStatus] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedTask, setGeneratedTask] = useState<ProductVideoTaskStatus | null>(null);
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState('');
+  const [generationProgress, setGenerationProgress] = useState({
+    stage: 'idle' as ProductVideoProgressStage,
+    percent: 0,
+    label: '',
+    detail: ''
+  });
+  const uploadProgressMap = useRef<Record<string, { base: number; span: number; label: string }>>({});
 
   useEffect(() => {
     if (queryScenario && productVideoScenarios.some((scenario) => scenario.key === queryScenario)) {
@@ -375,9 +509,43 @@ function ProductVideoCreateView() {
     }
   }, [queryScenario]);
 
+  useEffect(() => {
+    if (!['5s', '10s', '12s'].includes(duration)) {
+      setDuration('5s');
+    }
+  }, [duration]);
+
+  useEffect(() => {
+    const unsubscribe = window.surgicol?.media?.onUploadToOssProgress?.((progress: OssUploadProgress) => {
+      if (!progress.taskId) return;
+      const task = uploadProgressMap.current[progress.taskId];
+      if (!task) return;
+      const nextPercent = Math.round(task.base + task.span * Math.max(0, Math.min(progress.percent || 0, 100)) / 100);
+      setGenerationProgress({
+        stage: progress.status === 'failed' ? 'failed' : 'uploading',
+        percent: progress.status === 'failed' ? Math.max(nextPercent, 1) : nextPercent,
+        label: progress.status === 'failed' ? '上传失败' : task.label,
+        detail: progress.message || '上传中'
+      });
+      if (progress.status === 'failed') {
+        setStatus(progress.message || '素材上传失败，请检查网络后重试。');
+      }
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   const active = productVideoScenarios.find((scenario) => scenario.key === activeScenario) ?? productVideoScenarios[0];
   const activeSample = productSamples.find((sample) => sample.id === selectedSample) ?? productSamples[0];
   const activeStoreSample = storeSamples.find((sample) => sample.id === selectedStoreSample) ?? storeSamples[0];
+  const selectedAvatar = digitalHumanAvatars.find((avatar) => avatar.id === selectedAvatarId) ?? digitalHumanAvatars[0];
+  const avatarPreviewUrl = customAvatarPath && avatarSource === 'upload' ? localFileUrl(customAvatarPath) : selectedAvatarVariant || selectedAvatar.image;
+  const avatarDisplayName = customAvatarPath && avatarSource === 'upload' ? '我的数字人' : selectedAvatar.name;
+  const avatarPromptName =
+    customAvatarPath && avatarSource === 'upload'
+      ? '用户上传的自定义数字人形象'
+      : `${selectedAvatar.name}，${selectedAvatar.role}。${selectedAvatar.prompt}`;
   const productVisual = productImage ? { type: 'image' as const, value: localFileUrl(productImage) } : { type: 'sample' as const, value: activeSample.color };
   const storeVisual = storeImages[0]
     ? { type: 'image' as const, value: localFileUrl(storeImages[0]) }
@@ -385,7 +553,7 @@ function ProductVideoCreateView() {
   const isShowcase = activeScenario === 'product-showcase';
   const isStoreTraffic = activeScenario === 'store-traffic';
   const isHotReplica = activeScenario === 'hot-replica';
-  const descriptionLimit = isHotReplica ? 3000 : 50;
+  const descriptionLimit = isHotReplica ? 3000 : isStoreTraffic || activeScenario === 'product-spokesperson' ? 500 : 200;
   const previewHeadline = isHotReplica
     ? '拆解爆款元素，一键复刻专属爆款视频。'
     : isStoreTraffic
@@ -441,6 +609,21 @@ function ProductVideoCreateView() {
     }
   }
 
+  async function handlePickAvatarImage() {
+    const files = await window.surgicol.dialog.openFiles({
+      title: '上传数字人照片',
+      properties: ['openFile'],
+      filters: [{ name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    });
+    if (files[0]) {
+      setCustomAvatarPath(files[0]);
+      setAvatarSource('upload');
+      setAvatarMode('custom');
+      setAvatarModalTab('upload');
+      setStatus('自定义数字人形象已添加，生成时会作为口播人物参考。');
+    }
+  }
+
   function resetForm() {
     setProductImage(null);
     setReferenceVideo(null);
@@ -451,45 +634,240 @@ function ProductVideoCreateView() {
     setScriptEnabled(true);
     setAvatarMode('image');
     setAvatarSource('digital');
-    setModel('Seedance 2.0');
+    setSelectedAvatarId(digitalHumanAvatars[1].id);
+    setSelectedAvatarVariant(digitalHumanAvatars[1].variants[0]);
+    setCustomAvatarPath(null);
+    setAvatarModalOpen(false);
+    setAvatarModalTab('digital');
+    setModel('Seedance 1.5 Pro（有声口播）');
     setQuality('720p');
     setRatio('9:16');
-    setDuration('15s');
+    setDuration('5s');
     setStatus('');
+    setIsGenerating(false);
+    setGeneratedTask(null);
+    setGeneratedVideoUrl('');
+    uploadProgressMap.current = {};
+    setGenerationProgress({ stage: 'idle', percent: 0, label: '', detail: '' });
   }
 
-  function handleGenerate() {
+  async function handleGenerate() {
+    if (isGenerating) return;
     if (isHotReplica && !referenceVideo) {
       setStatus('请先上传参考视频，用来拆解爆款节奏与结构。');
       return;
     }
-    if (isHotReplica && !productImage) {
-      setStatus('请上传商品图，AI 会把商品替换进复刻视频里。');
+    if (!isShowcase && !isStoreTraffic && !isHotReplica && !productImage) {
+      setStatus('请先上传商品图，商品口播需要商品素材作为底稿。');
+      return;
+    }
+    if ((isShowcase || isHotReplica) && !productImage) {
+      setStatus(isHotReplica ? '请上传商品图，AI 会把商品替换进复刻视频里。' : '请先上传商品图，用来生成商品展示视频。');
+      return;
+    }
+    if (isStoreTraffic && storeImages.length === 0) {
+      setStatus('请先上传门店图片，用来生成门店引流视频。');
       return;
     }
 
-    const savedTask = {
-      id: `product-video-${Date.now()}`,
-      scenario: activeScenario,
-      title: active.title,
-      description: description.trim(),
-      productImage,
-      referenceVideo,
-      storeImages,
-      storeSample: selectedStoreSample,
-      sample: selectedSample,
-      scriptEnabled,
-      avatarMode,
-      avatarSource,
-      model,
-      quality,
-      ratio,
-      duration,
-      createdAt: new Date().toISOString()
-    };
-    const existing = JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as unknown[];
-    localStorage.setItem('moya-product-video-tasks', JSON.stringify([savedTask, ...existing].slice(0, 12)));
-    setStatus(`${active.title}生成任务已创建，可在当前页面继续调整，也会保留到本地最近任务。`);
+    setIsGenerating(true);
+    setGeneratedTask(null);
+    setGeneratedVideoUrl('');
+    uploadProgressMap.current = {};
+    setGenerationProgress({
+      stage: 'uploading',
+      percent: 3,
+      label: '准备上传素材',
+      detail: '正在创建 OSS 上传任务'
+    });
+
+    try {
+      setStatus('正在准备素材...');
+      const imagePaths = isStoreTraffic ? storeImages : productImage ? [productImage] : [];
+      const imageAccessUrls: string[] = [];
+      const imageUploads = [];
+      const uploadSpan = 47 / Math.max(imagePaths.length + (referenceVideo ? 1 : 0), 1);
+      for (let index = 0; index < imagePaths.length; index += 1) {
+        const input = {
+          path: imagePaths[index],
+          folder: `product-video/${activeScenario}/images/${index + 1}`,
+          label: imagePaths.length > 1 ? `上传素材 ${index + 1}/${imagePaths.length}` : '上传商品素材'
+        };
+        const taskId = `product-video-upload-${Date.now()}-${index}`;
+        uploadProgressMap.current[taskId] = {
+          base: 3 + index * uploadSpan,
+          span: uploadSpan,
+          label: input.label
+        };
+        try {
+          const uploaded = await uploadProductVideoAsset(input.path, input.folder, taskId);
+          imageUploads.push(uploaded);
+          imageAccessUrls.push(await getProductVideoAssetAccessUrl(uploaded.mediaUrl));
+        } catch (error) {
+          if (!isOssConfigError(error)) throw error;
+          setStatus('OSS 配置未恢复，正在使用本地图片直传兜底...');
+          setGenerationProgress({
+            stage: 'uploading',
+            percent: Math.round(3 + (index + 1) * uploadSpan),
+            label: '本地图片直传',
+            detail: 'OSS 密钥未配置，已改用本地图片数据提交火山生成'
+          });
+          const inlineImage = await readProductVideoAssetAsDataUrl(input.path);
+          imageAccessUrls.push(inlineImage.dataUrl);
+        }
+      }
+      let referenceUpload = null;
+      if (referenceVideo) {
+        const taskId = `product-video-upload-${Date.now()}-reference`;
+        uploadProgressMap.current[taskId] = {
+          base: 3 + imagePaths.length * uploadSpan,
+          span: uploadSpan,
+          label: '上传参考视频'
+        };
+        try {
+          referenceUpload = await uploadProductVideoAsset(referenceVideo, `product-video/${activeScenario}/references`, taskId);
+        } catch (error) {
+          if (isOssConfigError(error)) {
+            throw new Error('参考视频必须上传到 OSS 才能给火山访问，请先恢复 OSS AccessKey 配置。');
+          }
+          throw error;
+        }
+      }
+      setGenerationProgress({
+        stage: 'signing',
+        percent: 55,
+        label: '生成素材访问地址',
+        detail: imageUploads.length === imagePaths.length ? '正在为火山引擎创建临时可访问链接' : '本地图片已准备完成，正在提交生成'
+      });
+      const referenceAccessUrl = referenceUpload ? await getProductVideoAssetAccessUrl(referenceUpload.mediaUrl) : undefined;
+      let avatarImageUrl = avatarSource === 'digital' ? selectedAvatarVariant || selectedAvatar.image : undefined;
+      if (avatarSource === 'upload' && customAvatarPath) {
+        setGenerationProgress({
+          stage: 'signing',
+          percent: 60,
+          label: '上传数字人形象',
+          detail: '正在为自定义数字人创建参考图'
+        });
+        try {
+          const avatarUpload = await uploadProductVideoAsset(customAvatarPath, `product-video/${activeScenario}/avatars`);
+          avatarImageUrl = await getProductVideoAssetAccessUrl(avatarUpload.mediaUrl);
+        } catch (error) {
+          if (!isOssConfigError(error)) throw error;
+          const inlineAvatar = await readProductVideoAssetAsDataUrl(customAvatarPath);
+          avatarImageUrl = inlineAvatar.dataUrl;
+        }
+      }
+
+      setStatus('素材上传完成，正在提交火山视频生成任务...');
+      setGenerationProgress({
+        stage: 'submitting',
+        percent: 65,
+        label: '提交生成任务',
+        detail: '正在连接火山视频生成模型'
+      });
+      const created = await createProductVideoTask({
+        scenario: activeScenario,
+        description: description.trim(),
+        imageUrls: imageAccessUrls,
+        referenceVideoUrl: referenceAccessUrl,
+        scriptEnabled,
+        avatarMode,
+        avatarSource,
+        avatarId: avatarSource === 'digital' ? selectedAvatarId : 'custom-avatar',
+        avatarName: avatarPromptName,
+        avatarImageUrl,
+        model,
+        quality,
+        ratio,
+        duration
+      });
+
+      const savedTask = {
+        id: `product-video-${Date.now()}`,
+        taskId: created.taskId,
+        scenario: activeScenario,
+        title: active.title,
+        description: description.trim(),
+        productImage,
+        referenceVideo,
+        storeImages,
+        imageUrls: imageUploads.map((item) => item.mediaUrl),
+        imageAccessUrls,
+        referenceVideoUrl: referenceUpload?.mediaUrl,
+        referenceAccessUrl,
+        storeSample: selectedStoreSample,
+        sample: selectedSample,
+        scriptEnabled,
+        avatarMode,
+        avatarSource,
+        avatarId: avatarSource === 'digital' ? selectedAvatarId : 'custom-avatar',
+        avatarName: avatarPromptName,
+        avatarImageUrl,
+        model: created.model || model,
+        quality,
+        ratio,
+        duration,
+        status: created.status || 'submitted',
+        prompt: created.prompt,
+        createdAt: new Date().toISOString()
+      };
+      const existing = JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as unknown[];
+      localStorage.setItem('moya-product-video-tasks', JSON.stringify([savedTask, ...existing].slice(0, 12)));
+      setStatus(`${active.title}任务已提交，正在等待云端生成...`);
+      setGenerationProgress({
+        stage: 'generating',
+        percent: 72,
+        label: '加速生成中',
+        detail: '云端正在生成视频，请保持页面打开'
+      });
+      await pollProductVideoTask(created.taskId, savedTask);
+    } catch (error) {
+      setGenerationProgress((progress) => ({
+        ...progress,
+        stage: 'failed',
+        percent: Math.max(progress.percent, 1),
+        label: '生成失败',
+        detail: error instanceof Error ? error.message : '生成失败，请稍后重试。'
+      }));
+      setStatus(error instanceof Error ? error.message : '生成失败，请稍后重试。');
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  async function pollProductVideoTask(taskId: string, savedTask: Record<string, unknown>) {
+    for (let index = 0; index < 90; index += 1) {
+      await delay(index === 0 ? 2500 : 5000);
+      const task = await getProductVideoTaskStatus(taskId);
+      setGeneratedTask(task);
+      setStatus(productVideoStatusText(task));
+      setGenerationProgress({
+        stage: task.finished ? (task.successful ? 'done' : 'failed') : 'generating',
+        percent: task.finished ? (task.successful ? 100 : 96) : Math.min(96, 72 + index * 2),
+        label: task.finished ? (task.successful ? '生成完成' : '生成失败') : `${Math.min(96, 72 + index * 2)}% 加速生成中`,
+        detail: task.message || (task.finished ? '任务已结束' : '云端正在渲染成片')
+      });
+      if (task.videoUrl) {
+        setGeneratedVideoUrl(task.videoUrl);
+      }
+      updateProductVideoRecentTask(taskId, {
+        ...savedTask,
+        status: task.status,
+        successful: task.successful,
+        finished: task.finished,
+        videoUrl: task.videoUrl,
+        message: task.message,
+        updatedAt: new Date().toISOString()
+      });
+      if (task.finished) return;
+    }
+    setStatus('任务已提交，云端仍在生成中，稍后可回到最近任务查看。');
+    setGenerationProgress({
+      stage: 'generating',
+      percent: 96,
+      label: '96% 加速生成中',
+      detail: '云端仍在生成，稍后可回到最近任务查看'
+    });
   }
 
   return (
@@ -534,7 +912,7 @@ function ProductVideoCreateView() {
 
         <div className="product-create-field">
           <label>
-            <span>{isStoreTraffic || isShowcase || isHotReplica ? '上传商品图' : '商品图'}</span>
+            <span>{isStoreTraffic ? '上传门店图' : isShowcase || isHotReplica ? '上传商品图' : '商品图'}</span>
             <button type="button" onClick={isStoreTraffic ? handlePickStoreImages : handlePickProductImage}>
               <Upload size={15} />
               上传
@@ -641,7 +1019,7 @@ function ProductVideoCreateView() {
           <>
             <div className="product-create-field">
               <label>
-                <span>{isHotReplica ? '描述你想修改的内容（可选）' : isStoreTraffic ? '描述你的门店服务（可选）' : '产品描述'}</span>
+                <span>{isHotReplica ? '描述你想修改的内容（可选）' : isStoreTraffic ? '门店口播文案' : '口播文案'}</span>
                 <em>{description.length}/{descriptionLimit}</em>
               </label>
               <textarea
@@ -653,8 +1031,8 @@ function ProductVideoCreateView() {
                   isHotReplica
                     ? '添加你的产品信息、视频风格，以及任何你想加入的具体想法'
                     : isStoreTraffic
-                    ? '添加你的门店信息、视频风格，以及任何你想加入的具体想法'
-                    : '输入商品卖点，例如：轻薄透气、防晒不闷、适合夏季通勤'
+                    ? '输入希望数字人朗读的门店口播文案，生成时会同步烧录为字幕'
+                    : '输入希望数字人朗读的商品口播文案，生成时会同步烧录为字幕'
                 }
               />
             </div>
@@ -684,15 +1062,38 @@ function ProductVideoCreateView() {
                 </button>
               </div>
               <div className="product-avatar-actions">
-                <button type="button" className={avatarSource === 'digital' ? 'active' : undefined} onClick={() => setAvatarSource('digital')}>
+                <button
+                  type="button"
+                  className={avatarSource === 'digital' ? 'active' : undefined}
+                  onClick={() => {
+                    setAvatarSource('digital');
+                    setAvatarModalTab('digital');
+                    setAvatarModalOpen(true);
+                  }}
+                >
                   <UserRound size={15} />
-                  数字人
+                  {avatarSource === 'digital' ? selectedAvatar.name : '数字人'}
                 </button>
-                <button type="button" className={avatarSource === 'upload' ? 'active' : undefined} onClick={() => setAvatarSource('upload')}>
+                <button
+                  type="button"
+                  className={avatarSource === 'upload' ? 'active' : undefined}
+                  onClick={() => {
+                    setAvatarSource('upload');
+                    setAvatarModalTab('upload');
+                    setAvatarModalOpen(true);
+                  }}
+                >
                   <Upload size={15} />
-                  上传
+                  {customAvatarPath ? '已上传' : '上传'}
                 </button>
               </div>
+              <button className="avatar-current-preview" type="button" onClick={() => setAvatarModalOpen(true)}>
+                <img src={avatarPreviewUrl} alt={avatarDisplayName} />
+                <span>
+                  <strong>{avatarDisplayName}</strong>
+                  <small>{avatarSource === 'upload' ? '自定义形象' : selectedAvatar.role}</small>
+                </span>
+              </button>
             </div>
             ) : null}
           </>
@@ -703,9 +1104,8 @@ function ProductVideoCreateView() {
             <span>模型</span>
           </label>
           <select value={model} onChange={(event) => setModel(event.target.value)}>
-            <option>Seedance 2.0</option>
-            <option>口播增强模型</option>
-            <option>商品展示模型</option>
+            <option>Seedance 1.5 Pro（有声口播）</option>
+            <option>Seedance 1.0 Pro（静默展示）</option>
           </select>
         </div>
 
@@ -722,42 +1122,96 @@ function ProductVideoCreateView() {
                 <option>16:9</option>
               </select>
               <select value={duration} onChange={(event) => setDuration(event.target.value)} aria-label="时长">
-                <option>15s</option>
-                <option>30s</option>
-                <option>60s</option>
+                <option>5s</option>
+                <option>10s</option>
+                <option>12s</option>
               </select>
             </>
           ) : null}
         </div>
-
-        {status ? <div className="product-create-status">{status}</div> : null}
 
         <div className="product-create-actions">
           <button type="button" onClick={resetForm}>
             <RotateCcw size={15} />
             重置
           </button>
-          <button type="button" className="primary-action" onClick={handleGenerate}>
+          <button type="button" className="primary-action" onClick={handleGenerate} disabled={isGenerating}>
             <WandSparkles size={16} />
-            生成 150 美豆
+            {isGenerating ? '生成中...' : '生成 150 美豆'}
           </button>
         </div>
       </aside>
 
-      <main className={`product-create-preview${isShowcase ? ' showcase-preview' : ''}${isStoreTraffic ? ' store-preview' : ''}${isHotReplica ? ' replica-preview' : ''}`}>
-        <div className="product-preview-toolbar">
-          <NavLink to="/">
-            <Home size={15} />
-            首页
-          </NavLink>
-          <NavLink to="/editor?workflow=viral">
-            <Sparkles size={15} />
-            网感剪辑
-          </NavLink>
-        </div>
+      <main
+        className={`product-create-preview${isShowcase ? ' showcase-preview' : ''}${isStoreTraffic ? ' store-preview' : ''}${isHotReplica ? ' replica-preview' : ''}${
+          generationProgress.stage !== 'idle' || generatedVideoUrl ? ' generation-page' : ' guide-page'
+        }`}
+      >
+        {generationProgress.stage !== 'idle' || generatedVideoUrl ? (
+          <section className="product-generation-page">
+            {generatedVideoUrl ? (
+              <div className="product-generated-video-card">
+                <video src={generatedVideoUrl} controls playsInline />
+                <span>{active.title}成片预览</span>
+              </div>
+            ) : (
+              <div className={`product-generation-live-card progress-${generationProgress.stage}`}>
+              <div className="product-generation-card-stack" aria-hidden="true">
+                <span className="product-generation-card ghost-card" />
+                <span className="product-generation-card active-card">
+                  <span className="generation-card-media">
+                    {isStoreTraffic && storeVisual.type === 'image' ? (
+                      <img src={storeVisual.value} alt="" />
+                    ) : productVisual.type === 'image' ? (
+                      <img src={productVisual.value} alt="" />
+                    ) : avatarSource === 'digital' ? (
+                      <img src={avatarPreviewUrl} alt="" />
+                    ) : (
+                      <strong>{isStoreTraffic ? activeStoreSample.copy : activeSample.copy}</strong>
+                    )}
+                  </span>
+                  <span className="generation-card-caption">{active.title}</span>
+                </span>
+                <span className="product-generation-card mini-card">
+                  <WandSparkles size={22} />
+                </span>
+              </div>
+              <div className="product-generation-live-copy">
+                <span>{generationProgress.stage === 'failed' ? '任务异常' : '云端生成任务'}</span>
+                <strong>{generationProgress.label || status || `${active.title}生成中`}</strong>
+                <p>{generationProgress.detail || status || '正在处理素材并渲染成片'}</p>
+                <div className="product-progress-track large">
+                  <i style={{ width: `${Math.max(3, Math.min(generationProgress.percent || 1, 100))}%` }} />
+                </div>
+                <div className="product-generation-live-meta">
+                  <span>{generationProgress.percent || 1}%</span>
+                  <span>{quality} · {ratio} · {duration}</span>
+                </div>
+                <div className="product-generation-steps">
+                  <span className={generationProgress.percent >= 12 ? 'active' : undefined}>上传素材</span>
+                  <span className={generationProgress.percent >= 55 ? 'active' : undefined}>生成链接</span>
+                  <span className={generationProgress.percent >= 65 ? 'active' : undefined}>提交任务</span>
+                  <span className={generationProgress.percent >= 72 ? 'active' : undefined}>渲染成片</span>
+                </div>
+              </div>
+            </div>
+            )}
+          </section>
+        ) : (
+          <>
+            <div className="product-preview-toolbar">
+              <NavLink to="/">
+                <Home size={15} />
+                首页
+              </NavLink>
+              <NavLink to="/editor?workflow=viral">
+                <Sparkles size={15} />
+                网感剪辑
+              </NavLink>
+            </div>
 
-        <section className={`product-preview-stage ${active.tone}${isShowcase ? ' product-showcase-stage' : ''}${isStoreTraffic ? ' product-store-stage' : ''}${isHotReplica ? ' product-replica-stage' : ''}`}>
-          {isHotReplica ? (
+            <section className={`product-preview-stage ${active.tone}${isShowcase ? ' product-showcase-stage' : ''}${isStoreTraffic ? ' product-store-stage' : ''}${isHotReplica ? ' product-replica-stage' : ''}`}>
+              {isHotReplica ? (
             <div className="replica-demo-canvas">
               <div className="replica-video-card">
                 <strong>爆款视频</strong>
@@ -838,8 +1292,8 @@ function ProductVideoCreateView() {
 
               <div className="product-flow-card product-avatar-card">
                 <div className="product-avatar-video">
-                  <div className="avatar-head">
-                    <UserRound size={34} />
+                  <div className="avatar-head avatar-head-image">
+                    <img src={avatarPreviewUrl} alt={avatarDisplayName} />
                   </div>
                   <div className="avatar-caption">
                     {scriptEnabled ? (description || `${activeSample.name}，今天这款真的适合日常通勤。`) : '展示产品核心卖点'}
@@ -850,31 +1304,130 @@ function ProductVideoCreateView() {
               </div>
             </>
           )}
-        </section>
+            </section>
 
-        <section className="product-preview-copy">
-          <div>
-            <h1>{previewHeadline}</h1>
-            <p>{previewSubtext}</p>
-          </div>
-          {!isShowcase && !isStoreTraffic && !isHotReplica ? (
-            <div className="product-preview-metrics">
-              <span>
-                <Volume2 size={15} />
-                {scriptEnabled ? '口播已开启' : '静默展示'}
-              </span>
-              <span>
-                <MonitorSmartphone size={15} />
-                {quality} · {ratio} · {duration}
-              </span>
-              <span>
-                <CheckCircle2 size={15} />
-                {model}
-              </span>
-            </div>
-          ) : null}
-        </section>
+            <section className="product-preview-copy">
+              <div>
+                <h1>{previewHeadline}</h1>
+                <p>{previewSubtext}</p>
+              </div>
+              {!isShowcase && !isStoreTraffic && !isHotReplica ? (
+                <div className="product-preview-metrics">
+                  <span>
+                    <Volume2 size={15} />
+                    {scriptEnabled ? '口播已开启' : '静默展示'}
+                  </span>
+                  <span>
+                    <MonitorSmartphone size={15} />
+                    {quality} · {ratio} · {duration}
+                  </span>
+                  <span>
+                    <CheckCircle2 size={15} />
+                    {model}
+                  </span>
+                </div>
+              ) : null}
+            </section>
+          </>
+        )}
       </main>
+
+      {avatarModalOpen ? (
+        <div className="avatar-picker-overlay" role="dialog" aria-modal="true" aria-label="选择数字人">
+          <div className="avatar-picker-modal">
+            <header>
+              <button
+                type="button"
+                className={avatarModalTab === 'digital' ? 'active' : undefined}
+                onClick={() => setAvatarModalTab('digital')}
+              >
+                数字人
+              </button>
+              <button
+                type="button"
+                className={avatarModalTab === 'upload' ? 'active' : undefined}
+                onClick={() => setAvatarModalTab('upload')}
+              >
+                上传
+              </button>
+              <button type="button" className="avatar-picker-close" onClick={() => setAvatarModalOpen(false)} aria-label="关闭">
+                ×
+              </button>
+            </header>
+
+            {avatarModalTab === 'digital' ? (
+              <div className="avatar-picker-body">
+                <div className="avatar-card-grid">
+                  {digitalHumanAvatars.map((avatar) => (
+                    <button
+                      key={avatar.id}
+                      type="button"
+                      className={selectedAvatarId === avatar.id && avatarSource === 'digital' ? 'active' : undefined}
+                      onClick={() => {
+                        setSelectedAvatarId(avatar.id);
+                        setSelectedAvatarVariant(avatar.variants[0]);
+                        setAvatarSource('digital');
+                        setAvatarMode('image');
+                      }}
+                    >
+                      <img src={avatar.image} alt={avatar.name} />
+                      <strong>{avatar.name}</strong>
+                      <span>{avatar.role}</span>
+                      <small>{avatar.scenes} 套外观</small>
+                    </button>
+                  ))}
+                </div>
+                <div className="avatar-variant-panel">
+                  <button type="button" onClick={() => setAvatarModalOpen(false)}>‹ {selectedAvatar.name}</button>
+                  <div className="avatar-variant-grid">
+                    {selectedAvatar.variants.map((variant, index) => (
+                      <button
+                        key={variant}
+                        type="button"
+                        className={selectedAvatarVariant === variant && avatarSource === 'digital' ? 'active' : undefined}
+                        onClick={() => {
+                          setSelectedAvatarVariant(variant);
+                          setAvatarSource('digital');
+                          setAvatarMode('image');
+                        }}
+                      >
+                        <img src={variant} alt={`${selectedAvatar.name} ${index + 1}`} />
+                        <span>{selectedAvatar.role} {index + 1}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="avatar-upload-body">
+                <button className="avatar-upload-drop" type="button" onClick={handlePickAvatarImage}>
+                  拖拽或上传数字人照片到这里
+                  <small>建议使用正面半身照，脸部清晰，光线均匀</small>
+                </button>
+                <strong>我的数字人形象</strong>
+                {customAvatarPath ? (
+                  <div className="custom-avatar-card">
+                    <img src={localFileUrl(customAvatarPath)} alt="我的数字人形象" />
+                    <span>{customAvatarPath.split(/[\\/]/).pop()}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomAvatarPath(null);
+                        setAvatarSource('digital');
+                      }}
+                      aria-label="删除自定义数字人"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ) : (
+                  <p>还没有上传自定义数字人。</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

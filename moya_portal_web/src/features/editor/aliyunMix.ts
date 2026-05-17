@@ -98,6 +98,22 @@ export interface AliyunMixJobStatus {
   raw?: unknown;
 }
 
+export interface ViralSubtitleSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface ViralSubtitleJob {
+  jobId: string;
+  status: string;
+  finished: boolean;
+  successful: boolean;
+  segments: ViralSubtitleSegment[];
+  text: string;
+  raw?: unknown;
+}
+
 export interface AliyunStorageConfig {
   enabled: boolean;
   endpoint: string;
@@ -214,6 +230,16 @@ export async function submitAliyunMix(request: AliyunMixRequest) {
 
 export async function getAliyunMixJobStatus(jobId: string) {
   const response = await http.get<unknown, { data: AliyunMixJobStatus }>(`/fission/aliyun-mix/jobs/${encodeURIComponent(jobId)}`);
+  return response.data;
+}
+
+export async function submitViralSubtitleRecognition(input: { mediaUrl: string; title?: string; duration?: string; startTime?: string }) {
+  const response = await http.post<typeof input, { data: ViralSubtitleJob }>('/viral/subtitles/recognize', input);
+  return response.data;
+}
+
+export async function getViralSubtitleJob(jobId: string) {
+  const response = await http.get<unknown, { data: ViralSubtitleJob }>(`/viral/subtitles/jobs/${encodeURIComponent(jobId)}`);
   return response.data;
 }
 

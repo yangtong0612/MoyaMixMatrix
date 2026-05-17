@@ -21,7 +21,6 @@ import {
   Menu,
   Mic,
   MousePointer2,
-  MoreVertical,
   Music,
   Pause,
   Play,
@@ -57,7 +56,7 @@ import { PreviewPanel } from './components/PreviewPanel';
 import { TimelinePanel } from './components/TimelinePanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { toMediaUrl } from './mediaUrl';
-import { buildAliyunMixRequest, createAliyunOutputMediaUrl, getAliyunMixJobStatus, getAliyunStorageConfig, getProtectedMediaAccessUrl, submitAliyunMix } from './aliyunMix';
+import { buildAliyunMixRequest, createAliyunOutputMediaUrl, getAliyunMixJobStatus, getAliyunStorageConfig, getProtectedMediaAccessUrl, getViralSubtitleJob, submitAliyunMix, submitViralSubtitleRecognition, type ViralSubtitleSegment } from './aliyunMix';
 
 export function EditorPage() {
   const editor = useEditorStore();
@@ -632,6 +631,7 @@ interface FinishedVideoItem {
   batchName?: string;
   coverPath?: string;
   groupDetails?: GeneratedFissionGroupDetail[];
+  viralOverlay?: ViralRecentTask;
 }
 
 interface FinishedVideoGroup {
@@ -704,6 +704,14 @@ interface ViralRecentTask {
   templateName?: string;
   titlePosition?: { x: number; y: number };
   captionPosition?: { x: number; y: number };
+  subtitleSegments?: ViralCaptionSegment[];
+  mediaUrl?: string;
+  subtitleJobId?: string;
+}
+
+interface ViralCaptionSegment {
+  time: string;
+  text: string;
 }
 
 const VIRAL_TIMELINE_DURATION = 13;
@@ -794,8 +802,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const [packagingProgress, setPackagingProgress] = useState<number | null>(null);
   const [previewRecentTask, setPreviewRecentTask] = useState<ViralRecentTask | null>(null);
   const [previewRecentTime, setPreviewRecentTime] = useState(0);
-  const [uploadPhase, setUploadPhase] = useState<'idle' | 'uploading' | 'analyzing' | 'ready'>('idle');
+  const [uploadPhase, setUploadPhase] = useState<'idle' | 'uploading' | 'analyzing' | 'ready' | 'failed'>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [sourceUploadProgress, setSourceUploadProgress] = useState(0);
   const [keywords, setKeywords] = useState('零基础, 数字人, 视频创作, 小白');
   const [videoVolume, setVideoVolume] = useState(80);
   const [noiseReduction, setNoiseReduction] = useState(false);
@@ -814,10 +823,11 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const [sourceDuration, setSourceDuration] = useState(VIRAL_TIMELINE_DURATION);
   const [timelineClips, setTimelineClips] = useState<ViralTimelineClip[]>(createViralDefaultClips);
   const [selectedClipId, setSelectedClipId] = useState('clip-1');
+  const [recognizedCaptionSegments, setRecognizedCaptionSegments] = useState<ViralCaptionSegment[]>([]);
   const appliedTemplate = viralTemplateCards.find((item) => item.cardId === selectedTemplateCardId) || viralTemplateCards[0];
   const template = appliedTemplate;
   const previewVersion = versions.find((item) => selectedVersionIds.includes(item.id)) || versions[0];
-  const captionSegments = buildViralCaptionSegments(keywords);
+  const captionSegments = recognizedCaptionSegments.length > 0 ? recognizedCaptionSegments : buildViralCaptionSegments(keywords);
   const timelineDuration = getViralTimelineDuration(timelineClips);
   const rulerTimes = buildViralRulerTimes(timelineDuration);
   const timelineCurrentTime = sourceToViralTimelineTime(timelineClips, currentTime);
@@ -827,6 +837,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const editedCaptionSegments = buildEditedViralCaptionSegments(captionSegments, timelineClips);
   const activeCaptionIndex = findEditedViralCaptionIndex(editedCaptionSegments, timelineCurrentTime);
   const activeCaption = editedCaptionSegments[activeCaptionIndex] || editedCaptionSegments[0];
+  const liveTemplatePhase = getViralPreviewEffectPhase(timelineCurrentTime % Math.max(0.1, timelineDuration), timelineDuration);
+  const appliedTemplateFeature = getViralTemplateFeature(appliedTemplate);
+  const displayedUploadProgress = uploadPhase === 'analyzing' || uploadPhase === 'ready' ? 100 : sourceUploadProgress;
   const previewHook = previewVersion?.hook || buildViralHook(template, activeCaption?.text || '核心卖点', activeCaptionIndex);
   const previewSubtitle = previewVersion?.subtitleStyle || template.caption;
 
@@ -915,33 +928,77 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       duration: 18
     };
     setSourceVideo(nextVideo);
-    void persistViralRecentTask({
-      id: nextVideo.id,
-      name: nextVideo.name,
-      path: nextVideo.path,
-      templateKey: appliedTemplate.key,
-      templateCardId: selectedTemplateCardId,
-      keywords,
-      savedAt: new Date().toISOString(),
-      duration: formatViralDuration(sourceDuration)
-    });
     setVersions([]);
     setSelectedVersionIds([]);
-    setUploadProgress(9);
+    setRecognizedCaptionSegments([]);
+    setTimelineClips(createViralDefaultClips(VIRAL_TIMELINE_DURATION));
+    setSelectedClipId('clip-1');
+    setCurrentTime(0);
+    setSourceDuration(VIRAL_TIMELINE_DURATION);
+    setSourceUploadProgress(0);
+    setUploadProgress(3);
     setUploadPhase('uploading');
-    setNotice('');
-    window.setTimeout(() => {
-      setUploadProgress(100);
+    setNotice('正在检查 OSS 上传配置。');
+    const taskId = `viral-${nextVideo.id}`;
+    let unsubscribe: (() => void) | undefined;
+    try {
+      await getAliyunStorageConfig();
+      setNotice('正在上传视频到 OSS，上传完成后会自动调用阿里云智能字幕断句。');
+      unsubscribe = window.surgicol.media.onUploadToOssProgress?.((progress) => {
+        if (progress.taskId !== taskId) return;
+        const uploadPercent = normalizeUploadPercent(progress.percent);
+        setSourceUploadProgress(uploadPercent);
+        setUploadProgress(Math.max(3, Math.min(68, Math.round(uploadPercent * 0.68))));
+        if (progress.message) setNotice(`视频上传中：${uploadPercent}%`);
+      });
+      const uploaded = await window.surgicol.media.uploadToOss(filePath, { folder: 'viral/source-videos', taskId });
+      unsubscribe?.();
+      setSourceUploadProgress(100);
+      setUploadProgress(72);
       setUploadPhase('analyzing');
-    }, 520);
-    window.setTimeout(() => {
+      setNotice('上传完成，正在提交阿里云智能字幕断句任务。');
+      const submitted = await submitViralSubtitleRecognition({
+        mediaUrl: uploaded.mediaUrl,
+        title: nextVideo.name
+      });
+      setNotice('字幕断句任务已提交，正在等待阿里云返回识别结果。');
+      const recognized = await waitForViralSubtitleSegments(submitted.jobId, (progress) => setUploadProgress(progress));
+      const nextCaptions = viralSubtitleSegmentsToCaptions(recognized.segments);
+      const nextDuration = Math.max(
+        VIRAL_TIMELINE_DURATION,
+        sourceDuration,
+        ...recognized.segments.map((segment) => segment.end)
+      );
+      setRecognizedCaptionSegments(nextCaptions);
+      setActivePackageTab('captions');
       setUploadPhase('ready');
+      setSourceUploadProgress(100);
       setCurrentTime(0);
-      setSourceDuration(VIRAL_TIMELINE_DURATION);
-      setTimelineClips(createViralDefaultClips());
+      setSourceDuration(nextDuration);
+      setTimelineClips(createViralDefaultClips(nextDuration));
       setSelectedClipId('clip-1');
-      setNotice('已完成语音检测和内容分析，请选择模板、文字快剪和声音设置。');
-    }, 1160);
+      setUploadProgress(100);
+      setNotice(`已通过阿里云智能字幕断句识别 ${nextCaptions.length} 段字幕，已同步到文字快剪、左侧预览和保存渲染。`);
+      void persistViralRecentTask({
+        id: nextVideo.id,
+        name: nextVideo.name,
+        path: nextVideo.path,
+        mediaUrl: uploaded.mediaUrl,
+        subtitleJobId: recognized.jobId,
+        templateKey: appliedTemplate.key,
+        templateCardId: selectedTemplateCardId,
+        keywords,
+        subtitleSegments: nextCaptions,
+        savedAt: new Date().toISOString(),
+        duration: formatViralDuration(nextDuration)
+      });
+    } catch (error) {
+      unsubscribe?.();
+      setUploadPhase('failed');
+      setSourceUploadProgress(0);
+      setUploadProgress(0);
+      setNotice(error instanceof Error ? `字幕断句失败：${error.message}` : '字幕断句失败，请检查 OSS 和阿里云 ICE 配置。');
+    }
   }
 
   async function persistViralRecentTask(task: ViralRecentTask) {
@@ -967,6 +1024,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setSelectedTemplateCardId(restoredCard.cardId);
     setHoverTemplateCardId(null);
     setKeywords(task.keywords);
+    setRecognizedCaptionSegments(task.subtitleSegments || []);
     if (task.titlePosition) setTitlePosition(task.titlePosition);
     if (task.captionPosition) setCaptionPosition(task.captionPosition);
     setUploadPhase('ready');
@@ -974,8 +1032,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setVersions([]);
     setSelectedVersionIds([]);
     setCurrentTime(0);
-    setSourceDuration(VIRAL_TIMELINE_DURATION);
-    setTimelineClips(createViralDefaultClips());
+    const restoredDuration = Math.max(VIRAL_TIMELINE_DURATION, ...((task.subtitleSegments || []).map((caption) => readViralCaptionEnd(caption.time))));
+    setSourceDuration(restoredDuration);
+    setTimelineClips(createViralDefaultClips(restoredDuration));
     setSelectedClipId('clip-1');
     setNotice(`已恢复最近任务「${task.name}」。`);
   }
@@ -990,7 +1049,14 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         ? createViralDefaultClips(nextDuration)
         : clampViralClipsToDuration(clips, nextDuration)
     ));
-    setCurrentTime((time) => Math.min(time, Math.max(0, nextDuration - 0.01)));
+    setCurrentTime((time) => (
+      time <= 0.08
+        ? getViralPosterSeekTime(nextDuration)
+        : Math.min(time, Math.max(0, nextDuration - 0.01))
+    ));
+    if (!isPlaying && currentTime <= 0.08) {
+      event.currentTarget.currentTime = getViralPosterSeekTime(nextDuration);
+    }
   }
 
   function previewTemplate(cardId: string | null) {
@@ -1011,7 +1077,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       video.loop = true;
       video.playsInline = true;
       setHoverTemplateTime(0);
-      video.currentTime = 0;
+      video.currentTime = getViralPosterSeekTime(video.duration || sourceDuration);
       void video.play().catch(() => undefined);
       startTemplateCardPreviewClock(video);
     }
@@ -1052,6 +1118,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
 
   function applyTemplate(cardId: string) {
     const nextTemplate = viralTemplateCards.find((item) => item.cardId === cardId) || viralTemplateCards[0];
+    const nextFeature = getViralTemplateFeature(nextTemplate);
     setSelectedTemplateCardId(nextTemplate.cardId);
     setHoverTemplateCardId(null);
     setActivePackageTab('template');
@@ -1065,7 +1132,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         const nextProgress = Math.min(100, (progress || 0) + 20);
         if (nextProgress >= 100) {
           window.clearInterval(timer);
-          setNotice(`已应用「${nextTemplate.cardName}」，左侧预览和时间轴已同步。`);
+          setNotice(`已应用「${nextTemplate.cardName}」：${nextFeature.title}、${nextFeature.caption} 已同步到左侧预览。`);
           window.setTimeout(() => setPackagingProgress(null), 240);
         }
         return nextProgress;
@@ -1248,6 +1315,20 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setViralSourceTime(Math.max(clip.start, Math.min(clip.end - 0.01, currentTime)));
   }
 
+  function updateViralCaptionText(captionIndex: number, text: string) {
+    const sourceCaptions = recognizedCaptionSegments.length > 0 ? recognizedCaptionSegments : captionSegments;
+    setRecognizedCaptionSegments(sourceCaptions.map((caption, index) => (
+      index === captionIndex ? { ...caption, text } : caption
+    )));
+  }
+
+  function deleteViralCaption(captionIndex: number) {
+    const sourceCaptions = recognizedCaptionSegments.length > 0 ? recognizedCaptionSegments : captionSegments;
+    const nextCaptions = sourceCaptions.filter((_, index) => index !== captionIndex);
+    setRecognizedCaptionSegments(nextCaptions);
+    setNotice(nextCaptions.length ? '已删除选中字幕，左侧预览和保存渲染已同步更新。' : '已清空字幕，左侧预览将显示模板默认文案。');
+  }
+
   function beginOverlayDrag(event: PointerEvent<HTMLDivElement>, layer: 'title' | 'caption') {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1322,9 +1403,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       path: sourceVideo.path,
       coverPath: sourceVideo.coverUrl || sourceVideo.path
     };
-    const versionsToSave = versions.length
-      ? versions.filter((version) => selectedSet.size === 0 || selectedSet.has(version.id))
-      : [fallbackVersion];
+      const versionsToSave = versions.length
+        ? versions.filter((version) => selectedSet.size === 0 || selectedSet.has(version.id))
+        : [fallbackVersion];
     if (versionsToSave.length === 0) {
       setNotice('请先选择要入库的包装版本。');
       return;
@@ -1334,6 +1415,25 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     const now = new Date().toISOString();
     const draftName = `${props.projectName.trim() || '未命名项目'} · 网感剪辑`;
     const groupId = `viral-${sourceVideo.id}`;
+    const savedSubtitleSegments = editedCaptionSegments.map((caption) => ({
+      time: caption.time,
+      text: caption.text
+    }));
+    const savedOverlayBase: ViralRecentTask = {
+      id: sourceVideo.id,
+      name: sourceVideo.name,
+      path: sourceVideo.path,
+      templateKey: appliedTemplate.key,
+      templateCardId: selectedTemplateCardId,
+      keywords,
+      savedAt: now,
+      duration: formatViralDuration(timelineDuration),
+      hook: fallbackVersion.hook,
+      templateName: appliedTemplate.cardName,
+      titlePosition,
+      captionPosition,
+      subtitleSegments: savedSubtitleSegments
+    };
     const nextGroup: FinishedVideoGroup = {
       id: groupId,
       draftId: groupId,
@@ -1353,6 +1453,14 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         savedAt: now,
         draftName,
         batchName: `${appliedTemplate.cardName} · ${version.hook}`,
+        viralOverlay: {
+          ...savedOverlayBase,
+          id: version.id,
+          hook: version.hook,
+          name: version.name,
+          path: version.path,
+          templateName: appliedTemplate.cardName
+        },
         groupDetails: [{
           groupId: appliedTemplate.key,
           groupName: appliedTemplate.cardName,
@@ -1363,26 +1471,39 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     };
     await window.surgicol.store.set(FINISHED_VIDEOS_KEY, [nextGroup, ...existingGroups.filter((group) => group.id !== groupId)]);
     await persistViralRecentTask({
-      id: sourceVideo.id,
-      name: sourceVideo.name,
-      path: sourceVideo.path,
-      templateKey: appliedTemplate.key,
-      templateCardId: selectedTemplateCardId,
-      keywords,
-      savedAt: now,
-      duration: formatViralDuration(timelineDuration),
+      ...savedOverlayBase,
       finishedCount: versionsToSave.length,
-      hook: fallbackVersion.hook,
-      templateName: appliedTemplate.cardName,
-      titlePosition,
-      captionPosition
     });
     setNotice(`已保存 ${versionsToSave.length} 个网感包装版本到成片库。`);
     setSourceVideo(null);
     setUploadPhase('idle');
+    setSourceUploadProgress(0);
     setVersions([]);
     setSelectedVersionIds([]);
     setCurrentTime(0);
+  }
+
+  async function downloadRecentTask(task: ViralRecentTask) {
+    const source = task.path || task.mediaUrl;
+    if (!source) {
+      setNotice('当前任务没有可下载的视频地址。');
+      return;
+    }
+    try {
+      const downloadSource = shouldRequestProtectedPreview(source)
+        ? (await getProtectedMediaAccessUrl(source)).mediaUrl
+        : source;
+      const overlay = buildRecentTaskDownloadOverlay(task);
+      const result = await window.surgicol.media.downloadToLocal(downloadSource, {
+        fileName: `${task.name || '网感剪辑'}.mp4`,
+        viralOverlay: overlay
+      });
+      if (!result.canceled) {
+        setNotice(`已下载到本地：${result.name || result.localPath}`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? `本地下载失败：${error.message}` : '本地下载失败，请稍后重试。');
+    }
   }
 
   return (
@@ -1413,7 +1534,12 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                   </div>
                   <strong>{task.name}</strong>
                   <span>{task.finishedCount ? `已保存 ${task.finishedCount} 个成片` : `${formatViralTaskExpiry(task.savedAt)}后失效`}</span>
-                  <MoreVertical size={16} />
+                  <button className="viral-recent-download" type="button" onClick={(event) => {
+                    event.stopPropagation();
+                    void downloadRecentTask(task);
+                  }} title="下载到本地">
+                    <Download size={15} />
+                  </button>
                 </article>
               )) : (
                 <p>上传视频后会在这里保留最近包装任务。</p>
@@ -1446,6 +1572,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 </div>
                 <footer>
                   <button type="button" onClick={() => restoreRecentTask(previewRecentTask)}>继续编辑</button>
+                  <button type="button" onClick={() => void downloadRecentTask(previewRecentTask)}>下载到本地</button>
                 </footer>
               </section>
             </div>
@@ -1458,10 +1585,19 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
           </section>
           <section className="viral-processing-card">
             <Upload size={76} />
-            <h2>{uploadPhase === 'uploading' ? '正在上传你的视频...' : '检测语音和分析内容'}</h2>
-            <button type="button" onClick={() => setSourceVideo(null)}>取消上传</button>
+            <h2>{uploadPhase === 'failed' ? '视频上传失败' : uploadPhase === 'uploading' ? '正在上传你的视频...' : '检测语音和分析内容'}</h2>
+            <button type="button" onClick={() => {
+              setSourceVideo(null);
+              setUploadPhase('idle');
+              setSourceUploadProgress(0);
+              setUploadProgress(0);
+              setNotice('');
+            }}>{uploadPhase === 'failed' ? '重新选择视频' : '取消上传'}</button>
+            {uploadPhase === 'failed' && notice ? <p className="viral-processing-error">{notice}</p> : null}
             <div className="viral-progress-steps">
-              <span className="active">视频上传中...{uploadProgress}%</span>
+              <span className={uploadPhase === 'failed' ? 'failed' : uploadPhase === 'analyzing' ? 'completed' : 'active'}>
+                {uploadPhase === 'failed' ? '视频上传失败' : uploadPhase === 'analyzing' ? '视频上传完成' : '视频上传中'}...{displayedUploadProgress}%
+              </span>
               <span className={uploadPhase === 'analyzing' ? 'active' : undefined}>分析视频，并智能断句</span>
               <span>免费加字幕，支持10+种方言</span>
             </div>
@@ -1481,7 +1617,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 }
               }}
             />
-            <div className={`viral-preview-overlay template-${template.key}`}>
+            <div className={`viral-preview-overlay template-${template.key} phase-${liveTemplatePhase}`}>
               <div className="viral-live-template-effect" aria-hidden="true">
                 <u />
                 <u />
@@ -1495,7 +1631,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 onPointerUp={() => setDraggingOverlay(null)}
               >
                 <strong>{previewHook}</strong>
-                <em>{template.accent}</em>
+                <em>{appliedTemplateFeature.title}</em>
               </div>
               <div
                 className={`viral-overlay-layer caption-layer ${draggingOverlay === 'caption' ? 'dragging' : ''}`}
@@ -1505,8 +1641,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 onPointerUp={() => setDraggingOverlay(null)}
               >
                 <span>{activeCaption?.text || previewSubtitle}</span>
+                <em>{recognizedCaptionSegments.length ? '阿里云智能断句字幕' : appliedTemplateFeature.caption}</em>
               </div>
-              <small>{template.cardName}</small>
+              <small>{template.cardName} · {appliedTemplateFeature.badge}</small>
             </div>
           </section>
           <section className="viral-package-card">
@@ -1532,6 +1669,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                         onMouseLeave={stopTemplateCardVideo}
                         onFocus={() => previewTemplate(item.cardId)}
                         onBlur={() => previewTemplate(null)}
+                        onClick={() => applyTemplate(item.cardId)}
                       >
                         {sourceVideo.path ? (
                           <video
@@ -1541,6 +1679,11 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                             playsInline
                             preload="auto"
                             autoPlay={item.cardId === hoverTemplateCardId}
+                            onLoadedMetadata={(event) => {
+                              if (item.cardId !== hoverTemplateCardId) {
+                                event.currentTarget.currentTime = getViralPosterSeekTime(event.currentTarget.duration || sourceDuration);
+                              }
+                            }}
                             onTimeUpdate={(event) => syncTemplateCardPreview(event, item.cardId)}
                           />
                         ) : null}
@@ -1551,7 +1694,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                           <u />
                           <u />
                         </div>
-                        <span>{item.variantIndex % 3 === 0 ? '智能加标题' : item.variantIndex % 3 === 1 ? '双行排版更网感' : '自动识别添加字幕'}</span>
+                        <span>{getViralTemplateFeature(item).badge}</span>
                         <em>{item.accent}</em>
                         <strong>{item.cardName}</strong>
                         <small>{item.caption}</small>
@@ -1581,8 +1724,18 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 {editedCaptionSegments.map((caption, index) => (
                   <article key={caption.key} className={index === activeCaptionIndex ? 'active' : undefined} onClick={() => setViralSourceTime(caption.sourceStart)}>
                     <span>{caption.time}</span>
-                    <strong>{caption.text}</strong>
-                    {index === 0 ? <div><Edit3 size={14} /><Trash2 size={14} /></div> : null}
+                    <input
+                      value={caption.text}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => updateViralCaptionText(caption.captionIndex, event.target.value)}
+                    />
+                    <div>
+                      <Edit3 size={14} />
+                      <button type="button" onClick={(event) => {
+                        event.stopPropagation();
+                        deleteViralCaption(caption.captionIndex);
+                      }}><Trash2 size={14} /></button>
+                    </div>
                   </article>
                 ))}
                 {editedCaptionSegments.length === 0 ? <p>当前片段没有可显示的字幕。</p> : null}
@@ -1728,7 +1881,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
 }
 
 function ViralSavedOverlay({ task, currentTime = 0 }: { task: ViralRecentTask; currentTime?: number }) {
-  const captions = buildViralCaptionSegments(task.keywords);
+  const captions = task.subtitleSegments?.length ? task.subtitleSegments : buildViralCaptionSegments(task.keywords);
   const activeCaption = captions[findViralCaptionIndex(captions, currentTime)] || captions[0];
   const titlePosition = task.titlePosition || { x: 50, y: 18 };
   const captionPosition = task.captionPosition || { x: 50, y: 64 };
@@ -1745,6 +1898,19 @@ function ViralSavedOverlay({ task, currentTime = 0 }: { task: ViralRecentTask; c
   );
 }
 
+function buildRecentTaskDownloadOverlay(task: ViralRecentTask): ViralRecentTask {
+  const captions = task.subtitleSegments?.length ? task.subtitleSegments : buildViralCaptionSegments(task.keywords);
+  const template = viralTemplates.find((item) => item.key === task.templateKey) || viralTemplates[0];
+  return {
+    ...task,
+    hook: task.hook || buildViralHook(template, captions[0]?.text || task.name || '网感剪辑', 0),
+    templateName: task.templateName || template.name,
+    titlePosition: task.titlePosition || { x: 50, y: 18 },
+    captionPosition: task.captionPosition || { x: 50, y: 64 },
+    subtitleSegments: captions
+  };
+}
+
 function buildViralHook(template: ViralTemplate, keyword: string, index: number) {
   const hooks: Record<ViralTemplateKey, string[]> = {
     street: [`先别划走，${keyword}真的不一样`, `90%的人忽略了${keyword}`, `用这个方法把${keyword}讲清楚`],
@@ -1753,6 +1919,38 @@ function buildViralHook(template: ViralTemplate, keyword: string, index: number)
     story: [`一开始我也不信${keyword}`, `${keyword}背后有个反转`, `这个${keyword}案例，把我看懂了`]
   };
   return hooks[template.key][index % hooks[template.key].length];
+}
+
+function normalizeUploadPercent(percent: number) {
+  if (!Number.isFinite(percent)) return 0;
+  const normalized = percent > 0 && percent <= 1 ? percent * 100 : percent;
+  return Math.max(0, Math.min(100, Math.round(normalized)));
+}
+
+function getViralTemplateFeature(template: ViralTemplate) {
+  const features: Record<ViralTemplateKey, { title: string; caption: string; badge: string }> = {
+    street: {
+      title: '强钩子开场',
+      caption: '高能大字字幕',
+      badge: '爆点节奏'
+    },
+    seed: {
+      title: '种草清单感',
+      caption: '卖点标签字幕',
+      badge: '柔和转化'
+    },
+    deal: {
+      title: '痛点转化',
+      caption: '重点词警示',
+      badge: '成交导向'
+    },
+    story: {
+      title: '悬念反转',
+      caption: '情绪分句字幕',
+      badge: '故事包装'
+    }
+  };
+  return features[template.key];
 }
 
 function buildViralCaptionSegments(keywords: string) {
@@ -1767,7 +1965,37 @@ function buildViralCaptionSegments(keywords: string) {
   ];
 }
 
-function buildEditedViralCaptionSegments(captions: Array<{ time: string; text: string }>, clips: ViralTimelineClip[]) {
+function viralSubtitleSegmentsToCaptions(segments: ViralSubtitleSegment[]): ViralCaptionSegment[] {
+  return segments
+    .filter((segment) => segment.text?.trim() && Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start)
+    .map((segment) => ({
+      time: `${formatViralTime(segment.start)} - ${formatViralTime(segment.end)}`,
+      text: segment.text.trim()
+    }));
+}
+
+async function waitForViralSubtitleSegments(jobId: string, onProgress?: (progress: number) => void) {
+  if (!jobId) throw new Error('阿里云字幕任务没有返回 JobId');
+  let lastJob = await getViralSubtitleJob(jobId);
+  for (let index = 0; index < 24; index += 1) {
+    const progress = Math.min(96, 74 + index);
+    onProgress?.(progress);
+    if (lastJob.successful && lastJob.segments.length > 0) return lastJob;
+    if (lastJob.finished && !lastJob.successful) {
+      throw new Error(`阿里云字幕识别失败，任务状态：${lastJob.status || 'unknown'}`);
+    }
+    await delay(2200);
+    lastJob = await getViralSubtitleJob(jobId);
+  }
+  if (lastJob.segments.length > 0) return lastJob;
+  throw new Error('阿里云字幕识别还未完成，请稍后重试或检查素材音轨是否清晰');
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function buildEditedViralCaptionSegments(captions: ViralCaptionSegment[], clips: ViralTimelineClip[]) {
   return captions.flatMap((caption, captionIndex) => {
     const captionStart = readViralCaptionStart(caption.time);
     const captionEnd = readViralCaptionEnd(caption.time);
@@ -1866,6 +2094,11 @@ function getViralMediaDisplayTime(video: HTMLVideoElement, sourceTime: number) {
   if (!Number.isFinite(duration) || duration <= 0.12) return Math.max(0, sourceTime);
   const loopPoint = Math.max(0.1, duration - 0.08);
   return Math.min(loopPoint, Math.max(0, sourceTime % loopPoint));
+}
+
+function getViralPosterSeekTime(duration: number) {
+  if (!Number.isFinite(duration) || duration <= 0.8) return 0;
+  return Math.min(Math.max(0.35, duration * 0.08), Math.max(0.1, duration - 0.2));
 }
 
 function findNearestPlayableViralSourceTime(clips: ViralTimelineClip[], sourceTime: number) {
@@ -3656,7 +3889,8 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
   const [libraryGroups, setLibraryGroups] = useState<FinishedVideoGroup[]>([]);
   const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
-  const [previewVideo, setPreviewVideo] = useState<{ name: string; path?: string } | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<{ name: string; path?: string; viralOverlay?: ViralRecentTask } | null>(null);
+  const [previewVideoTime, setPreviewVideoTime] = useState(0);
   const [previewError, setPreviewError] = useState('');
   const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; optionId: string; type: ComboTimelineTrackType } | null>(null);
 
@@ -3709,9 +3943,10 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
   }
 
   async function previewFinishedVideo(video: FinishedVideoItem) {
+    setPreviewVideoTime(0);
     if (!video.path) {
       setPreviewError('当前成片没有可播放的视频地址。');
-      setPreviewVideo({ name: video.name, path: undefined });
+      setPreviewVideo({ name: video.name, path: undefined, viralOverlay: video.viralOverlay });
       return;
     }
     setPreviewError('');
@@ -3719,10 +3954,32 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
       const nextPath = shouldRequestProtectedPreview(video.path)
         ? (await getProtectedMediaAccessUrl(video.path)).mediaUrl
         : video.path;
-      setPreviewVideo({ name: video.name, path: nextPath });
+      setPreviewVideo({ name: video.name, path: nextPath, viralOverlay: video.viralOverlay });
     } catch (error) {
       setPreviewError(error instanceof Error ? error.message : '获取成片预览地址失败');
-      setPreviewVideo({ name: video.name, path: video.path });
+      setPreviewVideo({ name: video.name, path: video.path, viralOverlay: video.viralOverlay });
+    }
+  }
+
+  async function downloadFinishedVideo(video: FinishedVideoItem) {
+    if (!video.path) {
+      setPreviewError('当前成片没有可下载的视频地址。');
+      return;
+    }
+    setPreviewError('');
+    try {
+      const downloadSource = shouldRequestProtectedPreview(video.path)
+        ? (await getProtectedMediaAccessUrl(video.path)).mediaUrl
+        : video.path;
+      const result = await window.surgicol.media.downloadToLocal(downloadSource, {
+        fileName: `${video.name || '成片视频'}.mp4`,
+        viralOverlay: video.viralOverlay ? buildRecentTaskDownloadOverlay(video.viralOverlay) : undefined
+      });
+      if (!result.canceled) {
+        setPreviewError(`已下载到本地：${result.name || result.localPath}`);
+      }
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : '本地下载失败，请稍后重试。');
     }
   }
 
@@ -3772,6 +4029,7 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
                             <FileText size={24} />
                           </div>
                         )}
+                        {video.viralOverlay ? <ViralSavedOverlay task={video.viralOverlay} /> : null}
                         <button className="finished-thumb-play" type="button" onClick={() => void previewFinishedVideo(video)} aria-label={`预览 ${video.name}`}>
                           <Play size={16} />
                         </button>
@@ -3788,7 +4046,7 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
                       </div>
                       <div className="finished-actions">
                         <button type="button" onClick={() => void previewFinishedVideo(video)}>预览</button>
-                        <button type="button">{video.path ? '已入库' : '入库'}</button>
+                        <button type="button" onClick={() => void downloadFinishedVideo(video)} disabled={!video.path}>下载</button>
                       </div>
                     </article>
                   ))}
@@ -3805,6 +4063,7 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
               <strong>{previewVideo.name}</strong>
               <button type="button" onClick={() => {
                 setPreviewVideo(null);
+                setPreviewVideoTime(0);
                 setPreviewError('');
               }}>
                 <X size={16} />
@@ -3812,7 +4071,16 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
             </header>
             <div className="media-preview-body">
               {previewVideo.path ? (
-                <video src={toMediaUrl(previewVideo.path)} controls autoPlay />
+                <div className="media-preview-stage">
+                  <video
+                    src={toMediaUrl(previewVideo.path)}
+                    controls
+                    autoPlay
+                    onTimeUpdate={(event) => setPreviewVideoTime(event.currentTarget.currentTime)}
+                    onSeeked={(event) => setPreviewVideoTime(event.currentTarget.currentTime)}
+                  />
+                  {previewVideo.viralOverlay ? <ViralSavedOverlay task={previewVideo.viralOverlay} currentTime={previewVideoTime} /> : null}
+                </div>
               ) : (
                 <div className="media-preview-empty">{previewError || '当前成片没有可播放的视频地址。'}</div>
               )}

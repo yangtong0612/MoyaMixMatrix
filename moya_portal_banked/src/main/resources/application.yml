@@ -1,4 +1,7 @@
 spring:
+  config:
+    import:
+      - optional:file:./.env[.properties]
   application:
     name: moya-portal-banked
   datasource:
@@ -37,6 +40,12 @@ moya:
       endpoint: ${MOYA_ALIYUN_ICE_ENDPOINT:ice.cn-beijing.aliyuncs.com}
       access-key-id: ${MOYA_ALIYUN_ACCESS_KEY_ID:${MOYA_OSS_ACCESS_KEY_ID:}}
       access-key-secret: ${MOYA_ALIYUN_ACCESS_KEY_SECRET:${MOYA_OSS_ACCESS_KEY_SECRET:}}
+  volcengine:
+    video:
+      enabled: ${MOYA_VOLCENGINE_VIDEO_ENABLED:false}
+      base-url: ${MOYA_VOLCENGINE_VIDEO_BASE_URL:https://ark.cn-beijing.volces.com}
+      api-key: ${MOYA_VOLCENGINE_ARK_API_KEY:${ARK_API_KEY:}}
+      model: ${MOYA_VOLCENGINE_VIDEO_MODEL:doubao-seedance-1-5-pro-251215}
   storage:
     oss:
       enabled: ${MOYA_OSS_ENABLED:false}

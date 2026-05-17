@@ -25,11 +25,31 @@ public class StorageProperties {
 		private String outputPrefix = "moya-drive/fission/outputs";
 
 		public boolean isEnabled() {
-			return enabled;
+			return enabled || hasCompleteConfig();
 		}
 
 		public void setEnabled(boolean enabled) {
 			this.enabled = enabled;
+		}
+
+		public boolean isExplicitlyEnabled() {
+			return enabled;
+		}
+
+		public boolean hasCompleteConfig() {
+			return !isBlank(endpoint) && !isBlank(bucket) && !isBlank(accessKeyId) && !isBlank(accessKeySecret);
+		}
+
+		public String missingConfigMessage() {
+			StringBuilder message = new StringBuilder();
+			appendMissing(message, "endpoint", endpoint);
+			appendMissing(message, "bucket", bucket);
+			appendMissing(message, "accessKeyId", accessKeyId);
+			appendMissing(message, "accessKeySecret", accessKeySecret);
+			if (message.isEmpty()) {
+				return "";
+			}
+			return message.toString();
 		}
 
 		public String getEndpoint() {
@@ -78,6 +98,16 @@ public class StorageProperties {
 
 		public void setOutputPrefix(String outputPrefix) {
 			this.outputPrefix = outputPrefix;
+		}
+
+		private void appendMissing(StringBuilder message, String label, String value) {
+			if (!isBlank(value)) return;
+			if (!message.isEmpty()) message.append(", ");
+			message.append(label);
+		}
+
+		private boolean isBlank(String value) {
+			return value == null || value.trim().isEmpty();
 		}
 	}
 }
