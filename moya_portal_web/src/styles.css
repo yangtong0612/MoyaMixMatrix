@@ -3507,41 +3507,84 @@ progress::-webkit-progress-value {
   color: #ffffff;
 }
 
-.viral-recent-section h3 {
-  margin: 0 0 16px;
+.viral-recent-section {
+  display: grid;
+  gap: 14px;
+}
+
+.viral-recent-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.viral-recent-heading h3 {
+  margin: 0;
   color: #f8fbff;
+  font-size: 18px;
+}
+
+.viral-recent-heading span,
+.viral-recent-heading small {
+  color: #8f9db0;
+  font-size: 12px;
+}
+
+.viral-recent-heading span {
+  display: block;
+  margin-top: 5px;
+}
+
+.viral-recent-heading small {
+  padding: 5px 8px;
+  border: 1px solid #2d3440;
+  border-radius: 999px;
+  background: #171a20;
 }
 
 .viral-recent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 284px));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  max-width: 1180px;
 }
 
 .viral-recent-grid article {
   position: relative;
   display: grid;
+  grid-template-rows: 146px auto auto;
   gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #252b34;
+  border-radius: 10px;
+  background: #15171c;
   color: #f8fbff;
   cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.viral-recent-grid article:hover {
+  transform: translateY(-1px);
+  border-color: rgb(var(--accent-rgb) / 48%);
+  background: #1b1e25;
+  box-shadow: 0 16px 34px rgb(0 0 0 / 20%);
 }
 
 .viral-recent-grid article > div {
   position: relative;
   display: grid;
   place-items: center;
-  height: 168px;
+  min-width: 0;
+  height: 146px;
   overflow: hidden;
   border-radius: 8px;
-  background: #181819;
+  background: #0d0f14;
 }
 
 .viral-recent-thumb {
   position: relative;
-}
-
-.viral-recent-grid article:hover > div {
-  box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 58%);
 }
 
 .viral-recent-grid video {
@@ -3550,10 +3593,11 @@ progress::-webkit-progress-value {
   object-fit: cover;
 }
 
-.viral-recent-grid small {
+.viral-recent-thumb small {
   position: absolute;
   left: 8px;
-  top: 138px;
+  bottom: 8px;
+  z-index: 4;
   padding: 2px 6px;
   border-radius: 4px;
   background: rgb(0 0 0 / 68%);
@@ -3562,10 +3606,58 @@ progress::-webkit-progress-value {
   font-weight: 700;
 }
 
-.viral-recent-grid article > svg {
+.viral-recent-thumb em {
   position: absolute;
   right: 8px;
-  bottom: 28px;
+  top: 8px;
+  z-index: 4;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgb(15 23 42 / 72%);
+  color: #ffffff;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viral-recent-grid article > svg {
+  position: absolute;
+  right: 10px;
+  bottom: 14px;
+  color: #6f7f95;
+}
+
+.viral-recent-grid article > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fbff;
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viral-recent-grid article > span {
+  min-width: 0;
+  padding-right: 22px;
+  overflow: hidden;
+  color: #8f9db0;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viral-recent-grid > p {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed #2d3440;
+  border-radius: 10px;
+  background: #15171c;
+  color: #8f9db0;
 }
 
 .viral-saved-overlay,
@@ -11304,6 +11396,8 @@ progress::-webkit-progress-value {
 .theme-light.editor-workbench .viral-upload-zone > span,
 .theme-light.editor-workbench .viral-recent-grid span,
 .theme-light.editor-workbench .viral-recent-grid p,
+.theme-light.editor-workbench .viral-recent-heading span,
+.theme-light.editor-workbench .viral-recent-heading small,
 .theme-light.editor-workbench .viral-caption-list article span,
 .theme-light.editor-workbench .viral-sound-panel button small,
 .theme-light.editor-workbench .viral-version-drawer span {
@@ -11395,10 +11489,33 @@ progress::-webkit-progress-value {
 }
 
 .theme-light.editor-workbench .viral-version-drawer button,
-.theme-light.editor-workbench .viral-recent-grid article > div {
+.theme-light.editor-workbench .viral-recent-grid article > div,
+.theme-light.editor-workbench .viral-recent-grid > p,
+.theme-light.editor-workbench .viral-recent-heading small {
   background: #f8fafc;
   border-color: #d7e0ec;
   color: #17202e;
+}
+
+.theme-light.editor-workbench .viral-recent-grid article {
+  background: #ffffff;
+  border-color: #d7e0ec;
+  color: #17202e;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 6%);
+}
+
+.theme-light.editor-workbench .viral-recent-grid article:hover {
+  background: #f8fafc;
+  border-color: rgb(91 126 255 / 36%);
+  box-shadow: 0 16px 34px rgb(15 23 42 / 10%);
+}
+
+.theme-light.editor-workbench .viral-recent-grid article > strong {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .viral-recent-grid article > svg {
+  color: #94a3b8;
 }
 
 .theme-light.editor-workbench .viral-caption-list article.active {

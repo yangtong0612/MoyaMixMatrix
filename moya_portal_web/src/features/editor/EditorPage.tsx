@@ -1395,15 +1395,22 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
             <strong><Upload size={16} /> 上传视频</strong>
           </button>
           <section className="viral-recent-section">
-            <h3>最近任务</h3>
+            <header className="viral-recent-heading">
+              <div>
+                <h3>最近任务</h3>
+                <span>点击卡片预览成片效果，也可以继续编辑上次任务。</span>
+              </div>
+              {recentTasks.length ? <small>{recentTasks.length} 个任务</small> : null}
+            </header>
             <div className="viral-recent-grid">
               {recentTasks.length ? recentTasks.map((task) => (
-                <article key={task.id} onClick={() => setPreviewRecentTask(task)}>
+                <article key={task.id} onClick={() => setPreviewRecentTask(task)} title={task.name}>
                   <div className="viral-recent-thumb">
                     {task.path ? <video src={toMediaUrl(task.path)} muted playsInline preload="metadata" /> : <Film size={24} />}
                     {task.finishedCount ? <ViralSavedOverlay task={task} /> : null}
+                    <small>{task.duration}</small>
+                    <em>{task.templateName || '网感模板'}</em>
                   </div>
-                  <small>{task.duration}</small>
                   <strong>{task.name}</strong>
                   <span>{task.finishedCount ? `已保存 ${task.finishedCount} 个成片` : `${formatViralTaskExpiry(task.savedAt)}后失效`}</span>
                   <MoreVertical size={16} />
