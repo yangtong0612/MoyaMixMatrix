@@ -289,7 +289,34 @@ function registerIpc() {
     return true;
   });
 
-<<<<<<< HEAD
+  ipcMain.handle('cloud:upload-drive-file-part', async (event, filePath, options = {}) => {
+    const start = Number(options.start || 0);
+    const end = Number(options.end || 0);
+    const size = end - start + 1;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || size <= 0) {
+      throw new Error('Invalid upload part range');
+    }
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) throw new Error('Only files can be uploaded');
+    if (end >= stat.size) throw new Error('Upload part range exceeds file size');
+    return putFilePartToSignedUrl(options.uploadUrl, filePath, {
+      taskId: options.taskId,
+      chunkIndex: options.chunkIndex,
+      partNumber: options.partNumber,
+      contentType: options.contentType || contentTypeForFile(filePath),
+      start,
+      end,
+      size,
+      onProgress: (progress) => {
+        event.sender.send('cloud:upload-drive-file-progress', {
+          taskId: options.taskId,
+          chunkIndex: options.chunkIndex,
+          ...progress
+        });
+      }
+    });
+  });
+
   ipcMain.handle('media:upload-to-oss', async (event, filePath, options = {}) => {
     try {
       const result = await uploadLocalFileToOss(filePath, {
@@ -320,38 +347,6 @@ function registerIpc() {
       });
       throw error;
     }
-=======
-  ipcMain.handle('cloud:upload-drive-file-part', async (event, filePath, options = {}) => {
-    const start = Number(options.start || 0);
-    const end = Number(options.end || 0);
-    const size = end - start + 1;
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || size <= 0) {
-      throw new Error('Invalid upload part range');
-    }
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile()) throw new Error('Only files can be uploaded');
-    if (end >= stat.size) throw new Error('Upload part range exceeds file size');
-    return putFilePartToSignedUrl(options.uploadUrl, filePath, {
-      taskId: options.taskId,
-      chunkIndex: options.chunkIndex,
-      partNumber: options.partNumber,
-      contentType: options.contentType || contentTypeForFile(filePath),
-      start,
-      end,
-      size,
-      onProgress: (progress) => {
-        event.sender.send('cloud:upload-drive-file-progress', {
-          taskId: options.taskId,
-          chunkIndex: options.chunkIndex,
-          ...progress
-        });
-      }
-    });
-  });
-
-  ipcMain.handle('media:upload-to-oss', async (_event, filePath, options = {}) => {
-    return uploadLocalFileToOss(filePath, options);
->>>>>>> gu
   });
 
   ipcMain.handle('media:download-to-local', async (_event, source, options = {}) => {

@@ -7,12 +7,8 @@ import java.util.Date;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
-<<<<<<< HEAD
-=======
 import com.aliyun.oss.model.ObjectMetadata;
 import com.aliyun.oss.model.OSSObject;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
->>>>>>> gu
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 
