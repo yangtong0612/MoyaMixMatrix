@@ -13,6 +13,9 @@ interface ApiResponse<T> {
   timestamp: string;
 }
 
+const uploadRequestConfig = { timeout: 300000 };
+const uploadTimeoutMessage = '上传处理超时，请点击继续重试';
+
 export interface AuthTokenResponse {
   token: string;
   userId: UUID;
@@ -67,6 +70,7 @@ export interface UploadTaskView {
   status: UploadStatus;
   ossBucket?: string | null;
   ossKey?: string | null;
+  uploadId?: string | null;
   contentType?: string | null;
   uploadedIndexes: number[];
   updatedAt?: string | null;
@@ -76,7 +80,13 @@ export interface OssUploadTicketResponse {
   uploadUrl: string;
   bucket: string;
   objectKey: string;
-  mediaUrl: string;
+  uploadId?: string;
+  chunkIndex?: number;
+  partNumber?: number;
+  start?: number;
+  end?: number;
+  sizeBytes?: number;
+  mediaUrl?: string;
   contentType: string;
   expiresAt: string;
 }
@@ -122,6 +132,21 @@ export interface DirectShareView {
 async function unwrap<T>(request: Promise<ApiResponse<T>>) {
   const response = await request;
   return response.data;
+}
+
+async function unwrapUpload<T>(request: Promise<ApiResponse<T>>) {
+  try {
+    return await unwrap(request);
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new Error(uploadTimeoutMessage);
+    }
+    throw error;
+  }
+}
+
+function isTimeoutError(error: unknown) {
+  return error instanceof Error && /timeout.*exceeded|ECONNABORTED/i.test(error.message);
 }
 
 export function register(data: {
@@ -203,30 +228,34 @@ export function permanentDeleteNode(id: UUID) {
 }
 
 export function instantUpload(data: { parentId?: UUID | null; fileName: string; sha256: string }) {
-  return unwrap(http.post<unknown, ApiResponse<InstantUploadResponse>>('/drive/uploads/instant', data));
+  return unwrapUpload(http.post<unknown, ApiResponse<InstantUploadResponse>>('/drive/uploads/instant', data, uploadRequestConfig));
 }
 
 export function initUpload(data: { fileName: string; sha256: string; totalBytes: number; chunkSize: number; contentType?: string }) {
-  return unwrap(http.post<unknown, ApiResponse<UploadTaskView>>('/drive/uploads', data));
+  return unwrapUpload(http.post<unknown, ApiResponse<UploadTaskView>>('/drive/uploads', data, uploadRequestConfig));
 }
 
 export function createUploadTicket(
   id: UUID,
-  data: { fileName?: string; contentType?: string; size: number }
+  data: { chunkIndex?: number; partNumber?: number; size: number }
 ) {
-  return unwrap(http.post<unknown, ApiResponse<OssUploadTicketResponse>>(`/drive/uploads/${id}/ticket`, data));
+  return unwrapUpload(http.post<unknown, ApiResponse<OssUploadTicketResponse>>(`/drive/uploads/${id}/ticket`, data, uploadRequestConfig));
 }
 
-export function registerUploadChunk(id: UUID, data: { chunkIndex: number; sizeBytes: number; checksum?: string }) {
-  return unwrap(http.post<unknown, ApiResponse<UploadTaskView>>(`/drive/uploads/${id}/chunks`, data));
+export function registerUploadChunk(id: UUID, data: { chunkIndex: number; partNumber?: number; sizeBytes: number; etag: string; checksum?: string }) {
+  return unwrapUpload(http.post<unknown, ApiResponse<UploadTaskView>>(`/drive/uploads/${id}/chunks`, data, uploadRequestConfig));
+}
+
+export function getUploadTask(id: UUID) {
+  return unwrapUpload(http.get<unknown, ApiResponse<UploadTaskView>>(`/drive/uploads/${id}`, uploadRequestConfig));
 }
 
 export function completeUpload(id: UUID, data: { parentId?: UUID | null; ossKey?: string; contentType?: string }) {
-  return unwrap(http.post<unknown, ApiResponse<CompleteUploadResponse>>(`/drive/uploads/${id}/complete`, data));
+  return unwrapUpload(http.post<unknown, ApiResponse<CompleteUploadResponse>>(`/drive/uploads/${id}/complete`, data, uploadRequestConfig));
 }
 
 export function cancelUpload(id: UUID) {
-  return unwrap(http.patch<unknown, ApiResponse<UploadTaskView>>(`/drive/uploads/${id}/cancel`));
+  return unwrapUpload(http.patch<unknown, ApiResponse<UploadTaskView>>(`/drive/uploads/${id}/cancel`, undefined, uploadRequestConfig));
 }
 
 export function createShareLink(data: {

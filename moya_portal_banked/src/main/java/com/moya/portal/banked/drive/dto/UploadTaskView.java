@@ -15,6 +15,7 @@ public record UploadTaskView(
 		String status,
 		String ossBucket,
 		String ossKey,
+		String uploadId,
 		String contentType,
 		List<Integer> uploadedIndexes,
 		OffsetDateTime updatedAt

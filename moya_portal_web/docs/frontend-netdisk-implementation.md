@@ -39,22 +39,25 @@
 1. 渲染进程通过 `window.surgicol.dialog.openFiles()` 选择本地文件。
 2. 调用 `window.surgicol.cloud.inspectDriveFile(filePath)` 获取文件名、大小、MIME 和 SHA-256。
 3. 调用 `/api/drive/uploads/instant` 尝试秒传。
-4. 未命中时创建 `/api/drive/uploads` 上传任务。
-5. 调用 `/api/drive/uploads/{id}/ticket` 获取 OSS PUT 预签名 URL。
-6. 调用 `window.surgicol.cloud.uploadDriveFile(filePath, options)` 由主进程上传本地文件。
-7. 主进程通过 `cloud:upload-drive-file-progress` 推送进度。
-8. 渲染进程登记单分片并调用 `/api/drive/uploads/{id}/complete` 完成落库。
-9. 上传状态写入传输列表历史，文件页不展示上传进度；用户点击左侧“传输列表”查看上传记录。
+4. 未命中时创建 `/api/drive/uploads` OSS multipart 上传任务。
+5. 文件按 8MB 切分，最多 2 个文件并发、单文件最多 3 个分片并发。
+6. 每个分片调用 `/api/drive/uploads/{id}/ticket` 获取 OSS PUT 预签名 URL。
+7. 调用 `window.surgicol.cloud.uploadDriveFilePart(filePath, options)` 上传指定 byte range，并读取 OSS ETag。
+8. 渲染进程登记分片 ETag；全部分片完成后调用 `/api/drive/uploads/{id}/complete` 完成落库。
+9. 上传状态写入传输列表历史；中断任务保留 `taskId/localPath/uploadedIndexes`，重新打开后可继续上传缺失分片。
+
+上传相关 HTTP 接口单独使用 120 秒超时；超时会展示“上传处理超时，请点击继续重试”，并保留可继续上传状态。普通文件列表、移动、重命名和删除仍使用全局 30 秒超时。
 
 新增 IPC 独立于剪辑模块：
 
-- 网盘使用 `cloud:upload-drive-file`。
+- 网盘使用 `cloud:upload-drive-file-part`。
 - 剪辑继续使用 `media:upload-to-oss`，函数名、入参和返回结构不变。
 
 ## 文件操作
 
 - 文件列表支持进入目录、面包屑返回、搜索、分类筛选、预览、下载、重命名、移动和删除。
 - 回收站支持恢复和永久删除。
+- 缩略图模式下图片优先展示后端返回的 `coverUrl`，加载失败或缩略图仍在异步生成时回退 `previewUrl`，仍失败则显示图片图标。
 - 预览优先使用后端返回的 `previewUrl`，下载使用 `downloadUrl`；图片、视频、音频、PDF 支持内嵌预览，其它类型提示下载查看。
 
 ## 分享

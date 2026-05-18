@@ -229,7 +229,11 @@ function isOssConfigError(error: unknown) {
 export function App() {
   const location = useLocation();
   const isEditorRoute = location.pathname.startsWith('/editor');
+<<<<<<< HEAD
   const isProductCreateRoute = location.pathname.startsWith('/product-video/create');
+=======
+  const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
+>>>>>>> gu
   const isProtectedRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
   const cloudStore = useCloudDriveStore();
   const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (localStorage.getItem('access') ? 'checking' : 'anonymous'));
@@ -291,7 +295,11 @@ export function App() {
   const showShell = isAuthenticated || !isProtectedRoute;
 
   return (
+<<<<<<< HEAD
     <div className={`app-window theme-${theme}${isEditorRoute || isProductCreateRoute ? ' editor-workbench' : ''}`}>
+=======
+    <div className={`app-window theme-${theme}${isEditorRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
+>>>>>>> gu
       <header className="app-titlebar">
         <NavLink className="titlebar-brand" to="/">
           <img src={moyaMatrixLogo} alt="moya矩阵" />

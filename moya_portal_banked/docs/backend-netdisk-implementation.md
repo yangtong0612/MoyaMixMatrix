@@ -24,9 +24,11 @@
 ## 文件与上传
 
 - `DriveService` 负责目录、文件节点、回收站、容量扣减和对象引用计数。
-- `UploadService` 负责秒传、上传任务、分片登记、OSS 上传票据和完成上传。
-- 文件本体不落本地磁盘，上传票据复用已有 `OssUploadTicketService`。
+- `UploadService` 负责秒传、OSS multipart 上传任务、分片 ETag 登记和完成上传。
+- 文件本体不落本地磁盘，分片上传票据和 multipart complete/abort 复用 `OssUploadTicketService`。
 - 文件预览和下载通过 `StorageService#createDownloadUrl` 生成短期访问 URL。
+- 图片文件创建后由后端在事务提交后异步 best-effort 生成 JPEG 缩略图，`drive_node.cover_url` 保存缩略图 OSS object key，接口响应时再转换为短期访问 URL。
+- 缩略图生成失败只记录日志，不阻塞上传完成、秒传保存或分享保存。
 
 ## 分享
 

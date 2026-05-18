@@ -15,7 +15,9 @@ public class UploadChunk {
 	private UUID id;
 	private UUID uploadTaskId;
 	private Integer chunkIndex;
+	private Integer partNumber;
 	private Long sizeBytes;
+	private String etag;
 	private String checksum;
 	private OffsetDateTime createdAt;
 }

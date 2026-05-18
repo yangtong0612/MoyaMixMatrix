@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 		webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 		properties = {
 				"spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration",
+				"moya.database.enabled=false",
 				"moya.storage.oss.enabled=false"
 		}
 )

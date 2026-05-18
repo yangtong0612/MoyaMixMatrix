@@ -1,38 +1,78 @@
-import { Download, Eye, File, FileCode, FileText, Folder, Image, MoreHorizontal, MoveRight, Pencil, Share2, Trash2, Video } from 'lucide-react';
+import { Download, Eye, File, FileCode, FileText, Folder, Image, Info, MoreHorizontal, MoveRight, Pencil, Share2, Trash2, Video } from 'lucide-react';
 import { useState } from 'react';
-import type { MouseEvent } from 'react';
+import type { DragEvent } from 'react';
 import type { DriveNodeView, UUID } from '../api/netdisk';
 
 export type CloudFileViewMode = 'list' | 'thumb' | 'large';
 
 interface CloudFileTableProps {
   items: DriveNodeView[];
-  selectedId: UUID | null;
+  selectedIds: UUID[];
   viewMode: CloudFileViewMode;
-  onSelect: (id: UUID) => void;
+  onSelectOnly: (id: UUID) => void;
+  onToggleSelect: (id: UUID) => void;
   onOpenFolder: (node: DriveNodeView) => void;
   onPreview: (node: DriveNodeView) => void;
   onDownload: (node: DriveNodeView) => void;
+  onDetails: (node: DriveNodeView) => void;
   onRename: (node: DriveNodeView) => void;
   onMove: (node: DriveNodeView) => void;
+  onMoveToFolder: (source: DriveNodeView, targetFolder: DriveNodeView) => void;
   onRecycle: (node: DriveNodeView) => void;
   onShare: (node: DriveNodeView) => void;
 }
 
 export function CloudFileTable({
   items,
-  selectedId,
+  selectedIds,
   viewMode,
-  onSelect,
+  onSelectOnly,
+  onToggleSelect,
   onOpenFolder,
   onPreview,
   onDownload,
+  onDetails,
   onRename,
   onMove,
+  onMoveToFolder,
   onRecycle,
   onShare
 }: CloudFileTableProps) {
   const [openMenuId, setOpenMenuId] = useState<UUID | null>(null);
+  const [draggedNode, setDraggedNode] = useState<DriveNodeView | null>(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState<UUID | null>(null);
+
+  function startDrag(event: DragEvent<HTMLElement>, node: DriveNodeView) {
+    setDraggedNode(node);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', node.id);
+  }
+
+  function clearDrag() {
+    setDraggedNode(null);
+    setDragOverFolderId(null);
+  }
+
+  function allowFolderDrop(event: DragEvent<HTMLElement>, node: DriveNodeView) {
+    if (!canDropOnFolder(draggedNode, node, items)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDragOverFolderId(node.id);
+  }
+
+  function leaveFolderDrop(event: DragEvent<HTMLElement>, node: DriveNodeView) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    if (dragOverFolderId === node.id) setDragOverFolderId(null);
+  }
+
+  function dropOnFolder(event: DragEvent<HTMLElement>, node: DriveNodeView) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (draggedNode && canDropOnFolder(draggedNode, node, items)) {
+      onMoveToFolder(draggedNode, node);
+    }
+    clearDrag();
+  }
 
   if (viewMode === 'list') {
     return (
@@ -47,16 +87,22 @@ export function CloudFileTable({
         <div className="cloud-file-list">
           {items.map((item) => {
             const isFolder = item.nodeType === 'FOLDER';
-            const isSelected = selectedId === item.id;
+            const isSelected = selectedIds.includes(item.id);
             return (
               <article
                 key={item.id}
-                className={isSelected ? 'cloud-file-list-row selected' : 'cloud-file-list-row'}
-                onClick={(event) => stop(event, () => onSelect(item.id))}
+                className={fileItemClass('cloud-file-list-row', isSelected, dragOverFolderId === item.id)}
+                draggable
+                onDragStart={(event) => startDrag(event, item)}
+                onDragEnd={clearDrag}
+                onDragOver={(event) => allowFolderDrop(event, item)}
+                onDragLeave={(event) => leaveFolderDrop(event, item)}
+                onDrop={(event) => dropOnFolder(event, item)}
+                onClick={(event) => stop(event, () => onSelectOnly(item.id))}
                 onDoubleClick={() => (isFolder ? onOpenFolder(item) : onPreview(item))}
               >
                 <div className="cloud-file-list-name">
-                  <input aria-label={`选择 ${item.name}`} type="checkbox" checked={isSelected} onChange={() => onSelect(item.id)} />
+                  <input aria-label={`选择 ${item.name}`} type="checkbox" checked={isSelected} onChange={(event) => stop(event, () => onToggleSelect(item.id))} />
                   <span className="cloud-file-list-icon">
                     <FileVisual node={item} />
                   </span>
@@ -82,7 +128,7 @@ export function CloudFileTable({
                     onClick={(event) =>
                       stop(event, () => {
                         setOpenMenuId(openMenuId === item.id ? null : item.id);
-                        onSelect(item.id);
+                        onSelectOnly(item.id);
                       })
                     }
                   >
@@ -92,6 +138,7 @@ export function CloudFileTable({
                     <FileActionMenu
                       node={item}
                       onPreview={onPreview}
+                      onDetails={onDetails}
                       onRename={onRename}
                       onMove={onMove}
                       onRecycle={onRecycle}
@@ -112,16 +159,22 @@ export function CloudFileTable({
       <div className="cloud-file-grid">
         {items.map((item) => {
           const isFolder = item.nodeType === 'FOLDER';
-          const isSelected = selectedId === item.id;
+          const isSelected = selectedIds.includes(item.id);
           return (
             <article
               key={item.id}
-              className={isSelected ? 'cloud-file-card selected' : 'cloud-file-card'}
-              onClick={(event) => stop(event, () => onSelect(item.id))}
+              className={fileItemClass('cloud-file-card', isSelected, dragOverFolderId === item.id)}
+              draggable
+              onDragStart={(event) => startDrag(event, item)}
+              onDragEnd={clearDrag}
+              onDragOver={(event) => allowFolderDrop(event, item)}
+              onDragLeave={(event) => leaveFolderDrop(event, item)}
+              onDrop={(event) => dropOnFolder(event, item)}
+              onClick={(event) => stop(event, () => onSelectOnly(item.id))}
               onDoubleClick={() => (isFolder ? onOpenFolder(item) : onPreview(item))}
             >
               <div className="cloud-card-toolbar">
-                <input aria-label={`选择 ${item.name}`} type="checkbox" checked={isSelected} onChange={() => onSelect(item.id)} />
+                <input aria-label={`选择 ${item.name}`} type="checkbox" checked={isSelected} onChange={(event) => stop(event, () => onToggleSelect(item.id))} />
                 {!isFolder ? (
                   <>
                     <button type="button" title="分享" onClick={(event) => stop(event, () => onShare(item))}>
@@ -138,7 +191,7 @@ export function CloudFileTable({
                   onClick={(event) =>
                     stop(event, () => {
                       setOpenMenuId(openMenuId === item.id ? null : item.id);
-                      onSelect(item.id);
+                      onSelectOnly(item.id);
                     })
                   }
                 >
@@ -156,6 +209,7 @@ export function CloudFileTable({
                 <FileActionMenu
                   node={item}
                   onPreview={onPreview}
+                  onDetails={onDetails}
                   onRename={onRename}
                   onMove={onMove}
                   onRecycle={onRecycle}
@@ -173,12 +227,14 @@ export function CloudFileTable({
 function FileActionMenu({
   node,
   onPreview,
+  onDetails,
   onRename,
   onMove,
   onRecycle
 }: {
   node: DriveNodeView;
   onPreview: (node: DriveNodeView) => void;
+  onDetails: (node: DriveNodeView) => void;
   onRename: (node: DriveNodeView) => void;
   onMove: (node: DriveNodeView) => void;
   onRecycle: (node: DriveNodeView) => void;
@@ -192,6 +248,10 @@ function FileActionMenu({
           <span>预览</span>
         </button>
       ) : null}
+      <button type="button" onClick={() => onDetails(node)}>
+        <Info size={15} />
+        <span>详情</span>
+      </button>
       <button type="button" onClick={() => onRename(node)}>
         <Pencil size={15} />
         <span>重命名</span>
@@ -212,15 +272,30 @@ function FileVisual({ node }: { node: DriveNodeView }) {
   if (node.nodeType === 'FOLDER') {
     return <Folder className="folder-icon" size={54} />;
   }
-  if (node.mimeType?.startsWith('image/') && (node.coverUrl || node.previewUrl)) {
-    return <img src={node.coverUrl || node.previewUrl || ''} alt="" />;
-  }
   const category = fileCategory(node.name, node.mimeType || undefined);
-  if (category === 'image') return <Image className="image-icon" size={48} />;
+  if (category === 'image') {
+    const sources = [node.coverUrl, node.previewUrl].filter((url): url is string => Boolean(url));
+    if (sources.length > 0) return <ThumbnailImage sources={sources} />;
+    return <Image className="image-icon" size={48} />;
+  }
   if (category === 'video') return <Video className="video-icon" size={48} />;
   if (category === 'document') return <FileText className="document-icon" size={48} />;
   if (category === 'code') return <FileCode className="code-icon" size={48} />;
   return <File className="file-icon" size={48} />;
+}
+
+function ThumbnailImage({ sources }: { sources: string[] }) {
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const src = sources[sourceIndex];
+  if (!src) return <Image className="image-icon" size={48} />;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setSourceIndex((index) => index + 1)}
+    />
+  );
 }
 
 export function formatSize(size = 0) {
@@ -285,7 +360,27 @@ function pad(value: number) {
   return String(value).padStart(2, '0');
 }
 
-function stop(event: MouseEvent, action: () => void) {
+function stop(event: { stopPropagation: () => void }, action: () => void) {
   event.stopPropagation();
   action();
+}
+
+function canDropOnFolder(source: DriveNodeView | null, target: DriveNodeView, items: DriveNodeView[]) {
+  if (!source || target.nodeType !== 'FOLDER' || source.id === target.id) return false;
+  if (source.nodeType === 'FOLDER' && isKnownDescendant(source.id, target, items)) return false;
+  return true;
+}
+
+function isKnownDescendant(sourceId: UUID, target: DriveNodeView, items: DriveNodeView[]) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  let parentId = target.parentId;
+  while (parentId) {
+    if (parentId === sourceId) return true;
+    parentId = byId.get(parentId)?.parentId || null;
+  }
+  return false;
+}
+
+function fileItemClass(base: string, selected: boolean, dragTarget: boolean) {
+  return [base, selected ? 'selected' : '', dragTarget ? 'drag-target' : ''].filter(Boolean).join(' ');
 }

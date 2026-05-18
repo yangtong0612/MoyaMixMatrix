@@ -30,12 +30,14 @@ public class DriveService {
 	private final StorageObjectMapper storageObjectMapper;
 	private final AuthService authService;
 	private final StorageService storageService;
+	private final ThumbnailService thumbnailService;
 
-	public DriveService(DriveNodeMapper driveNodeMapper, StorageObjectMapper storageObjectMapper, AuthService authService, StorageService storageService) {
+	public DriveService(DriveNodeMapper driveNodeMapper, StorageObjectMapper storageObjectMapper, AuthService authService, StorageService storageService, ThumbnailService thumbnailService) {
 		this.driveNodeMapper = driveNodeMapper;
 		this.storageObjectMapper = storageObjectMapper;
 		this.authService = authService;
 		this.storageService = storageService;
+		this.thumbnailService = thumbnailService;
 	}
 
 	public DriveListResult list(UUID userId, UUID parentId) {
@@ -56,10 +58,25 @@ public class DriveService {
 		return toView(requireNode(userId, nodeId));
 	}
 
+	public DriveNodeView findCompletedUploadNode(UUID userId, UUID parentId, String name, String fileHash) {
+		DriveNode node = driveNodeMapper.selectOne(new LambdaQueryWrapper<DriveNode>()
+				.eq(DriveNode::getUserId, userId)
+				.eq(DriveNode::getNodeType, NodeType.FILE.name())
+				.eq(DriveNode::getDeleted, false)
+				.eq(DriveNode::getName, name)
+				.eq(DriveNode::getFileHash, fileHash)
+				.eq(parentId != null, DriveNode::getParentId, parentId)
+				.isNull(parentId == null, DriveNode::getParentId)
+				.orderByDesc(DriveNode::getUpdatedAt)
+				.last("limit 1"));
+		return node == null ? null : toView(node);
+	}
+
 	@Transactional
 	public DriveNodeView createFolder(UUID userId, UUID parentId, String name) {
 		authService.requireUser(userId);
 		requireFolderParent(userId, parentId);
+		requireNameAvailable(userId, parentId, name, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		DriveNode folder = new DriveNode();
 		folder.setId(UUID.randomUUID());
@@ -80,6 +97,7 @@ public class DriveService {
 	public DriveNodeView createFileFromStorage(UUID userId, UUID parentId, String name, StorageObject object) {
 		authService.requireUser(userId);
 		requireFolderParent(userId, parentId);
+		requireNameAvailable(userId, parentId, name, null);
 		authService.consumeQuota(userId, object.getSizeBytes());
 		object.setRefCount((object.getRefCount() == null ? 0 : object.getRefCount()) + 1);
 		object.setUpdatedAt(OffsetDateTime.now());
@@ -104,12 +122,14 @@ public class DriveService {
 		file.setCreatedAt(now);
 		file.setUpdatedAt(now);
 		driveNodeMapper.insert(file);
+		thumbnailService.generateForAsync(file);
 		return toView(file);
 	}
 
 	@Transactional
 	public DriveNodeView rename(UUID userId, UUID nodeId, String name) {
 		DriveNode node = requireNode(userId, nodeId);
+		requireNameAvailable(userId, node.getParentId(), name, node.getId());
 		node.setName(name);
 		node.setFileExt(NodeType.FILE.name().equals(node.getNodeType()) ? fileExt(name) : null);
 		node.setUpdatedAt(OffsetDateTime.now());
@@ -124,6 +144,10 @@ public class DriveService {
 		if (node.getId().equals(targetParentId)) {
 			throw badRequest("cannot move node into itself");
 		}
+		if (NodeType.FOLDER.name().equals(node.getNodeType()) && isDescendantOf(userId, targetParentId, node.getId())) {
+			throw badRequest("cannot move folder into its descendant");
+		}
+		requireNameAvailable(userId, targetParentId, node.getName(), node.getId());
 		node.setParentId(targetParentId);
 		node.setUpdatedAt(OffsetDateTime.now());
 		driveNodeMapper.updateById(node);
@@ -133,20 +157,17 @@ public class DriveService {
 	@Transactional
 	public DriveNodeView recycle(UUID userId, UUID nodeId) {
 		DriveNode node = requireNode(userId, nodeId);
-		node.setDeleted(true);
-		node.setOriginalParentId(node.getParentId());
-		node.setParentId(null);
-		node.setRecycledAt(OffsetDateTime.now());
-		node.setUpdatedAt(OffsetDateTime.now());
-		driveNodeMapper.updateById(node);
+		OffsetDateTime now = OffsetDateTime.now();
+		recycleTree(userId, node, true, now);
 		return toView(node);
 	}
 
 	public List<DriveNodeView> recycleBin(UUID userId) {
 		return driveNodeMapper.selectList(new LambdaQueryWrapper<DriveNode>()
-						.eq(DriveNode::getUserId, userId)
-						.eq(DriveNode::getDeleted, true)
-						.orderByDesc(DriveNode::getRecycledAt))
+				.eq(DriveNode::getUserId, userId)
+				.eq(DriveNode::getDeleted, true)
+				.isNull(DriveNode::getParentId)
+				.orderByDesc(DriveNode::getRecycledAt))
 				.stream()
 				.map(this::toView)
 				.toList();
@@ -158,13 +179,7 @@ public class DriveService {
 		if (node == null || !userId.equals(node.getUserId()) || !Boolean.TRUE.equals(node.getDeleted())) {
 			throw notFound("recycled file not found");
 		}
-		requireFolderParent(userId, node.getOriginalParentId());
-		node.setDeleted(false);
-		node.setParentId(node.getOriginalParentId());
-		node.setOriginalParentId(null);
-		node.setRecycledAt(null);
-		node.setUpdatedAt(OffsetDateTime.now());
-		driveNodeMapper.updateById(node);
+		restoreTree(userId, node, OffsetDateTime.now());
 		return toView(node);
 	}
 
@@ -173,6 +188,51 @@ public class DriveService {
 		DriveNode node = driveNodeMapper.selectById(nodeId);
 		if (node == null || !userId.equals(node.getUserId()) || !Boolean.TRUE.equals(node.getDeleted())) {
 			throw notFound("recycled file not found");
+		}
+		permanentDeleteTree(userId, node);
+	}
+
+	private void recycleTree(UUID userId, DriveNode node, boolean recycleRoot, OffsetDateTime now) {
+		List<DriveNode> children = childrenOf(userId, node.getId(), false);
+		for (DriveNode child : children) {
+			recycleTree(userId, child, false, now);
+		}
+		node.setDeleted(true);
+		node.setOriginalParentId(node.getParentId());
+		if (recycleRoot) {
+			node.setParentId(null);
+		}
+		node.setRecycledAt(now);
+		node.setUpdatedAt(now);
+		driveNodeMapper.updateById(node);
+	}
+
+	private void restoreTree(UUID userId, DriveNode node, OffsetDateTime now) {
+		UUID restoreParentId = validRestoreParent(userId, node.getOriginalParentId());
+		requireNameAvailable(userId, restoreParentId, node.getName(), node.getId());
+		node.setDeleted(false);
+		node.setParentId(restoreParentId);
+		node.setOriginalParentId(null);
+		node.setRecycledAt(null);
+		node.setUpdatedAt(now);
+		driveNodeMapper.updateById(node);
+		for (DriveNode child : childrenOf(userId, node.getId(), true)) {
+			restoreTree(userId, child, now);
+		}
+	}
+
+	private UUID validRestoreParent(UUID userId, UUID parentId) {
+		if (parentId == null) return null;
+		DriveNode parent = driveNodeMapper.selectById(parentId);
+		if (parent == null || !userId.equals(parent.getUserId()) || Boolean.TRUE.equals(parent.getDeleted()) || !NodeType.FOLDER.name().equals(parent.getNodeType())) {
+			return null;
+		}
+		return parentId;
+	}
+
+	private void permanentDeleteTree(UUID userId, DriveNode node) {
+		for (DriveNode child : childrenOf(userId, node.getId(), true)) {
+			permanentDeleteTree(userId, child);
 		}
 		if (NodeType.FILE.name().equals(node.getNodeType()) && node.getStorageObjectId() != null) {
 			StorageObject object = storageObjectMapper.selectById(node.getStorageObjectId());
@@ -183,7 +243,29 @@ public class DriveService {
 			}
 			authService.releaseQuota(userId, node.getSize() == null ? 0 : node.getSize());
 		}
-		driveNodeMapper.deleteById(nodeId);
+		driveNodeMapper.deleteById(node.getId());
+	}
+
+	private List<DriveNode> childrenOf(UUID userId, UUID parentId, boolean includeDeleted) {
+		return driveNodeMapper.selectList(new LambdaQueryWrapper<DriveNode>()
+				.eq(DriveNode::getUserId, userId)
+				.eq(DriveNode::getParentId, parentId)
+				.eq(!includeDeleted, DriveNode::getDeleted, false));
+	}
+
+	private boolean isDescendantOf(UUID userId, UUID possibleDescendantId, UUID ancestorId) {
+		UUID cursor = possibleDescendantId;
+		while (cursor != null) {
+			if (ancestorId.equals(cursor)) {
+				return true;
+			}
+			DriveNode node = driveNodeMapper.selectById(cursor);
+			if (node == null || !userId.equals(node.getUserId()) || Boolean.TRUE.equals(node.getDeleted())) {
+				return false;
+			}
+			cursor = node.getParentId();
+		}
+		return false;
 	}
 
 	public DriveNode requireReadableFileNode(UUID userId, UUID nodeId) {
@@ -201,9 +283,13 @@ public class DriveService {
 	public DriveNodeView toView(DriveNode node) {
 		String previewUrl = null;
 		String downloadUrl = null;
+		String coverUrl = null;
 		if (NodeType.FILE.name().equals(node.getNodeType()) && StringUtils.hasText(node.getOssKey())) {
 			previewUrl = storageService.createDownloadUrl(node.getOssKey(), Duration.ofMinutes(20)).toString();
 			downloadUrl = storageService.createDownloadUrl(node.getOssKey(), Duration.ofMinutes(20)).toString();
+		}
+		if (StringUtils.hasText(node.getCoverUrl())) {
+			coverUrl = createFileUrl(node.getCoverUrl());
 		}
 		return new DriveNodeView(
 				node.getId(),
@@ -217,9 +303,16 @@ public class DriveService {
 				node.getOssKey(),
 				previewUrl,
 				downloadUrl,
-				node.getCoverUrl(),
+				coverUrl,
 				node.getUpdatedAt()
 		);
+	}
+
+	private String createFileUrl(String objectKeyOrUrl) {
+		if (objectKeyOrUrl.startsWith("http://") || objectKeyOrUrl.startsWith("https://")) {
+			return objectKeyOrUrl;
+		}
+		return storageService.createDownloadUrl(objectKeyOrUrl, Duration.ofMinutes(20)).toString();
 	}
 
 	private void requireFolderParent(UUID userId, UUID parentId) {
@@ -227,6 +320,22 @@ public class DriveService {
 		DriveNode parent = requireNode(userId, parentId);
 		if (!NodeType.FOLDER.name().equals(parent.getNodeType())) {
 			throw badRequest("parent must be a folder");
+		}
+	}
+
+	private void requireNameAvailable(UUID userId, UUID parentId, String name, UUID excludeNodeId) {
+		if (!StringUtils.hasText(name)) {
+			throw badRequest("name must not be blank");
+		}
+		Long count = driveNodeMapper.selectCount(new LambdaQueryWrapper<DriveNode>()
+				.eq(DriveNode::getUserId, userId)
+				.eq(DriveNode::getDeleted, false)
+				.eq(DriveNode::getName, name)
+				.eq(parentId != null, DriveNode::getParentId, parentId)
+				.isNull(parentId == null, DriveNode::getParentId)
+				.ne(excludeNodeId != null, DriveNode::getId, excludeNodeId));
+		if (count != null && count > 0) {
+			throw badRequest("当前目录已存在同名文件或文件夹");
 		}
 	}
 

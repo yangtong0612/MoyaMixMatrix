@@ -55,6 +55,8 @@
 
 节点响应字段：`id`、`parentId`、`name`、`nodeType`、`size`、`mimeType`、`fileHash`、`ossBucket`、`ossKey`、`previewUrl`、`downloadUrl`、`coverUrl`、`updatedAt`。
 
+`previewUrl`、`downloadUrl` 和 `coverUrl` 均为短期访问 URL；图片上传后后端会异步尽量生成独立缩略图，生成成功时 `coverUrl` 指向缩略图，生成中、生成失败或非图片文件时为空。
+
 错误场景：父节点不存在、父节点不是文件夹、节点不存在、操作其他用户节点、移动到自身、永久删除非回收站节点。
 
 ## 上传接口
@@ -62,16 +64,16 @@
 | 方法 | 路径 | 鉴权 | 功能 |
 | --- | --- | --- | --- |
 | POST | `/api/drive/uploads/instant` | 是 | 秒传检查并创建文件节点 |
-| POST | `/api/drive/uploads` | 是 | 创建上传任务 |
-| POST | `/api/drive/uploads/{id}/ticket` | 是 | 为任务生成 OSS PUT 上传票据 |
-| POST | `/api/drive/uploads/{id}/chunks` | 是 | 登记已上传分片 |
+| POST | `/api/drive/uploads` | 是 | 创建 OSS multipart 上传任务 |
+| POST | `/api/drive/uploads/{id}/ticket` | 是 | 为指定分片生成 OSS PUT 上传票据 |
+| POST | `/api/drive/uploads/{id}/chunks` | 是 | 登记已上传分片 ETag |
 | GET | `/api/drive/uploads/{id}` | 是 | 查询上传进度 |
 | POST | `/api/drive/uploads/{id}/complete` | 是 | 完成上传并创建文件节点 |
 | PATCH | `/api/drive/uploads/{id}/cancel` | 是 | 取消上传 |
 
-上传任务响应字段：`id`、`fileName`、`fileHash`、`fileSize`、`chunkSize`、`totalChunks`、`uploadedChunks`、`status`、`ossBucket`、`ossKey`、`contentType`、`uploadedIndexes`、`updatedAt`。
+上传任务响应字段：`id`、`fileName`、`fileHash`、`fileSize`、`chunkSize`、`totalChunks`、`uploadedChunks`、`status`、`ossBucket`、`ossKey`、`uploadId`、`contentType`、`uploadedIndexes`、`updatedAt`。
 
-完成上传后，后端创建 `storage_object` 和 `drive_node`，并更新用户容量和对象引用计数。
+完成上传时，后端使用已登记的分片 ETag 调 OSS `completeMultipartUpload`，再创建 `storage_object` 和 `drive_node`，并更新用户容量和对象引用计数。取消上传会尝试 abort OSS multipart。
 
 ## 分享接口
 

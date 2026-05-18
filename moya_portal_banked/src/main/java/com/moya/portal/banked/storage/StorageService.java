@@ -10,4 +10,8 @@ public interface StorageService {
 	boolean enabled();
 
 	URL createDownloadUrl(String objectKey, Duration ttl);
+
+	byte[] readObject(String objectKey);
+
+	void writeObject(String objectKey, byte[] bytes, String contentType);
 }

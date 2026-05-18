@@ -179,6 +179,29 @@ progress::-webkit-progress-value {
   min-height: calc(100vh - 34px);
 }
 
+.cloud-workbench {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cloud-workbench .app-shell {
+  height: calc(100vh - 34px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cloud-workbench .app-main {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cloud-workbench .page.cloud-drive-product {
+  height: 100%;
+  min-height: 0;
+}
+
 .app-titlebar {
   display: flex;
   align-items: center;
@@ -2356,11 +2379,6 @@ progress::-webkit-progress-value {
   width: 270px;
   height: 34px;
   padding: 0 11px;
-}
-
-.cloud-drive {
-  display: grid;
-  grid-template-columns: auto 1fr;
 }
 
 .module-sidebar {
