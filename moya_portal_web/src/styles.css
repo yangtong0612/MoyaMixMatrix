@@ -4127,8 +4127,10 @@ progress::-webkit-progress-value {
 
 .viral-start-screen {
   display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 28px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  height: 100%;
+  overflow: hidden;
   padding-top: 20px;
 }
 
@@ -4167,7 +4169,16 @@ progress::-webkit-progress-value {
 
 .viral-recent-section {
   display: grid;
-  gap: 14px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  padding: 14px;
+  border: 1px solid #252b34;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 3%), transparent 48%),
+    #14171d;
+  overflow: hidden;
 }
 
 .viral-recent-heading {
@@ -4203,21 +4214,46 @@ progress::-webkit-progress-value {
 
 .viral-recent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
-  max-width: 1180px;
+  grid-template-columns: repeat(auto-fill, minmax(238px, 278px));
+  align-content: start;
+  justify-content: start;
+  gap: 12px;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  padding: 2px 8px 10px 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(142 162 255 / 45%) transparent;
+}
+
+.viral-recent-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.viral-recent-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.viral-recent-grid::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgb(142 162 255 / 42%);
+  background-clip: padding-box;
 }
 
 .viral-recent-grid article {
   position: relative;
   display: grid;
-  grid-template-rows: 146px auto auto;
+  grid-template-rows: 134px minmax(36px, auto) 28px;
   gap: 8px;
   min-width: 0;
+  min-height: 218px;
   padding: 10px;
-  border: 1px solid #252b34;
-  border-radius: 10px;
-  background: #15171c;
+  border: 1px solid #2a313c;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 5%), transparent 46%),
+    #171b23;
   color: #f8fbff;
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
@@ -4235,10 +4271,12 @@ progress::-webkit-progress-value {
   display: grid;
   place-items: center;
   min-width: 0;
-  height: 146px;
+  height: 134px;
   overflow: hidden;
-  border-radius: 8px;
-  background: #0d0f14;
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgb(15 23 42 / 18%), transparent 52%),
+    #0d0f14;
 }
 
 .viral-recent-thumb {
@@ -4256,9 +4294,9 @@ progress::-webkit-progress-value {
   left: 8px;
   bottom: 8px;
   z-index: 4;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgb(0 0 0 / 68%);
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 76%);
   color: #ffffff;
   font-size: 12px;
   font-weight: 700;
@@ -4271,9 +4309,9 @@ progress::-webkit-progress-value {
   z-index: 4;
   max-width: calc(100% - 16px);
   overflow: hidden;
-  padding: 3px 7px;
+  padding: 4px 8px;
   border-radius: 999px;
-  background: rgb(15 23 42 / 72%);
+  background: rgb(15 23 42 / 82%);
   color: #ffffff;
   font-size: 11px;
   font-style: normal;
@@ -4285,16 +4323,18 @@ progress::-webkit-progress-value {
 .viral-recent-download {
   position: absolute;
   right: 10px;
-  bottom: 14px;
+  bottom: 10px;
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #6f7f95;
+  border: 1px solid #2d3440;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 5%), transparent),
+    #11151b;
+  color: #9aa8bb;
 }
 
 .viral-recent-download:hover {
@@ -4305,20 +4345,29 @@ progress::-webkit-progress-value {
 
 .viral-recent-grid article > strong {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: #f8fbff;
   font-size: 13px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 800;
+  line-height: 1.38;
+  display: -webkit-box;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .viral-recent-grid article > span {
+  display: flex;
+  align-items: center;
   min-width: 0;
-  padding-right: 22px;
+  min-height: 28px;
+  margin: 0 -2px -1px;
+  padding: 0 40px 0 2px;
   overflow: hidden;
   color: #8f9db0;
   font-size: 12px;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -12236,8 +12285,25 @@ progress::-webkit-progress-value {
   color: #17202e;
 }
 
+.theme-light.editor-workbench .viral-recent-section {
+  border-color: #d7e0ec;
+  background:
+    linear-gradient(180deg, rgb(91 126 255 / 6%), transparent 50%),
+    #edf3f9;
+}
+
+.theme-light.editor-workbench .viral-recent-grid {
+  scrollbar-color: rgb(91 126 255 / 42%) transparent;
+}
+
+.theme-light.editor-workbench .viral-recent-grid::-webkit-scrollbar-thumb {
+  background: rgb(91 126 255 / 38%);
+  background-clip: padding-box;
+}
+
 .theme-light.editor-workbench .viral-recent-grid article {
-  background: #ffffff;
+  background:
+    linear-gradient(180deg, #ffffff, #f8fbff 100%);
   border-color: #d7e0ec;
   color: #17202e;
   box-shadow: 0 12px 28px rgb(15 23 42 / 6%);
@@ -12255,6 +12321,18 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .viral-recent-grid article > svg {
   color: #94a3b8;
+}
+
+.theme-light.editor-workbench .viral-recent-download {
+  border-color: #d7e0ec;
+  background: #f8fafc;
+  color: #526173;
+}
+
+.theme-light.editor-workbench .viral-recent-download:hover {
+  border-color: rgb(91 126 255 / 38%);
+  background: #eef3ff;
+  color: #3153d9;
 }
 
 .theme-light.editor-workbench .viral-caption-list article.active {
