@@ -25,6 +25,7 @@ public class UploadTask {
 	private String tempPrefix;
 	private String ossBucket;
 	private String ossKey;
+	private String uploadId;
 	private String contentType;
 	private OffsetDateTime createdAt;
 	private OffsetDateTime updatedAt;

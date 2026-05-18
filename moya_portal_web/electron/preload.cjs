@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
 
@@ -17,6 +17,12 @@ contextBridge.exposeInMainWorld('surgicol', {
   },
   file: {
     exists: (filePath) => invoke('file:exists', filePath),
+    getDroppedPath: (file) => {
+      if (webUtils && typeof webUtils.getPathForFile === 'function') {
+        return webUtils.getPathForFile(file);
+      }
+      return file && typeof file.path === 'string' ? file.path : '';
+    },
     reveal: (filePath) => invoke('file:reveal', filePath),
     readText: (filePath) => invoke('file:read-text', filePath)
   },
@@ -27,8 +33,10 @@ contextBridge.exposeInMainWorld('surgicol', {
   cloud: {
     addTransferTask: (task) => invoke('cloud:add-transfer-task', task),
     listTransferTasks: () => invoke('cloud:list-transfer-tasks'),
+    inspectLocalEntries: (paths) => invoke('cloud:inspect-local-entries', paths),
     inspectDriveFile: (filePath) => invoke('cloud:inspect-drive-file', filePath),
     uploadDriveFile: (filePath, options) => invoke('cloud:upload-drive-file', filePath, options),
+    uploadDriveFilePart: (filePath, options) => invoke('cloud:upload-drive-file-part', filePath, options),
     onUploadDriveFileProgress: (callback) => {
       const listener = (_event, progress) => callback(progress);
       ipcRenderer.on('cloud:upload-drive-file-progress', listener);

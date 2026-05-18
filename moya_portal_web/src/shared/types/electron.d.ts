@@ -42,6 +42,34 @@ export interface DriveFileInfo {
   sha256: string;
 }
 
+export interface LocalUploadFileEntry {
+  localPath: string;
+  name: string;
+  size: number;
+  contentType: string;
+  relativeDir: string;
+  relativePath: string;
+}
+
+export interface LocalUploadFolderEntry {
+  localPath: string;
+  name: string;
+  relativePath: string;
+}
+
+export interface LocalUploadErrorEntry {
+  localPath: string;
+  message: string;
+}
+
+export interface LocalUploadPlan {
+  files: LocalUploadFileEntry[];
+  folders: LocalUploadFolderEntry[];
+  errors: LocalUploadErrorEntry[];
+  totalFiles: number;
+  totalBytes: number;
+}
+
 export interface DriveUploadOptions {
   taskId: string;
   uploadUrl: string;
@@ -50,8 +78,26 @@ export interface DriveUploadOptions {
   contentType?: string;
 }
 
+export interface DriveUploadPartOptions {
+  taskId: string;
+  uploadUrl: string;
+  chunkIndex: number;
+  partNumber: number;
+  start: number;
+  end: number;
+  contentType?: string;
+}
+
+export interface DriveUploadPartResult {
+  etag: string;
+  partNumber: number;
+  chunkIndex: number;
+  sizeBytes: number;
+}
+
 export interface DriveUploadProgress {
   taskId: string;
+  chunkIndex?: number;
   percent: number;
   status: 'uploading' | 'done' | 'failed';
   message?: string;
@@ -74,6 +120,7 @@ declare global {
       };
       file: {
         exists(filePath: string): Promise<boolean>;
+        getDroppedPath(file: globalThis.File): string;
         reveal(filePath: string): Promise<boolean>;
         readText(filePath: string): Promise<string>;
       };
@@ -84,8 +131,10 @@ declare global {
       cloud: {
         addTransferTask(task: Partial<TransferTask>): Promise<TransferTask>;
         listTransferTasks(): Promise<TransferTask[]>;
+        inspectLocalEntries(paths: string[]): Promise<LocalUploadPlan>;
         inspectDriveFile(filePath: string): Promise<DriveFileInfo>;
         uploadDriveFile(filePath: string, options: DriveUploadOptions): Promise<boolean>;
+        uploadDriveFilePart(filePath: string, options: DriveUploadPartOptions): Promise<DriveUploadPartResult>;
         onUploadDriveFileProgress(callback: (progress: DriveUploadProgress) => void): () => void;
       };
       media: {

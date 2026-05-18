@@ -26,6 +26,7 @@ protocol.registerSchemesAsPrivileged([
 const store = new Store({ name: 'moya-matrix' });
 const isDev = !app.isPackaged;
 const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://localhost:8081/api').replace(/\/+$/, '');
+const ossUploadTimeoutMs = Number(process.env.MOYA_OSS_UPLOAD_TIMEOUT_MS || 10 * 60 * 1000);
 let mainWindow = null;
 
 function createWindow() {
@@ -179,6 +180,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('cloud:list-transfer-tasks', () => store.get('cloud.transfers', []));
+  ipcMain.handle('cloud:inspect-local-entries', async (_event, paths = []) => inspectLocalEntries(paths));
   ipcMain.handle('cloud:inspect-drive-file', async (_event, filePath) => {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) throw new Error('Only files can be uploaded');
@@ -203,6 +205,34 @@ function registerIpc() {
       }
     });
     return true;
+  });
+
+  ipcMain.handle('cloud:upload-drive-file-part', async (event, filePath, options = {}) => {
+    const start = Number(options.start || 0);
+    const end = Number(options.end || 0);
+    const size = end - start + 1;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || size <= 0) {
+      throw new Error('Invalid upload part range');
+    }
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) throw new Error('Only files can be uploaded');
+    if (end >= stat.size) throw new Error('Upload part range exceeds file size');
+    return putFilePartToSignedUrl(options.uploadUrl, filePath, {
+      taskId: options.taskId,
+      chunkIndex: options.chunkIndex,
+      partNumber: options.partNumber,
+      contentType: options.contentType || contentTypeForFile(filePath),
+      start,
+      end,
+      size,
+      onProgress: (progress) => {
+        event.sender.send('cloud:upload-drive-file-progress', {
+          taskId: options.taskId,
+          chunkIndex: options.chunkIndex,
+          ...progress
+        });
+      }
+    });
   });
 
   ipcMain.handle('media:upload-to-oss', async (_event, filePath, options = {}) => {
@@ -275,6 +305,9 @@ function putFileToSignedUrl(uploadUrl, filePath, options) {
         });
       }
     );
+    request.setTimeout(ossUploadTimeoutMs, () => {
+      request.destroy(new Error('OSS upload timed out'));
+    });
     request.on('error', reject);
     const stream = fsSync.createReadStream(filePath);
     stream.on('data', (chunk) => {
@@ -291,6 +324,59 @@ function putFileToSignedUrl(uploadUrl, filePath, options) {
   });
 }
 
+function putFilePartToSignedUrl(uploadUrl, filePath, options) {
+  return new Promise((resolve, reject) => {
+    const targetUrl = new URL(uploadUrl);
+    const client = targetUrl.protocol === 'https:' ? https : http;
+    let uploaded = 0;
+    const request = client.request(
+      targetUrl,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': options.contentType,
+          'Content-Length': options.size
+        }
+      },
+      (response) => {
+        let responseText = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          responseText += chunk;
+        });
+        response.on('end', () => {
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            resolve({
+              etag: String(response.headers.etag || '').replace(/"/g, ''),
+              partNumber: options.partNumber,
+              chunkIndex: options.chunkIndex,
+              sizeBytes: options.size
+            });
+            return;
+          }
+          reject(new Error(`OSS part upload failed: HTTP ${response.statusCode} ${responseText}`.trim()));
+        });
+      }
+    );
+    request.setTimeout(ossUploadTimeoutMs, () => {
+      request.destroy(new Error('OSS part upload timed out'));
+    });
+    request.on('error', reject);
+    const stream = fsSync.createReadStream(filePath, { start: options.start, end: options.end });
+    stream.on('data', (chunk) => {
+      uploaded += chunk.length;
+      if (typeof options.onProgress === 'function') {
+        options.onProgress({
+          percent: Math.min(100, Math.round((uploaded / Math.max(options.size, 1)) * 100)),
+          status: 'uploading',
+          message: '分片上传中'
+        });
+      }
+    });
+    stream.on('error', reject).pipe(request);
+  });
+}
+
 function hashFile(filePath) {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
@@ -299,6 +385,94 @@ function hashFile(filePath) {
       .on('error', reject)
       .on('end', () => resolve(hash.digest('hex')));
   });
+}
+
+async function inspectLocalEntries(inputPaths) {
+  const roots = Array.isArray(inputPaths)
+    ? [...new Set(inputPaths.filter((item) => typeof item === 'string' && item.trim()))]
+    : [];
+  const files = [];
+  const folders = [];
+  const errors = [];
+
+  for (const localPath of roots) {
+    try {
+      const stat = await fs.lstat(localPath);
+      if (stat.isSymbolicLink()) {
+        errors.push({ localPath, message: '不支持上传快捷方式或符号链接' });
+        continue;
+      }
+      if (stat.isFile()) {
+        files.push(localFileEntry(localPath, ''));
+        continue;
+      }
+      if (stat.isDirectory()) {
+        const rootName = path.basename(localPath);
+        folders.push({ localPath, name: rootName, relativePath: normalizeRelativePath(rootName) });
+        await collectDirectoryEntries(localPath, rootName, files, folders, errors);
+        continue;
+      }
+      errors.push({ localPath, message: '不支持的本地项目类型' });
+    } catch (error) {
+      errors.push({ localPath, message: error instanceof Error ? error.message : '读取本地项目失败' });
+    }
+  }
+
+  return {
+    files,
+    folders,
+    errors,
+    totalFiles: files.length,
+    totalBytes: files.reduce((sum, item) => sum + item.size, 0)
+  };
+}
+
+async function collectDirectoryEntries(directoryPath, relativePath, files, folders, errors) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  } catch (error) {
+    errors.push({ localPath: directoryPath, message: error instanceof Error ? error.message : '读取文件夹失败' });
+    return;
+  }
+
+  entries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+  for (const entry of entries) {
+    const localPath = path.join(directoryPath, entry.name);
+    const childRelativePath = normalizeRelativePath(path.join(relativePath, entry.name));
+    try {
+      if (entry.isSymbolicLink()) {
+        errors.push({ localPath, message: '不支持上传快捷方式或符号链接' });
+        continue;
+      }
+      if (entry.isDirectory()) {
+        folders.push({ localPath, name: entry.name, relativePath: childRelativePath });
+        await collectDirectoryEntries(localPath, childRelativePath, files, folders, errors);
+        continue;
+      }
+      if (entry.isFile()) {
+        files.push(localFileEntry(localPath, normalizeRelativePath(relativePath)));
+      }
+    } catch (error) {
+      errors.push({ localPath, message: error instanceof Error ? error.message : '读取本地项目失败' });
+    }
+  }
+}
+
+function localFileEntry(localPath, relativeDir) {
+  const stat = fsSync.statSync(localPath);
+  return {
+    localPath,
+    name: path.basename(localPath),
+    size: stat.size,
+    contentType: contentTypeForFile(localPath),
+    relativeDir: normalizeRelativePath(relativeDir),
+    relativePath: normalizeRelativePath(path.join(relativeDir || '', path.basename(localPath)))
+  };
+}
+
+function normalizeRelativePath(value) {
+  return String(value || '').split(path.sep).filter(Boolean).join('/');
 }
 
 function contentTypeForFile(filePath) {

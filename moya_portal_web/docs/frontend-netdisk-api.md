@@ -46,15 +46,17 @@
 | 页面触发 | 方法 | 路径 | 说明 |
 | --- | --- | --- | --- |
 | 选择本地文件后秒传 | POST | `/api/drive/uploads/instant` | 命中文件 hash 时直接创建节点 |
-| 创建上传任务 | POST | `/api/drive/uploads` | 创建后端上传任务 |
-| 获取 OSS 票据 | POST | `/api/drive/uploads/{id}/ticket` | 返回 PUT 预签名 URL |
-| 上传完成后登记分片 | POST | `/api/drive/uploads/{id}/chunks` | 当前 Electron 链路按单分片登记 |
+| 创建上传任务 | POST | `/api/drive/uploads` | 创建后端 OSS multipart 上传任务 |
+| 获取 OSS 分片票据 | POST | `/api/drive/uploads/{id}/ticket` | 按 `chunkIndex/partNumber` 返回 PUT 预签名 URL |
+| 上传完成后登记分片 | POST | `/api/drive/uploads/{id}/chunks` | 登记分片 `etag`，用于后端 complete multipart |
 | 完成落库 | POST | `/api/drive/uploads/{id}/complete` | 创建存储对象和文件节点 |
+
+上传相关接口使用 120 秒超时，超时文案统一显示为“上传处理超时，请点击继续重试”；其它网盘文件操作继续使用全局 30 秒超时。
 
 Electron 新增 IPC：
 
 - `cloud:inspect-drive-file`：读取本地文件名、大小、MIME、SHA-256。
-- `cloud:upload-drive-file`：PUT 到后端返回的 OSS 预签名 URL。
+- `cloud:upload-drive-file-part`：按本地文件 byte range PUT 到后端返回的 OSS 分片预签名 URL，并返回 ETag。
 - `cloud:upload-drive-file-progress`：按 `taskId` 推送进度。
 
 剪辑模块的 `media:upload-to-oss` 保持不变。

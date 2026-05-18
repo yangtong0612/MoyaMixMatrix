@@ -21,6 +21,7 @@ type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
 export function App() {
   const location = useLocation();
   const isEditorRoute = location.pathname.startsWith('/editor');
+  const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
   const isProtectedRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
   const cloudStore = useCloudDriveStore();
   const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (localStorage.getItem('access') ? 'checking' : 'anonymous'));
@@ -82,7 +83,7 @@ export function App() {
   const showShell = isAuthenticated || !isProtectedRoute;
 
   return (
-    <div className={`app-window theme-${theme}${isEditorRoute ? ' editor-workbench' : ''}`}>
+    <div className={`app-window theme-${theme}${isEditorRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
       <header className="app-titlebar">
         <NavLink className="titlebar-brand" to="/">
           <img src={moyaMatrixLogo} alt="moya矩阵" />

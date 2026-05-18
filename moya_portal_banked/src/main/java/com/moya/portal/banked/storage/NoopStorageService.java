@@ -29,4 +29,14 @@ public class NoopStorageService implements StorageService {
 			throw new IllegalArgumentException("Invalid object key: " + objectKey, ex);
 		}
 	}
+
+	@Override
+	public byte[] readObject(String objectKey) {
+		throw new UnsupportedOperationException("Noop storage cannot read objects");
+	}
+
+	@Override
+	public void writeObject(String objectKey, byte[] bytes, String contentType) {
+		throw new UnsupportedOperationException("Noop storage cannot write objects");
+	}
 }
