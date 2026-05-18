@@ -7,7 +7,7 @@ export const http = axios.create({
 
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem('access');
-  if (token) {
+  if (token && !isPublicApi(config.url)) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
@@ -42,4 +42,19 @@ function statusMessage(status?: number) {
   if (status === 401) return '登录已过期，请重新登录';
   if (status === 403) return '登录已过期或没有权限，请重新登录';
   return '';
+}
+
+function isPublicApi(url = '') {
+  const path = url.startsWith('http') ? new URL(url).pathname.replace(/^\/api/, '') : url;
+  return [
+    '/storage/',
+    '/fission/',
+    '/viral/',
+    '/verification/',
+    '/auth/login',
+    '/auth/register',
+    '/auth/reset-password',
+    '/auth/oauth/login',
+    '/share/links/public/'
+  ].some((prefix) => path.startsWith(prefix));
 }

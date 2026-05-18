@@ -33,6 +33,7 @@ public class SecurityConfig {
 								"/api/verification/check",
 								"/api/storage/**",
 								"/api/fission/**",
+								"/api/viral/**",
 								"/api/share/links/public/**",
 								"/swagger-ui.html",
 								"/swagger-ui/**",

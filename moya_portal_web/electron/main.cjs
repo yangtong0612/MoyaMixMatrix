@@ -469,18 +469,26 @@ async function renderViralVideo(sourcePath, outputPath, overlay) {
   const assPath = path.join(tempDir, 'viral-overlay.ass');
   try {
     const metadata = await probeVideo(sourcePath).catch(() => ({ width: 720, height: 1280, duration: 0 }));
-    const assText = buildViralAss(overlay, metadata);
+    const renderCanvas = buildViralRenderCanvas(metadata, overlay);
+    const assText = buildViralAss(overlay, renderCanvas);
     await fs.writeFile(assPath, assText, 'utf8');
     console.log('[moya] rendering viral overlay', {
       sourcePath,
       outputPath,
       assPath,
+      canvas: `${renderCanvas.width}x${renderCanvas.height}`,
+      fit: overlay.previewVideoFit || 'cover',
+      titleStyle: overlay.titleTextStyle,
+      captionStyle: overlay.captionTextStyle,
+      titlePosition: overlay.titlePosition,
+      captionPosition: overlay.captionPosition,
       captions: Array.isArray(overlay.subtitleSegments) ? overlay.subtitleSegments.length : 0
     });
+    const videoFilter = `${buildViralVideoCanvasFilter(renderCanvas, overlay)},subtitles=filename=${quoteFfmpegFilterPath(assPath)}`;
     await runProcess(ffmpegPath, [
       '-y',
       '-i', sourcePath,
-      '-vf', `subtitles=filename=${quoteFfmpegFilterPath(assPath)}`,
+      '-vf', videoFilter,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '20',
@@ -533,14 +541,20 @@ function buildViralAss(overlay, metadata) {
   const duration = Math.max(0.1, Number(metadata.duration) || readOverlayDuration(overlay));
   const titlePosition = overlay.titlePosition || { x: 50, y: 18 };
   const captionPosition = overlay.captionPosition || { x: 50, y: 64 };
-  const titleColor = assBackColor(overlay.templateKey === 'deal' ? '#111827' : overlay.templateKey === 'seed' ? '#f59e0b' : '#2563eb');
-  const badgeColor = assBackColor(overlay.templateKey === 'deal' ? '#111827' : '#ef4444');
-  const captionColor = assBackColor(overlay.templateKey === 'story' ? '#3b2b1f' : '#101010');
+  const titleStyle = readOverlayTextStyle(overlay.titleTextStyle, { fontSize: Math.round(height * 0.038) }, width);
+  const captionStyle = readOverlayTextStyle(overlay.captionTextStyle, { fontSize: Math.round(height * 0.024) }, width);
+  const palette = viralAssPalette(overlay);
+  const titleColor = assBackColor(palette.title);
+  const captionColor = assBackColor(palette.caption);
   const titleText = overlay.hook || overlay.templateName || overlay.name || '网感剪辑';
-  const badgeText = overlay.templateName || templateNameForKey(overlay.templateKey);
   const captions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
     ? overlay.subtitleSegments
     : [{ time: `00:00:00 - ${formatAssTime(duration)}`, text: overlay.name || '自动识别添加字幕' }];
+  const keywords = buildOverlayKeywords(overlay.keywords || '', captions[0]?.text || '');
+  const isBilingual = /双语/.test(String(overlay.templateName || ''));
+  const titleEnd = formatAssTime(Math.min(duration, Math.max(1.2, Math.min(3, duration * 0.28))));
+  const titlePoint = overlayCenterToTopLeft(titlePosition, titleStyle, width, height);
+  const captionPoint = overlayCenterToTopLeft(captionPosition, captionStyle, width, height);
   const lines = [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -550,26 +564,129 @@ function buildViralAss(overlay, metadata) {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Title,Microsoft YaHei,${Math.round(height * 0.038)},&H00FFFFFF,&H00FFFFFF,${titleColor},${titleColor},-1,0,0,0,100,100,0,0,3,2,0,5,24,24,24,1`,
-    `Style: Badge,Microsoft YaHei,${Math.round(height * 0.025)},&H00FFFFFF,&H00FFFFFF,${badgeColor},${badgeColor},-1,0,0,0,100,100,0,0,3,1.4,0,5,18,18,18,1`,
-    `Style: Caption,Microsoft YaHei,${Math.round(height * 0.024)},&H00FFFFFF,&H00FFFFFF,&H00000000,${captionColor},-1,0,0,0,100,100,0,0,3,1.4,0,5,24,24,24,1`,
+    `Style: Title,Microsoft YaHei,${titleStyle.fontSize},&H00FFFFFF,&H00FFFFFF,${titleColor},${titleColor},-1,0,0,0,100,100,0,0,3,2,0,7,24,24,24,1`,
+    `Style: Caption,Microsoft YaHei,${captionStyle.fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,${captionColor},-1,0,0,0,100,100,0,0,3,1.4,0,7,24,24,24,1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-    `Dialogue: 1,0:00:00.00,${formatAssTime(duration)},Title,,0,0,0,,{\\pos(${percentX(titlePosition.x, width)},${percentY(titlePosition.y, height)})}${escapeAssText(titleText)}`,
-    `Dialogue: 2,0:00:00.00,${formatAssTime(duration)},Badge,,0,0,0,,{\\pos(${percentX(titlePosition.x, width)},${percentY(titlePosition.y + 7, height)})}${escapeAssText(badgeText)}`
+    `Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`
   ];
   for (const caption of captions) {
     const range = parseCaptionRange(caption.time, duration);
-    lines.push(`Dialogue: 3,${formatAssTime(range.start)},${formatAssTime(range.end)},Caption,,0,0,0,,{\\pos(${percentX(captionPosition.x, width)},${percentY(captionPosition.y, height)})}${escapeAssText(caption.text || '')}`);
+    const captionText = isBilingual
+      ? `${caption.text || ''}\n${buildOverlayBilingualCaption(caption.text || '', keywords)}`
+      : caption.text || '';
+    lines.push(`Dialogue: 3,${formatAssTime(range.start)},${formatAssTime(range.end)},Caption,,0,0,0,,{\\an7\\pos(${captionPoint.x},${captionPoint.y})}${escapeAssText(wrapAssText(captionText, captionStyle))}`);
   }
   return lines.join('\n');
+}
+
+function buildViralRenderCanvas(metadata, overlay) {
+  const duration = Math.max(0.1, Number(metadata.duration) || readOverlayDuration(overlay));
+  return {
+    width: 720,
+    height: 1280,
+    duration
+  };
+}
+
+function buildViralVideoCanvasFilter(canvas, overlay) {
+  const width = Math.max(1, Number(canvas.width) || 720);
+  const height = Math.max(1, Number(canvas.height) || 1280);
+  const fit = overlay.previewVideoFit || 'cover';
+  if (fit === 'fill') return `scale=${width}:${height}`;
+  if (fit === 'contain') {
+    return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black`;
+  }
+  return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`;
 }
 
 function normalizeViralOverlay(overlay) {
   if (!overlay || typeof overlay !== 'object') return null;
   if (!Array.isArray(overlay.subtitleSegments) && !overlay.hook && !overlay.templateName) return null;
   return overlay;
+}
+
+function readOverlayTextStyle(style, fallback, canvasWidth = 720) {
+  const fontSize = Number(style?.fontSize);
+  const width = Number(style?.width);
+  const height = Number(style?.height);
+  const scale = Math.max(1, canvasWidth / 360);
+  return {
+    fontSize: Number.isFinite(fontSize) ? Math.max(10, Math.round(fontSize * scale)) : fallback.fontSize,
+    width: Number.isFinite(width) ? Math.max(80, Math.round(width * scale)) : Math.round(canvasWidth * 0.82),
+    height: Number.isFinite(height) ? Math.max(24, Math.round(height * scale)) : 80
+  };
+}
+
+function overlayCenterToTopLeft(position, style, canvasWidth, canvasHeight) {
+  const centerX = percentX(position?.x, canvasWidth);
+  const centerY = percentY(position?.y, canvasHeight);
+  const boxWidth = Math.max(1, Number(style?.width) || canvasWidth * 0.82);
+  const boxHeight = Math.max(1, Number(style?.height) || Number(style?.fontSize) * 2.4 || 80);
+  return {
+    x: Math.round(Math.max(0, Math.min(canvasWidth - 1, centerX - boxWidth / 2))),
+    y: Math.round(Math.max(0, Math.min(canvasHeight - 1, centerY - boxHeight / 2)))
+  };
+}
+
+function wrapAssText(text, style) {
+  const lines = String(text || '').split(/\r?\n/);
+  const maxChars = Math.max(4, Math.floor((Number(style.width) || 320) / Math.max(8, (Number(style.fontSize) || 24) * 0.62)));
+  return lines.flatMap((line) => wrapAssLine(line, maxChars)).join('\n');
+}
+
+function wrapAssLine(line, maxChars) {
+  const value = String(line || '');
+  if (value.length <= maxChars) return [value];
+  const chunks = [];
+  let current = '';
+  for (const char of value) {
+    const charWidth = /[ -~]/.test(char) ? 0.55 : 1;
+    const currentWidth = visualTextLength(current);
+    if (current && currentWidth + charWidth > maxChars) {
+      chunks.push(current);
+      current = char;
+    } else {
+      current += char;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function visualTextLength(text) {
+  return Array.from(String(text || '')).reduce((sum, char) => sum + (/[ -~]/.test(char) ? 0.55 : 1), 0);
+}
+
+function viralAssPalette(overlay) {
+  const name = String(overlay.templateName || '');
+  if (/高级红/.test(name)) return { title: '#8a1230', caption: '#34181f' };
+  if (/黄白|白金|轻奢/.test(name)) return { title: '#fff7d6', caption: '#fff7d6' };
+  if (/经典蓝/.test(name)) return { title: '#1d4ed8', caption: '#0f172a' };
+  if (/黄色|百搭黄/.test(name)) return { title: '#facc15', caption: '#18181b' };
+  if (/科技/.test(name)) return { title: '#0f172a', caption: '#082f49' };
+  if (/转化|成交/.test(name) || overlay.templateKey === 'deal') return { title: '#111827', caption: '#111827' };
+  if (overlay.templateKey === 'seed') return { title: '#f59e0b', caption: '#ffffff' };
+  if (overlay.templateKey === 'story') return { title: '#0f172a', caption: '#0f172a' };
+  return { title: '#2563eb', caption: '#101010' };
+}
+
+function buildOverlayKeywords(keywords, captionText) {
+  const explicit = String(keywords || '').split(/[,，、\s]+/).map((item) => item.trim()).filter((item) => item.length >= 2);
+  const inferred = String(captionText || '').match(/[\u4e00-\u9fa5]{2,}|[A-Za-z0-9]{2,}/g) || [];
+  return [...new Set([...explicit, ...inferred])].sort((left, right) => right.length - left.length).slice(0, 8);
+}
+
+function buildOverlayBilingualCaption(text, keywords = []) {
+  const value = String(text || '');
+  if (/数字人|虚拟人|AI/.test(value)) return 'Make digital avatars feel clear and engaging.';
+  if (/入门|新手|小白/.test(value)) return 'Start simple and make the first step easy.';
+  if (/节奏|内容/.test(value)) return 'Find the rhythm and make the message clear.';
+  if (/文案|模板|字幕/.test(value)) return 'Use scripts, captions and templates to finish faster.';
+  if (/配音|完成|创作/.test(value)) return 'Tune the voice and finish the video.';
+  if (/普通人|快速|起来/.test(value)) return 'Make the process easier for everyday creators.';
+  return keywords.length ? 'Highlight the key message and make it memorable.' : 'Make the message clear and memorable.';
 }
 
 function runProcess(command, args) {

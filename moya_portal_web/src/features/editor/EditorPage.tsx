@@ -676,6 +676,15 @@ interface ViralTimelineClip {
   end: number;
 }
 
+interface ViralOverlayTextStyle {
+  fontSize: number;
+  fontFamily: string;
+  width: number;
+  height: number;
+}
+
+type ViralPreviewVideoFit = 'contain' | 'cover' | 'fill';
+
 interface ViralPackageVersion {
   id: string;
   label: number;
@@ -704,6 +713,9 @@ interface ViralRecentTask {
   templateName?: string;
   titlePosition?: { x: number; y: number };
   captionPosition?: { x: number; y: number };
+  titleTextStyle?: ViralOverlayTextStyle;
+  captionTextStyle?: ViralOverlayTextStyle;
+  previewVideoFit?: ViralPreviewVideoFit;
   subtitleSegments?: ViralCaptionSegment[];
   mediaUrl?: string;
   subtitleJobId?: string;
@@ -772,6 +784,13 @@ const viralTemplateVariantNames = [
   '转化画中画'
 ];
 
+const viralFontOptions = [
+  { label: '系统黑体', value: 'Inter, "Microsoft YaHei", "PingFang SC", sans-serif' },
+  { label: '标题粗黑', value: '"Arial Black", "Microsoft YaHei", sans-serif' },
+  { label: '清爽圆体', value: '"Trebuchet MS", "Microsoft YaHei", sans-serif' },
+  { label: '电影字幕', value: 'Georgia, "Microsoft YaHei", serif' }
+];
+
 const viralTemplateCards: ViralTemplateCard[] = viralTemplateVariantNames.map((cardName, index) => {
   const template = viralTemplates[index % viralTemplates.length];
   return {
@@ -812,7 +831,11 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const [addSoundFx, setAddSoundFx] = useState(true);
   const [titlePosition, setTitlePosition] = useState({ x: 50, y: 18 });
   const [captionPosition, setCaptionPosition] = useState({ x: 50, y: 64 });
+  const [titleTextStyle, setTitleTextStyle] = useState<ViralOverlayTextStyle>(() => getViralTemplateTextStyle(viralTemplateCards[0], 'title'));
+  const [captionTextStyle, setCaptionTextStyle] = useState<ViralOverlayTextStyle>(() => getViralTemplateTextStyle(viralTemplateCards[0], 'caption'));
+  const [previewVideoFit, setPreviewVideoFit] = useState<ViralPreviewVideoFit>('cover');
   const [draggingOverlay, setDraggingOverlay] = useState<'title' | 'caption' | null>(null);
+  const [customPreviewHook, setCustomPreviewHook] = useState('');
   const [versions, setVersions] = useState<ViralPackageVersion[]>([]);
   const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
@@ -838,10 +861,14 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const activeCaptionIndex = findEditedViralCaptionIndex(editedCaptionSegments, timelineCurrentTime);
   const activeCaption = editedCaptionSegments[activeCaptionIndex] || editedCaptionSegments[0];
   const liveTemplatePhase = getViralPreviewEffectPhase(timelineCurrentTime % Math.max(0.1, timelineDuration), timelineDuration);
-  const appliedTemplateFeature = getViralTemplateFeature(appliedTemplate);
   const displayedUploadProgress = uploadPhase === 'analyzing' || uploadPhase === 'ready' ? 100 : sourceUploadProgress;
-  const previewHook = previewVersion?.hook || buildViralHook(template, activeCaption?.text || '核心卖点', activeCaptionIndex);
+  const generatedPreviewHook = previewVersion?.hook || buildViralHook(template, activeCaption?.text || '核心卖点', activeCaptionIndex);
+  const previewHook = customPreviewHook.trim() || generatedPreviewHook;
   const previewSubtitle = previewVersion?.subtitleStyle || template.caption;
+  const previewKeywordList = buildViralKeywordList(keywords, activeCaption?.text || '');
+  const isBilingualTemplate = /双语/.test(appliedTemplate.cardName);
+  const shouldShowOpeningTitle = timelineCurrentTime <= Math.min(3, Math.max(1.2, timelineDuration * 0.28));
+  const previewTemplateClass = getViralTemplatePreviewClass(template);
 
   useEffect(() => {
     let canceled = false;
@@ -871,6 +898,11 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     video.muted = videoVolume === 0;
     video.volume = Math.max(0, Math.min(1, videoVolume / 100));
   }, [videoVolume, uploadPhase]);
+
+  useEffect(() => {
+    setTitleTextStyle(getViralTemplateTextStyle(appliedTemplate, 'title'));
+    setCaptionTextStyle(getViralTemplateTextStyle(appliedTemplate, 'caption'));
+  }, [selectedTemplateCardId]);
 
   useEffect(() => {
     const video = previewVideoRef.current;
@@ -934,6 +966,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setTimelineClips(createViralDefaultClips(VIRAL_TIMELINE_DURATION));
     setSelectedClipId('clip-1');
     setCurrentTime(0);
+    setCustomPreviewHook('');
     setSourceDuration(VIRAL_TIMELINE_DURATION);
     setSourceUploadProgress(0);
     setUploadProgress(3);
@@ -1027,6 +1060,10 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setRecognizedCaptionSegments(task.subtitleSegments || []);
     if (task.titlePosition) setTitlePosition(task.titlePosition);
     if (task.captionPosition) setCaptionPosition(task.captionPosition);
+    setTitleTextStyle(mergeViralTemplateTextStyle(restoredCard, 'title', task.titleTextStyle));
+    setCaptionTextStyle(mergeViralTemplateTextStyle(restoredCard, 'caption', task.captionTextStyle));
+    setPreviewVideoFit(task.previewVideoFit || 'cover');
+    setCustomPreviewHook(task.hook || '');
     setUploadPhase('ready');
     setUploadProgress(100);
     setVersions([]);
@@ -1125,6 +1162,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setVersions([]);
     setSelectedVersionIds([]);
     setCurrentTime(0);
+    setCustomPreviewHook('');
     setPackagingProgress(0);
     setNotice('');
     const timer = window.setInterval(() => {
@@ -1333,16 +1371,33 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setDraggingOverlay(layer);
-    moveOverlayLayer(event, layer);
+    moveOverlayLayerFromPoint(event.clientX, event.clientY, event.currentTarget, layer);
   }
 
   function moveOverlayLayer(event: PointerEvent<HTMLDivElement>, layer: 'title' | 'caption') {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    const rect = event.currentTarget.parentElement?.getBoundingClientRect();
+    moveOverlayLayerFromPoint(event.clientX, event.clientY, event.currentTarget, layer);
+  }
+
+  function beginOverlayHandleDrag(event: PointerEvent<HTMLSpanElement>, layer: 'title' | 'caption') {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDraggingOverlay(layer);
+    moveOverlayLayerFromPoint(event.clientX, event.clientY, event.currentTarget, layer);
+  }
+
+  function moveOverlayHandleDrag(event: PointerEvent<HTMLSpanElement>, layer: 'title' | 'caption') {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    moveOverlayLayerFromPoint(event.clientX, event.clientY, event.currentTarget, layer);
+  }
+
+  function moveOverlayLayerFromPoint(clientX: number, clientY: number, element: HTMLElement, layer: 'title' | 'caption') {
+    const rect = element.closest('.viral-preview-overlay')?.getBoundingClientRect();
     if (!rect) return;
     const nextPosition = {
-      x: Math.max(8, Math.min(92, ((event.clientX - rect.left) / rect.width) * 100)),
-      y: Math.max(8, Math.min(92, ((event.clientY - rect.top) / rect.height) * 100))
+      x: Math.max(8, Math.min(92, ((clientX - rect.left) / rect.width) * 100)),
+      y: Math.max(8, Math.min(92, ((clientY - rect.top) / rect.height) * 100))
     };
     if (layer === 'title') setTitlePosition(nextPosition);
     if (layer === 'caption') setCaptionPosition(nextPosition);
@@ -1394,7 +1449,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       id: `viral-applied-${sourceVideo.id}-${Date.now()}`,
       label: 1,
       name: `${appliedTemplate.cardName}_已包装`,
-      hook: buildViralHook(appliedTemplate, activeCaption?.text || '网感剪辑', activeCaptionIndex),
+      hook: customPreviewHook.trim() || buildViralHook(appliedTemplate, activeCaption?.text || '网感剪辑', activeCaptionIndex),
       duration: formatViralDuration(timelineDuration),
       subtitleStyle: appliedTemplate.caption,
       sound: addMusic ? (addSoundFx ? '音乐 + 音效' : '音乐') : (addSoundFx ? '音效' : '原声'),
@@ -1428,10 +1483,13 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       keywords,
       savedAt: now,
       duration: formatViralDuration(timelineDuration),
-      hook: fallbackVersion.hook,
+      hook: customPreviewHook.trim() || fallbackVersion.hook,
       templateName: appliedTemplate.cardName,
       titlePosition,
       captionPosition,
+      titleTextStyle,
+      captionTextStyle,
+      previewVideoFit,
       subtitleSegments: savedSubtitleSegments
     };
     const nextGroup: FinishedVideoGroup = {
@@ -1456,7 +1514,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         viralOverlay: {
           ...savedOverlayBase,
           id: version.id,
-          hook: version.hook,
+          hook: customPreviewHook.trim() || version.hook,
           name: version.name,
           path: version.path,
           templateName: appliedTemplate.cardName
@@ -1609,6 +1667,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
             <video
               ref={previewVideoRef}
               src={toMediaUrl(sourceVideo.path || '')}
+              style={{ objectFit: previewVideoFit }}
               onLoadedMetadata={handleViralMetadataLoaded}
               onTimeUpdate={handlePreviewTimeUpdate}
               onEnded={() => {
@@ -1617,21 +1676,35 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 }
               }}
             />
-            <div className={`viral-preview-overlay template-${template.key} phase-${liveTemplatePhase}`}>
+            <div className={`viral-preview-overlay template-${template.key} ${previewTemplateClass} phase-${liveTemplatePhase}`}>
               <div className="viral-live-template-effect" aria-hidden="true">
                 <u />
                 <u />
                 <u />
               </div>
               <div
-                className={`viral-overlay-layer title-layer ${draggingOverlay === 'title' ? 'dragging' : ''}`}
+                className={`viral-overlay-layer title-layer ${shouldShowOpeningTitle ? '' : 'title-hidden'} ${draggingOverlay === 'title' ? 'dragging' : ''}`}
                 style={{ left: `${titlePosition.x}%`, top: `${titlePosition.y}%` }}
                 onPointerDown={(event) => beginOverlayDrag(event, 'title')}
                 onPointerMove={(event) => moveOverlayLayer(event, 'title')}
                 onPointerUp={() => setDraggingOverlay(null)}
               >
-                <strong>{previewHook}</strong>
-                <em>{appliedTemplateFeature.title}</em>
+                <span
+                  className="viral-overlay-drag-handle"
+                  title="拖动标题"
+                  onPointerDown={(event) => beginOverlayHandleDrag(event, 'title')}
+                  onPointerMove={(event) => moveOverlayHandleDrag(event, 'title')}
+                  onPointerUp={() => setDraggingOverlay(null)}
+                />
+                <textarea
+                  aria-label="编辑智能标题"
+                  rows={2}
+                  value={previewHook}
+                  style={{ fontSize: titleTextStyle.fontSize, fontFamily: titleTextStyle.fontFamily, width: titleTextStyle.width, height: titleTextStyle.height }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setCustomPreviewHook(event.target.value)}
+                />
               </div>
               <div
                 className={`viral-overlay-layer caption-layer ${draggingOverlay === 'caption' ? 'dragging' : ''}`}
@@ -1640,10 +1713,24 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 onPointerMove={(event) => moveOverlayLayer(event, 'caption')}
                 onPointerUp={() => setDraggingOverlay(null)}
               >
-                <span>{activeCaption?.text || previewSubtitle}</span>
-                <em>{recognizedCaptionSegments.length ? '阿里云智能断句字幕' : appliedTemplateFeature.caption}</em>
+                <span
+                  className="viral-overlay-drag-handle"
+                  title="拖动字幕"
+                  onPointerDown={(event) => beginOverlayHandleDrag(event, 'caption')}
+                  onPointerMove={(event) => moveOverlayHandleDrag(event, 'caption')}
+                  onPointerUp={() => setDraggingOverlay(null)}
+                />
+                <span className="viral-caption-lines" style={{ fontSize: captionTextStyle.fontSize, fontFamily: captionTextStyle.fontFamily, width: captionTextStyle.width, minHeight: captionTextStyle.height }}>
+                  <span className="viral-caption-primary">
+                    {renderViralHighlightedText(activeCaption?.text || previewSubtitle, previewKeywordList)}
+                  </span>
+                  {isBilingualTemplate ? (
+                    <span className="viral-caption-translation">
+                      {buildViralBilingualCaption(activeCaption?.text || previewSubtitle, previewKeywordList)}
+                    </span>
+                  ) : null}
+                </span>
               </div>
-              <small>{template.cardName} · {appliedTemplateFeature.badge}</small>
             </div>
           </section>
           <section className="viral-package-card">
@@ -1671,40 +1758,43 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                         onBlur={() => previewTemplate(null)}
                         onClick={() => applyTemplate(item.cardId)}
                       >
-                        {sourceVideo.path ? (
-                          <video
-                            src={toMediaUrl(sourceVideo.path)}
-                            muted
-                            loop
-                            playsInline
-                            preload="auto"
-                            autoPlay={item.cardId === hoverTemplateCardId}
-                            onLoadedMetadata={(event) => {
-                              if (item.cardId !== hoverTemplateCardId) {
-                                event.currentTarget.currentTime = getViralPosterSeekTime(event.currentTarget.duration || sourceDuration);
-                              }
-                            }}
-                            onTimeUpdate={(event) => syncTemplateCardPreview(event, item.cardId)}
-                          />
-                        ) : null}
-                        <div className="viral-card-template-effect">
-                          <strong>{cardTitle}</strong>
-                          <span>{cardCaption?.text || item.caption}</span>
-                          <u />
-                          <u />
-                          <u />
+                        <div className="viral-template-card-visual">
+                          {sourceVideo.path ? (
+                            <video
+                              src={toMediaUrl(sourceVideo.path)}
+                              muted
+                              loop
+                              playsInline
+                              preload="auto"
+                              autoPlay={item.cardId === hoverTemplateCardId}
+                              onLoadedMetadata={(event) => {
+                                if (item.cardId !== hoverTemplateCardId) {
+                                  event.currentTarget.currentTime = getViralPosterSeekTime(event.currentTarget.duration || sourceDuration);
+                                }
+                              }}
+                              onTimeUpdate={(event) => syncTemplateCardPreview(event, item.cardId)}
+                            />
+                          ) : null}
+                          <div className="viral-card-template-effect">
+                            <strong>{cardTitle}</strong>
+                            <span>{cardCaption?.text || item.caption}</span>
+                            <u />
+                            <u />
+                            <u />
+                          </div>
+                          <span>{getViralTemplateFeature(item).badge}</span>
+                          <b>预览中</b>
+                          <i onClick={(event) => {
+                            event.stopPropagation();
+                            applyTemplate(item.cardId);
+                          }}>
+                            {item.cardId === selectedTemplateCardId ? '已应用' : '应用该模板'}
+                          </i>
                         </div>
-                        <span>{getViralTemplateFeature(item).badge}</span>
-                        <em>{item.accent}</em>
-                        <strong>{item.cardName}</strong>
-                        <small>{item.caption}</small>
-                        <b>预览中</b>
-                        <i onClick={(event) => {
-                          event.stopPropagation();
-                          applyTemplate(item.cardId);
-                        }}>
-                          {item.cardId === selectedTemplateCardId ? '已应用' : '应用该模板'}
-                        </i>
+                        <div className="viral-template-card-meta">
+                          <strong>{item.cardName}</strong>
+                          <small>{item.caption}</small>
+                        </div>
                       </button>
                     );
                   })}
@@ -1713,6 +1803,14 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                   <span>已应用：{appliedTemplate.cardName}</span>
                   <label><input type="checkbox" checked={addMusic} onChange={(event) => setAddMusic(event.target.checked)} /> 音乐</label>
                   <label><input type="checkbox" checked={addSoundFx} onChange={(event) => setAddSoundFx(event.target.checked)} /> 音效</label>
+                  <label className="viral-fit-control">
+                    视频画面
+                    <select value={previewVideoFit} onChange={(event) => setPreviewVideoFit(event.target.value as ViralPreviewVideoFit)}>
+                      <option value="cover">铺满裁切</option>
+                      <option value="contain">完整显示</option>
+                      <option value="fill">拉伸铺满</option>
+                    </select>
+                  </label>
                   <button className="viral-primary" type="button" onClick={generatePackages} disabled={isGenerating}>
                     {isGenerating ? '处理中...' : '开始处理'}
                   </button>
@@ -1720,25 +1818,89 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
               </>
             ) : null}
             {activePackageTab === 'captions' ? (
-              <div className="viral-caption-list">
-                {editedCaptionSegments.map((caption, index) => (
-                  <article key={caption.key} className={index === activeCaptionIndex ? 'active' : undefined} onClick={() => setViralSourceTime(caption.sourceStart)}>
-                    <span>{caption.time}</span>
-                    <input
-                      value={caption.text}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => updateViralCaptionText(caption.captionIndex, event.target.value)}
-                    />
-                    <div>
-                      <Edit3 size={14} />
-                      <button type="button" onClick={(event) => {
-                        event.stopPropagation();
-                        deleteViralCaption(caption.captionIndex);
-                      }}><Trash2 size={14} /></button>
-                    </div>
-                  </article>
-                ))}
-                {editedCaptionSegments.length === 0 ? <p>当前片段没有可显示的字幕。</p> : null}
+              <div className="viral-caption-workbench">
+                <div className="viral-preview-style-panel">
+                  <label>
+                    标题位置
+                    <span>
+                      <input type="number" min={8} max={92} value={Math.round(titlePosition.x)} onChange={(event) => setTitlePosition((value) => ({ ...value, x: Number(event.target.value) }))} />
+                      <input type="number" min={8} max={92} value={Math.round(titlePosition.y)} onChange={(event) => setTitlePosition((value) => ({ ...value, y: Number(event.target.value) }))} />
+                    </span>
+                  </label>
+                  <label>
+                    标题字号
+                    <input type="range" min={16} max={34} value={titleTextStyle.fontSize} onChange={(event) => setTitleTextStyle((value) => ({ ...value, fontSize: Number(event.target.value) }))} />
+                    <strong>{titleTextStyle.fontSize}</strong>
+                  </label>
+                  <label>
+                    标题宽高
+                    <span>
+                      <input type="number" min={160} max={420} value={Math.round(titleTextStyle.width)} onChange={(event) => setTitleTextStyle((value) => ({ ...value, width: Number(event.target.value) }))} />
+                      <input type="number" min={44} max={180} value={Math.round(titleTextStyle.height)} onChange={(event) => setTitleTextStyle((value) => ({ ...value, height: Number(event.target.value) }))} />
+                    </span>
+                  </label>
+                  <label>
+                    标题字体
+                    <select value={titleTextStyle.fontFamily} onChange={(event) => setTitleTextStyle((value) => ({ ...value, fontFamily: event.target.value }))}>
+                      {viralFontOptions.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    字幕位置
+                    <span>
+                      <input type="number" min={8} max={92} value={Math.round(captionPosition.x)} onChange={(event) => setCaptionPosition((value) => ({ ...value, x: Number(event.target.value) }))} />
+                      <input type="number" min={8} max={92} value={Math.round(captionPosition.y)} onChange={(event) => setCaptionPosition((value) => ({ ...value, y: Number(event.target.value) }))} />
+                    </span>
+                  </label>
+                  <label>
+                    字幕字号
+                    <input type="range" min={11} max={24} value={captionTextStyle.fontSize} onChange={(event) => setCaptionTextStyle((value) => ({ ...value, fontSize: Number(event.target.value) }))} />
+                    <strong>{captionTextStyle.fontSize}</strong>
+                  </label>
+                  <label>
+                    字幕宽高
+                    <span>
+                      <input type="number" min={160} max={420} value={Math.round(captionTextStyle.width)} onChange={(event) => setCaptionTextStyle((value) => ({ ...value, width: Number(event.target.value) }))} />
+                      <input type="number" min={36} max={160} value={Math.round(captionTextStyle.height)} onChange={(event) => setCaptionTextStyle((value) => ({ ...value, height: Number(event.target.value) }))} />
+                    </span>
+                  </label>
+                  <label>
+                    字幕字体
+                    <select value={captionTextStyle.fontFamily} onChange={(event) => setCaptionTextStyle((value) => ({ ...value, fontFamily: event.target.value }))}>
+                      {viralFontOptions.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    视频画面
+                    <select value={previewVideoFit} onChange={(event) => setPreviewVideoFit(event.target.value as ViralPreviewVideoFit)}>
+                      <option value="cover">铺满裁切</option>
+                      <option value="contain">完整显示</option>
+                      <option value="fill">拉伸铺满</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="viral-caption-list">
+                  {editedCaptionSegments.map((caption, index) => (
+                    <article key={caption.key} className={index === activeCaptionIndex ? 'active' : undefined} onClick={() => setViralSourceTime(caption.sourceStart)}>
+                      <span className="viral-caption-time">{caption.time}</span>
+                      <textarea
+                        rows={2}
+                        value={caption.text}
+                        onClick={(event) => event.stopPropagation()}
+                        onFocus={() => setViralSourceTime(caption.sourceStart)}
+                        onChange={(event) => updateViralCaptionText(caption.captionIndex, event.target.value)}
+                      />
+                      <div className="viral-caption-actions">
+                        <Edit3 size={14} />
+                        <button type="button" aria-label="删除字幕" title="删除字幕" onClick={(event) => {
+                          event.stopPropagation();
+                          deleteViralCaption(caption.captionIndex);
+                        }}><Trash2 size={14} /></button>
+                      </div>
+                    </article>
+                  ))}
+                  {editedCaptionSegments.length === 0 ? <p>当前片段没有可显示的字幕。</p> : null}
+                </div>
               </div>
             ) : null}
             {activePackageTab === 'sound' ? (
@@ -1883,16 +2045,33 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
 function ViralSavedOverlay({ task, currentTime = 0 }: { task: ViralRecentTask; currentTime?: number }) {
   const captions = task.subtitleSegments?.length ? task.subtitleSegments : buildViralCaptionSegments(task.keywords);
   const activeCaption = captions[findViralCaptionIndex(captions, currentTime)] || captions[0];
+  const template = viralTemplateCards.find((item) => item.cardId === task.templateCardId)
+    || viralTemplateCards.find((item) => item.key === task.templateKey)
+    || viralTemplateCards[0];
   const titlePosition = task.titlePosition || { x: 50, y: 18 };
   const captionPosition = task.captionPosition || { x: 50, y: 64 };
+  const titleStyle = mergeViralTemplateTextStyle(template, 'title', task.titleTextStyle);
+  const captionStyle = mergeViralTemplateTextStyle(template, 'caption', task.captionTextStyle);
+  const keywordList = buildViralKeywordList(task.keywords, activeCaption?.text || '');
+  const isBilingualTemplate = /双语/.test(template.cardName || task.templateName || '');
+  const previewTemplateClass = getViralTemplatePreviewClass(template);
+  const shouldShowTitle = currentTime <= Math.min(3, Math.max(1.2, readViralDuration(task.duration) * 0.28));
   return (
-    <div className={`viral-saved-overlay template-${task.templateKey}`}>
-      <div className="viral-saved-title" style={{ left: `${titlePosition.x}%`, top: `${titlePosition.y}%` }}>
-        <strong>{task.hook || buildViralHook(viralTemplates.find((item) => item.key === task.templateKey) || viralTemplates[0], captions[0]?.text || '网感剪辑', 0)}</strong>
-        <em>{task.templateName || '已包装'}</em>
+    <div className={`viral-saved-overlay template-${task.templateKey} ${previewTemplateClass}`}>
+      <div className={`viral-saved-title ${shouldShowTitle ? '' : 'title-hidden'}`} style={{ left: `${titlePosition.x}%`, top: `${titlePosition.y}%` }}>
+        <strong style={{ fontSize: titleStyle.fontSize, fontFamily: titleStyle.fontFamily, width: titleStyle.width, minHeight: titleStyle.height }}>{task.hook || buildViralHook(template, captions[0]?.text || '网感剪辑', 0)}</strong>
       </div>
       <div className="viral-saved-caption" style={{ left: `${captionPosition.x}%`, top: `${captionPosition.y}%` }}>
-        <span>{activeCaption?.text || '自动识别添加字幕'}</span>
+        <span className="viral-caption-lines" style={{ fontSize: captionStyle.fontSize, fontFamily: captionStyle.fontFamily, width: captionStyle.width, minHeight: captionStyle.height }}>
+          <span className="viral-caption-primary">
+            {renderViralHighlightedText(activeCaption?.text || '自动识别添加字幕', keywordList)}
+          </span>
+          {isBilingualTemplate ? (
+            <span className="viral-caption-translation">
+              {buildViralBilingualCaption(activeCaption?.text || '自动识别添加字幕', keywordList)}
+            </span>
+          ) : null}
+        </span>
       </div>
     </div>
   );
@@ -1900,13 +2079,18 @@ function ViralSavedOverlay({ task, currentTime = 0 }: { task: ViralRecentTask; c
 
 function buildRecentTaskDownloadOverlay(task: ViralRecentTask): ViralRecentTask {
   const captions = task.subtitleSegments?.length ? task.subtitleSegments : buildViralCaptionSegments(task.keywords);
-  const template = viralTemplates.find((item) => item.key === task.templateKey) || viralTemplates[0];
+  const template = viralTemplateCards.find((item) => item.cardId === task.templateCardId)
+    || viralTemplateCards.find((item) => item.key === task.templateKey)
+    || viralTemplateCards[0];
   return {
     ...task,
     hook: task.hook || buildViralHook(template, captions[0]?.text || task.name || '网感剪辑', 0),
     templateName: task.templateName || template.name,
     titlePosition: task.titlePosition || { x: 50, y: 18 },
     captionPosition: task.captionPosition || { x: 50, y: 64 },
+    titleTextStyle: mergeViralTemplateTextStyle(template, 'title', task.titleTextStyle),
+    captionTextStyle: mergeViralTemplateTextStyle(template, 'caption', task.captionTextStyle),
+    previewVideoFit: task.previewVideoFit || 'cover',
     subtitleSegments: captions
   };
 }
@@ -1951,6 +2135,75 @@ function getViralTemplateFeature(template: ViralTemplate) {
     }
   };
   return features[template.key];
+}
+
+function getViralTemplateTextStyle(template: ViralTemplateCard | ViralTemplate, layer: 'title' | 'caption'): ViralOverlayTextStyle {
+  const cardName = 'cardName' in template ? template.cardName : template.name;
+  if (layer === 'title') {
+    if (template.key === 'deal') return { fontSize: 25, fontFamily: '"Arial Black", "Microsoft YaHei", sans-serif', width: 320, height: 82 };
+    if (template.key === 'story') return { fontSize: 22, fontFamily: 'Georgia, "Microsoft YaHei", serif', width: 300, height: 74 };
+    return { fontSize: /简洁|轻奢|基础/.test(cardName) ? 21 : 24, fontFamily: '"Arial Black", "Microsoft YaHei", sans-serif', width: 320, height: 82 };
+  }
+  if (template.key === 'seed') return { fontSize: 15, fontFamily: '"Trebuchet MS", "Microsoft YaHei", sans-serif', width: 300, height: /双语/.test(cardName) ? 72 : 54 };
+  if (template.key === 'deal') return { fontSize: 16, fontFamily: '"Arial Black", "Microsoft YaHei", sans-serif', width: 310, height: 58 };
+  if (template.key === 'story') return { fontSize: 15, fontFamily: 'Georgia, "Microsoft YaHei", serif', width: 320, height: 58 };
+  return { fontSize: /双语/.test(cardName) ? 14 : 16, fontFamily: 'Inter, "Microsoft YaHei", "PingFang SC", sans-serif', width: 300, height: /双语/.test(cardName) ? 72 : 54 };
+}
+
+function mergeViralTemplateTextStyle(template: ViralTemplateCard | ViralTemplate, layer: 'title' | 'caption', override?: Partial<ViralOverlayTextStyle>): ViralOverlayTextStyle {
+  return { ...getViralTemplateTextStyle(template, layer), ...(override || {}) };
+}
+
+function getViralTemplatePreviewClass(template: ViralTemplateCard | ViralTemplate) {
+  if (!('variantIndex' in template)) return 'variant-default';
+  const classes = [
+    'variant-high-red',
+    'variant-luxury-white',
+    'variant-classic-blue',
+    'variant-yellow-flash',
+    'variant-simple-yellow-white',
+    'variant-translucent-dark',
+    'variant-basic-white-gold',
+    'variant-versatile-yellow-bilingual',
+    'variant-list-yellow-white',
+    'variant-list-tech',
+    'variant-conversion-bright',
+    'variant-conversion-pip'
+  ];
+  return classes[template.variantIndex] || 'variant-default';
+}
+
+function buildViralKeywordList(keywords: string, captionText: string) {
+  const explicitKeywords = keywords.split(/[,，、\s]+/).map((item) => item.trim()).filter((item) => item.length >= 2);
+  const captionTokens = captionText.match(/[\u4e00-\u9fa5]{2,}|[A-Za-z0-9]{2,}/g) || [];
+  return [...new Set([...explicitKeywords, ...captionTokens])]
+    .sort((left, right) => right.length - left.length)
+    .slice(0, 8);
+}
+
+function renderViralHighlightedText(text: string, keywords: string[]) {
+  if (!text || keywords.length === 0) return text;
+  const escapedKeywords = keywords.map(escapeRegExp).filter(Boolean);
+  if (escapedKeywords.length === 0) return text;
+  const matcher = new RegExp(`(${escapedKeywords.join('|')})`, 'gi');
+  return text.split(matcher).filter((part) => part.length > 0).map((part, index) => {
+    const isKeyword = keywords.some((keyword) => keyword.toLowerCase() === part.toLowerCase());
+    return isKeyword ? <mark key={`${part}-${index}`}>{part}</mark> : part;
+  });
+}
+
+function buildViralBilingualCaption(text: string, keywords: string[]) {
+  if (/数字人|虚拟人|AI/.test(text)) return 'Make digital avatars feel clear and engaging.';
+  if (/入门|新手|小白/.test(text)) return 'Start simple and make the first step easy.';
+  if (/节奏|内容/.test(text)) return 'Find the rhythm and make the message clear.';
+  if (/文案|模板|字幕/.test(text)) return 'Use scripts, captions and templates to finish faster.';
+  if (/配音|完成|创作/.test(text)) return `Tune the voice and finish the video.`;
+  if (/普通人|快速|起来/.test(text)) return 'Make the process easier for everyday creators.';
+  return 'Highlight the key message and make it memorable.';
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function buildViralCaptionSegments(keywords: string) {
@@ -2159,6 +2412,14 @@ function formatViralDuration(value: number) {
   const minutes = Math.floor(value / 60);
   const seconds = Math.floor(value % 60);
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function readViralDuration(value: string) {
+  const parts = value.split(':').map((part) => Number(part));
+  if (parts.length === 2 && parts.every(Number.isFinite)) return parts[0] * 60 + parts[1];
+  if (parts.length === 3 && parts.every(Number.isFinite)) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : VIRAL_TIMELINE_DURATION;
 }
 
 function formatViralTaskExpiry(savedAt: string) {
