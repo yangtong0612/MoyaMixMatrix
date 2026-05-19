@@ -50,6 +50,7 @@
       "output": "release"
     },
     "win": {
+      "icon": "electron/assets/app-icon.ico",
       "target": "nsis"
     }
   }

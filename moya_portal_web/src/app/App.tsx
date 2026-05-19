@@ -115,6 +115,60 @@ const storeSamples = [
   { id: 'bakery', name: '城市烘焙', color: '#f59e0b', copy: '城市烘焙' }
 ];
 
+const productScenarioVisuals: Record<ProductVideoScenarioKey, {
+  eyebrow: string;
+  inputTitle: string;
+  outputTitle: string;
+  inputImages: string[];
+  outputImage: string;
+  tags: string[];
+}> = {
+  'product-spokesperson': {
+    eyebrow: '上传一张商品图',
+    inputTitle: '商品主体清晰可见',
+    outputTitle: '数字人口播成片',
+    inputImages: [
+      'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=420&q=82',
+      'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=420&q=82'
+    ],
+    outputImage: 'https://images.pexels.com/photos/18077457/pexels-photo-18077457.jpeg?auto=compress&cs=tinysrgb&w=420&h=720&fit=crop',
+    tags: ['真人讲解', '卖点字幕', '行动引导']
+  },
+  'product-showcase': {
+    eyebrow: '上传一张商品图',
+    inputTitle: '商品主体清晰可见',
+    outputTitle: '高级展示视频',
+    inputImages: [
+      'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=420&q=82',
+      'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=420&q=82'
+    ],
+    outputImage: 'https://images.pexels.com/photos/26728100/pexels-photo-26728100.jpeg?auto=compress&cs=tinysrgb&w=420&h=720&fit=crop',
+    tags: ['细节特写', '质感镜头', '场景展示']
+  },
+  'store-traffic': {
+    eyebrow: '门头 + 环境 + 活动',
+    inputTitle: '上传多张门店图',
+    outputTitle: '同城探店视频',
+    inputImages: [
+      'https://images.pexels.com/photos/262978/pexels-photo-262978.jpeg?auto=compress&cs=tinysrgb&w=420&h=300&fit=crop',
+      'https://images.pexels.com/photos/1581384/pexels-photo-1581384.jpeg?auto=compress&cs=tinysrgb&w=420&h=300&fit=crop'
+    ],
+    outputImage: 'https://images.pexels.com/photos/19243941/pexels-photo-19243941.jpeg?auto=compress&cs=tinysrgb&w=420&h=720&fit=crop',
+    tags: ['门店环境', '到店理由', '优惠 CTA']
+  },
+  'hot-replica': {
+    eyebrow: '爆款参考 + 商品替换',
+    inputTitle: '上传参考视频',
+    outputTitle: 'AI 同款复刻',
+    inputImages: [
+      'https://images.pexels.com/photos/12291879/pexels-photo-12291879.jpeg?auto=compress&cs=tinysrgb&w=420&h=720&fit=crop',
+      'https://images.unsplash.com/photo-1607082350899-7e105aa886ae?auto=format&fit=crop&w=420&q=82'
+    ],
+    outputImage: 'https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=720&fit=crop',
+    tags: ['结构拆解', '节奏复刻', '商品替换']
+  }
+};
+
 interface DigitalHumanLook {
   id: string;
   label: string;
@@ -262,6 +316,160 @@ function isOssConfigError(error: unknown) {
 function isRecoverableImageUploadError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '');
   return isOssConfigError(error) || /OSS.*(timeout|timed out|failed|HTTP|network|socket|ECONN|ETIMEDOUT)|上传.*(超时|失败)/i.test(message);
+}
+
+interface ProductScenarioVisualProps {
+  scenario: typeof productVideoScenarios[number];
+  productVisual: { type: 'image' | 'sample'; value: string };
+  storeVisual: { type: 'image' | 'sample'; value: string };
+  referenceVideo?: string | null;
+  sampleCopy: string;
+}
+
+function ProductScenarioVisual({ scenario, productVisual, storeVisual, referenceVideo, sampleCopy }: ProductScenarioVisualProps) {
+  const visual = productScenarioVisuals[scenario.key];
+  const inputImages = (scenario.key === 'product-spokesperson' || scenario.key === 'product-showcase') && productVisual.type === 'image'
+    ? [productVisual.value]
+    : scenario.key === 'product-spokesperson' || scenario.key === 'product-showcase'
+      ? [visual.inputImages[0]]
+      : scenario.key === 'store-traffic' && storeVisual.type === 'image'
+    ? [storeVisual.value, visual.inputImages[1]]
+    : scenario.key !== 'store-traffic' && productVisual.type === 'image'
+      ? [productVisual.value, visual.inputImages[1]]
+      : visual.inputImages;
+  const outputImage = scenario.key === 'product-spokesperson' || scenario.key === 'product-showcase' || scenario.key === 'store-traffic' || scenario.key === 'hot-replica'
+    ? visual.outputImage
+    : scenario.key !== 'store-traffic' && productVisual.type === 'image'
+      ? productVisual.value
+      : visual.outputImage;
+  const hasUserProduct = productVisual.type === 'image';
+  const videoLines = scenarioVideoLines(scenario.key, sampleCopy);
+  const replicaProduct = hasUserProduct ? productVisual.value : visual.inputImages[1];
+  const storeProp = scenario.key === 'store-traffic' && storeVisual.type === 'image' ? storeVisual.value : visual.inputImages[0];
+
+  if (scenario.key === 'hot-replica') {
+    return (
+      <div className="product-scenario-visual replica replica-realistic">
+        <div className="replica-source-block">
+          <strong>爆款视频</strong>
+          <div className="replica-video-phone">
+            {referenceVideo ? (
+              <video src={localFileUrl(referenceVideo)} muted />
+            ) : (
+              <img src={visual.inputImages[0]} alt="" />
+            )}
+            <span>
+              <PlayCircle size={16} />
+            </span>
+          </div>
+        </div>
+
+        <div className="replica-product-transfer">
+          <div className="replica-product-card">
+            <img src={replicaProduct} alt="" />
+          </div>
+          <small>商品图</small>
+          <ArrowRight size={34} />
+        </div>
+
+        <div className="replica-output-block">
+          <strong>AI 复刻</strong>
+          <div className="replica-video-phone replica-result">
+            <img src={outputImage} alt="" />
+            <div className="replica-hand-product">
+              <img src={replicaProduct} alt="" />
+            </div>
+            <span>AI生成</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`product-scenario-visual ${scenario.tone}`}>
+      <div className="scenario-input-panel">
+        <span>{visual.eyebrow}</span>
+        <strong>{visual.inputTitle}</strong>
+        <div className="scenario-input-assets">
+          {inputImages.map((image, index) => (
+            <div key={`${image}-${index}`} className={`scenario-input-thumb${scenario.key === 'hot-replica' && index === 0 ? ' video-thumb' : ''}`}>
+              {scenario.key === 'hot-replica' && index === 0 && referenceVideo ? (
+                <video src={localFileUrl(referenceVideo)} muted />
+              ) : scenario.key === 'hot-replica' && index === 0 ? (
+                <PlayCircle size={24} />
+              ) : (
+                <img src={image} alt="" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="scenario-flow-arrow" aria-hidden="true">
+        <ArrowRight size={34} />
+      </div>
+
+      <div className="scenario-output-phone">
+        <span>AI生成</span>
+        <div className={`scenario-phone-video ${scenario.key}`} aria-hidden="true">
+          <img src={outputImage} alt="" />
+          <i className="scenario-video-shine" />
+          <i className="scenario-video-focus" />
+          {scenario.key === 'product-spokesperson' ? (
+            <div className="scenario-spokesperson-layout">
+              <div className="scenario-product-prop">
+                <img src={hasUserProduct ? productVisual.value : inputImages[0]} alt="" />
+              </div>
+            </div>
+          ) : null}
+          {scenario.key === 'product-showcase' ? (
+            <div className="scenario-showcase-layout">
+              <div className="scenario-showcase-product">
+                <img src={hasUserProduct ? productVisual.value : inputImages[0]} alt="" />
+              </div>
+              <div className="scenario-showcase-reflections">
+                <i />
+                <i />
+              </div>
+            </div>
+          ) : null}
+          {scenario.key === 'store-traffic' ? (
+            <div className="scenario-store-layout">
+              <div className="scenario-store-prop">
+                <img src={storeProp} alt="" />
+              </div>
+              <div className="scenario-store-sign">{sampleCopy}</div>
+              <div className="scenario-store-frames">
+                <i />
+                <i />
+                <i />
+              </div>
+            </div>
+          ) : null}
+          <div className="scenario-video-subtitle">
+            {videoLines.map((line) => <b key={line}>{line}</b>)}
+          </div>
+          <div className="scenario-video-progress"><i /></div>
+        </div>
+        <div className="scenario-phone-caption">
+          <strong>{visual.outputTitle}</strong>
+          <small>{scenario.key === 'store-traffic' ? '同城客流引进店' : sampleCopy}</small>
+        </div>
+      </div>
+
+      <div className="scenario-visual-tags">
+        {visual.tags.map((tag) => <span key={tag}>{tag}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function scenarioVideoLines(key: ProductVideoScenarioKey, sampleCopy: string) {
+  if (key === 'store-traffic') return ['今天就来这家店', '环境好，味道稳'];
+  if (key === 'hot-replica') return ['同款爆款结构', '卖点直接替换'];
+  if (key === 'product-showcase') return ['细节质感拉满', sampleCopy || '功能亮点清晰'];
+  return ['这款真的值得试', sampleCopy || '卖点清晰好讲'];
 }
 
 export function App() {
@@ -1269,111 +1477,14 @@ function ProductVideoCreateView() {
           </section>
         ) : (
           <>
-            <div className="product-preview-toolbar">
-              <NavLink to="/">
-                <Home size={15} />
-                首页
-              </NavLink>
-              <NavLink to="/editor?workflow=viral">
-                <Sparkles size={15} />
-                网感剪辑
-              </NavLink>
-            </div>
-
             <section className={`product-preview-stage ${active.tone}${isShowcase ? ' product-showcase-stage' : ''}${isStoreTraffic ? ' product-store-stage' : ''}${isHotReplica ? ' product-replica-stage' : ''}`}>
-              {isHotReplica ? (
-            <div className="replica-demo-canvas">
-              <div className="replica-video-card">
-                <strong>爆款视频</strong>
-                <div className="replica-phone replica-source-phone">
-                  {referenceVideo ? <video src={localFileUrl(referenceVideo)} muted /> : <UserRound size={42} />}
-                  <PlayCircle className="replica-play" size={28} />
-                </div>
-              </div>
-              <div className="replica-middle-card">
-                <div className="replica-product-object" style={{ '--sample-color': activeSample.color } as CSSProperties}>
-                  {productVisual.type === 'image' ? <img src={productVisual.value} alt="商品图" /> : <span>{activeSample.copy}</span>}
-                </div>
-                <span>商品图</span>
-                <ArrowRight className="replica-curve-arrow" size={38} />
-              </div>
-              <div className="replica-video-card">
-                <strong>AI 复刻</strong>
-                <div className="replica-phone replica-result-phone">
-                  <div className="replica-result-person">
-                    <UserRound size={34} />
-                    <div className="replica-result-product" style={{ '--sample-color': activeSample.color } as CSSProperties}>
-                      {productVisual.type === 'image' ? <img src={productVisual.value} alt="复刻商品" /> : <span>{activeSample.copy}</span>}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : isStoreTraffic ? (
-            <div className="store-demo-canvas">
-              <div className="store-source-card">
-                <strong>上传多张门店图</strong>
-                <div className="store-source-frame">
-                  <div className="store-photo-stack" style={{ '--sample-color': activeStoreSample.color } as CSSProperties}>
-                    <span className="store-photo-bg" />
-                    <span className="store-photo-main">
-                      {storeVisual.type === 'image' ? <img src={storeVisual.value} alt="门店预览" /> : activeStoreSample.copy}
-                    </span>
-                    <PlayCircle className="store-photo-play" size={34} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : isShowcase ? (
-            <div className="showcase-demo-canvas">
-              <div className="showcase-source-card">
-                <strong>上传一张商品图</strong>
-                <div className="showcase-source-frame">
-                  <div className="showcase-product-object" style={{ '--sample-color': activeSample.color } as CSSProperties}>
-                    {productVisual.type === 'image' ? <img src={productVisual.value} alt="商品预览" /> : <span>{activeSample.copy}</span>}
-                  </div>
-                </div>
-              </div>
-              <ArrowRight className="showcase-curve-arrow" size={38} />
-              <div className="showcase-generated-card">
-                <em>AI生成</em>
-                <div className="showcase-person">
-                  <div className="showcase-person-head">
-                    <UserRound size={30} />
-                  </div>
-                  <div className="showcase-person-body">
-                    <div className="showcase-hand-product" style={{ '--sample-color': activeSample.color } as CSSProperties}>
-                      {productVisual.type === 'image' ? <img src={productVisual.value} alt="展示视频商品" /> : <span>{activeSample.copy}</span>}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="product-flow-card product-shot-card">
-                <div className="product-shot-image" style={{ '--sample-color': activeSample.color } as CSSProperties}>
-                  {productVisual.type === 'image' ? <img src={productVisual.value} alt="商品预览" /> : <strong>{activeSample.name}</strong>}
-                </div>
-                <span>商品图</span>
-              </div>
-
-              <ArrowRight className="product-flow-arrow" size={26} />
-
-              <div className="product-flow-card product-avatar-card">
-                <div className="product-avatar-video">
-                  <div className="avatar-head avatar-head-image">
-                    <img src={avatarPreviewUrl} alt={avatarDisplayName} />
-                  </div>
-                  <div className="avatar-caption">
-                    {scriptEnabled ? (description || `${activeSample.name}，今天这款真的适合日常通勤。`) : '展示产品核心卖点'}
-                  </div>
-                  <PlayCircle className="avatar-play" size={28} />
-                </div>
-                <span>数字人口播成片</span>
-              </div>
-            </>
-          )}
+              <ProductScenarioVisual
+                scenario={active}
+                productVisual={productVisual}
+                storeVisual={storeVisual}
+                referenceVideo={referenceVideo}
+                sampleCopy={isStoreTraffic ? activeStoreSample.copy : activeSample.copy}
+              />
             </section>
 
             <section className="product-preview-copy">

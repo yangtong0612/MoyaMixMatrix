@@ -43,6 +43,7 @@ const isDev = !app.isPackaged;
 const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://localhost:8081/api').replace(/\/+$/, '');
 const ossUploadTimeoutMs = Number(process.env.MOYA_OSS_UPLOAD_TIMEOUT_MS || 10 * 60 * 1000);
 let mainWindow = null;
+const appIconPath = path.join(__dirname, 'assets', process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png');
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -51,6 +52,7 @@ function createWindow() {
     minWidth: 1180,
     minHeight: 760,
     title: 'moya矩阵',
+    icon: appIconPath,
     backgroundColor: '#0b0b0c',
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
