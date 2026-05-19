@@ -46,7 +46,7 @@ contextBridge.exposeInMainWorld('surgicol', {
   media: {
     uploadToOss: (filePath, options) => invoke('media:upload-to-oss', filePath, options),
     downloadToLocal: (source, options) => invoke('media:download-to-local', source, options),
-    readAsDataUrl: (filePath) => invoke('media:read-as-data-url', filePath),
+    readAsDataUrl: (filePath, options) => invoke('media:read-as-data-url', filePath, options),
     onUploadToOssProgress: (callback) => {
       const listener = (_event, progress) => callback(progress);
       ipcRenderer.on('media:upload-to-oss-progress', listener);

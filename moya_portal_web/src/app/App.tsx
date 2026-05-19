@@ -35,13 +35,14 @@ import { EditorPage } from '@/features/editor/EditorPage';
 import {
   createProductVideoTask,
   getProductVideoAssetAccessUrl,
+  getProductVideoConfigStatus,
   getProductVideoTaskStatus,
   readProductVideoAssetAsDataUrl,
   uploadProductVideoAsset,
   type ProductVideoTaskStatus
 } from '@/features/product-video/productVideoApi';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
-import type { OssUploadProgress } from '@/shared/types/electron';
+import type { OssUploadProgress, OssUploadResult } from '@/shared/types/electron';
 
 const navItems = [
   { to: '/', label: '首页', icon: Home },
@@ -114,84 +115,108 @@ const storeSamples = [
   { id: 'bakery', name: '城市烘焙', color: '#f59e0b', copy: '城市烘焙' }
 ];
 
+interface DigitalHumanLook {
+  id: string;
+  label: string;
+  scene: string;
+  image: string;
+  prompt: string;
+  className: string;
+}
+
+function buildAvatarLooks(image: string): DigitalHumanLook[] {
+  return [
+    {
+      id: 'identity',
+      label: '主形象',
+      scene: '基础身份锚点',
+      image,
+      prompt: '以主形象作为人物身份锚点，保持脸型、五官、发型、年龄感和整体气质一致。',
+      className: 'scene-identity'
+    },
+    {
+      id: 'product-live',
+      label: '商品口播',
+      scene: '直播间 / 产品台',
+      image,
+      prompt: '同一人物出现在商品口播、产品展示或直播间场景，可手持商品、指向产品或坐在产品台前讲解。',
+      className: 'scene-product'
+    },
+    {
+      id: 'store-traffic',
+      label: '门店引流',
+      scene: '门店 / 探店 / 爆款复刻',
+      image,
+      prompt: '同一人物出现在门店、本地生活、探店或爆款复刻场景，保持身份一致，只改变背景和镜头结构。',
+      className: 'scene-store'
+    }
+  ];
+}
+
 const digitalHumanAvatars = [
   {
-    id: 'linzhixia',
-    name: '林知夏',
-    role: '商务女主持',
-    prompt: '中国年轻女性，干练西装，适合商品口播、企业介绍和直播带货，镜头表现自然亲和。',
-    scenes: 3,
+    id: 'yahan',
+    name: '雅涵',
+    role: '轻熟口播女主',
+    prompt: '中国女性，轻熟亲和，适合护肤、美业、课程、本地生活口播。身份锚点为同一张脸、同一发型、同一年龄感，镜头表现温柔可信。',
     image: 'https://images.pexels.com/photos/26728100/pexels-photo-26728100.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-    variants: [
-      'https://images.pexels.com/photos/26728100/pexels-photo-26728100.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/27086757/pexels-photo-27086757.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/21044845/pexels-photo-21044845.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
-    ]
+    variants: buildAvatarLooks('https://images.pexels.com/photos/26728100/pexels-photo-26728100.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
   },
   {
-    id: 'suwanwan',
-    name: '苏绾绾',
-    role: '汉服国风女主',
-    prompt: '中国女性，汉服或新中式国风造型，适合茶饮、文旅、国潮商品和礼品场景，气质温婉精致。',
-    scenes: 3,
+    id: 'meiqi',
+    name: '美琪',
+    role: '时尚导购女主',
+    prompt: '中国年轻女性，时尚导购气质，适合服饰、美妆、潮流商品、门店探店和活动推荐。必须保持同一人物身份。',
     image: 'https://images.pexels.com/photos/18077457/pexels-photo-18077457.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-    variants: [
-      'https://images.pexels.com/photos/18077457/pexels-photo-18077457.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/19055839/pexels-photo-19055839.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/19243941/pexels-photo-19243941.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
-    ]
+    variants: buildAvatarLooks('https://images.pexels.com/photos/18077457/pexels-photo-18077457.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
   },
   {
-    id: 'jiangchen',
-    name: '江晨',
-    role: '商务男主持',
-    prompt: '中国年轻男性，商务西装，适合科技数码、课程咨询、招商加盟和高客单产品讲解，表达专业可信。',
-    scenes: 3,
+    id: 'laopan',
+    name: '老潘',
+    role: '资深商务男主',
+    prompt: '中国中年男性，成熟稳重，适合招商、课程、数码、门店老板口播和高客单产品讲解。身份锚点必须稳定。',
     image: 'https://images.pexels.com/photos/16241480/pexels-photo-16241480.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-    variants: [
-      'https://images.pexels.com/photos/16241480/pexels-photo-16241480.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/21044803/pexels-photo-21044803.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/21044809/pexels-photo-21044809.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
-    ]
+    variants: buildAvatarLooks('https://images.pexels.com/photos/16241480/pexels-photo-16241480.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
   },
   {
     id: 'xumengting',
     name: '许梦婷',
-    role: '白大褂顾问',
-    prompt: '中国女性，白大褂或专业顾问制服，适合美业、护肤、健康管理和门店咨询场景，语气温柔专业。',
-    scenes: 3,
+    role: '专业顾问女主',
+    prompt: '中国女性，专业顾问、健康管理、美业咨询或门店专家形象，适合知识讲解、服务介绍和信任背书。保持同一张脸和专业气质。',
     image: 'https://images.pexels.com/photos/8442819/pexels-photo-8442819.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-    variants: [
-      'https://images.pexels.com/photos/8442819/pexels-photo-8442819.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/5452201/pexels-photo-5452201.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/5214959/pexels-photo-5214959.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
-    ]
+    variants: buildAvatarLooks('https://images.pexels.com/photos/8442819/pexels-photo-8442819.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
   },
   {
-    id: 'zhouye',
-    name: '周野',
-    role: '餐饮工作服男主',
-    prompt: '中国男性，餐饮、厨师或门店工作服造型，适合餐厅探店、本地生活团购和到店引流，表现热情接地气。',
-    scenes: 3,
+    id: 'chenzhuo',
+    name: '陈卓',
+    role: '门店老板男主',
+    prompt: '中国男性，门店老板或本地生活主理人形象，适合餐饮、同城团购、门店活动和到店引流口播。人物身份必须稳定。',
     image: 'https://images.pexels.com/photos/12291879/pexels-photo-12291879.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-    variants: [
-      'https://images.pexels.com/photos/12291879/pexels-photo-12291879.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/33615812/pexels-photo-33615812.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/33615818/pexels-photo-33615818.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
-    ]
+    variants: buildAvatarLooks('https://images.pexels.com/photos/12291879/pexels-photo-12291879.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
   },
   {
     id: 'xiaoning',
     name: '夏宁',
     role: '门店制服女导购',
     prompt: '中国女性，门店导购、前台或服务制服造型，适合门店引流、活动介绍和新品推荐，表达清爽有亲和力。',
-    scenes: 3,
     image: 'https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-    variants: [
-      'https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/14230736/pexels-photo-14230736.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
-      'https://images.pexels.com/photos/33615812/pexels-photo-33615812.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop'
-    ]
+    variants: buildAvatarLooks('https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
+  },
+  {
+    id: 'linlan',
+    name: '林澜',
+    role: '国风生活女主',
+    prompt: '中国女性，国风生活方式主理人，适合茶饮、文旅、非遗、礼品和东方审美商品口播。保持同一身份锚点。',
+    image: 'https://images.pexels.com/photos/19055839/pexels-photo-19055839.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: buildAvatarLooks('https://images.pexels.com/photos/19055839/pexels-photo-19055839.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
+  },
+  {
+    id: 'ruoxi',
+    name: '若曦',
+    role: '户外探店女主',
+    prompt: '中国年轻女性，户外探店、街区门店和生活方式推荐形象，适合本地生活、咖啡、烘焙和城市打卡内容。保持同一人物。',
+    image: 'https://images.pexels.com/photos/19243941/pexels-photo-19243941.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
+    variants: buildAvatarLooks('https://images.pexels.com/photos/19243941/pexels-photo-19243941.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
   }
 ];
 
@@ -201,6 +226,14 @@ function localFileUrl(filePath: string) {
 
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
+  let timeoutId = 0;
+  const timeout = new Promise<T>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
 }
 
 function productVideoStatusText(task: ProductVideoTaskStatus) {
@@ -224,6 +257,11 @@ function updateProductVideoRecentTask(taskId: string, nextTask: Record<string, u
 function isOssConfigError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '');
   return /OSS.*(未配置|endpoint|访问密钥|AccessKey|access key|未启用)/i.test(message);
+}
+
+function isRecoverableImageUploadError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return isOssConfigError(error) || /OSS.*(timeout|timed out|failed|HTTP|network|socket|ECONN|ETIMEDOUT)|上传.*(超时|失败)/i.test(message);
 }
 
 export function App() {
@@ -486,9 +524,9 @@ function ProductVideoCreateView() {
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
   const [avatarModalTab, setAvatarModalTab] = useState<'digital' | 'upload'>('digital');
   const [selectedAvatarId, setSelectedAvatarId] = useState(digitalHumanAvatars[1].id);
-  const [selectedAvatarVariant, setSelectedAvatarVariant] = useState(digitalHumanAvatars[1].variants[0]);
+  const [selectedAvatarVariant, setSelectedAvatarVariant] = useState(digitalHumanAvatars[1].variants[0].id);
   const [customAvatarPath, setCustomAvatarPath] = useState<string | null>(null);
-  const [model, setModel] = useState('Seedance 1.5 Pro（有声口播）');
+  const [model, setModel] = useState('Seedance 2.0（多模态参考）');
   const [quality, setQuality] = useState('720p');
   const [ratio, setRatio] = useState('9:16');
   const [duration, setDuration] = useState('5s');
@@ -517,19 +555,33 @@ function ProductVideoCreateView() {
   }, [duration]);
 
   useEffect(() => {
+    if (digitalHumanAvatars.some((item) => item.id === selectedAvatarId)) return;
+    setSelectedAvatarId(digitalHumanAvatars[0].id);
+    setSelectedAvatarVariant(digitalHumanAvatars[0].variants[0].id);
+  }, [selectedAvatarId]);
+
+  useEffect(() => {
+    const avatar = digitalHumanAvatars.find((item) => item.id === selectedAvatarId) ?? digitalHumanAvatars[0];
+    if (!avatar.variants.some((look) => look.id === selectedAvatarVariant)) {
+      setSelectedAvatarVariant(avatar.variants[0].id);
+    }
+  }, [selectedAvatarId, selectedAvatarVariant]);
+
+  useEffect(() => {
     const unsubscribe = window.surgicol?.media?.onUploadToOssProgress?.((progress: OssUploadProgress) => {
       if (!progress.taskId) return;
       const task = uploadProgressMap.current[progress.taskId];
       if (!task) return;
       const nextPercent = Math.round(task.base + task.span * Math.max(0, Math.min(progress.percent || 0, 100)) / 100);
+      const canFallbackToLocalImage = progress.status === 'failed' && progress.taskId.startsWith('product-video-upload-') && !progress.taskId.includes('-reference');
       setGenerationProgress({
-        stage: progress.status === 'failed' ? 'failed' : 'uploading',
+        stage: progress.status === 'failed' && !canFallbackToLocalImage ? 'failed' : 'uploading',
         percent: progress.status === 'failed' ? Math.max(nextPercent, 1) : nextPercent,
-        label: progress.status === 'failed' ? '上传失败' : task.label,
-        detail: progress.message || '上传中'
+        label: canFallbackToLocalImage ? '切换本地图片直传' : progress.status === 'failed' ? '上传失败' : task.label,
+        detail: canFallbackToLocalImage ? 'OSS 上传超时，正在改用本地图片数据提交' : progress.message || '上传中'
       });
       if (progress.status === 'failed') {
-        setStatus(progress.message || '素材上传失败，请检查网络后重试。');
+        setStatus(canFallbackToLocalImage ? 'OSS 上传超时，正在切换本地图片直传...' : progress.message || '素材上传失败，请检查网络后重试。');
       }
     });
     return () => {
@@ -541,12 +593,17 @@ function ProductVideoCreateView() {
   const activeSample = productSamples.find((sample) => sample.id === selectedSample) ?? productSamples[0];
   const activeStoreSample = storeSamples.find((sample) => sample.id === selectedStoreSample) ?? storeSamples[0];
   const selectedAvatar = digitalHumanAvatars.find((avatar) => avatar.id === selectedAvatarId) ?? digitalHumanAvatars[0];
-  const avatarPreviewUrl = customAvatarPath && avatarSource === 'upload' ? localFileUrl(customAvatarPath) : selectedAvatarVariant || selectedAvatar.image;
+  const selectedAvatarLook = selectedAvatar.variants.find((look) => look.id === selectedAvatarVariant) ?? selectedAvatar.variants[0];
+  const avatarPreviewUrl = customAvatarPath && avatarSource === 'upload' ? localFileUrl(customAvatarPath) : selectedAvatarLook.image || selectedAvatar.image;
   const avatarDisplayName = customAvatarPath && avatarSource === 'upload' ? '我的数字人' : selectedAvatar.name;
   const avatarPromptName =
     customAvatarPath && avatarSource === 'upload'
       ? '用户上传的自定义数字人形象'
       : `${selectedAvatar.name}，${selectedAvatar.role}。${selectedAvatar.prompt}`;
+  const avatarIdentityPrompt =
+    customAvatarPath && avatarSource === 'upload'
+      ? '以用户上传的数字人照片为唯一人物身份参考，保持同一张脸、同一年龄感、同一发型和服装主特征。'
+      : `${selectedAvatar.prompt} 当前场景：${selectedAvatarLook.label}，${selectedAvatarLook.prompt}`;
   const productVisual = productImage ? { type: 'image' as const, value: localFileUrl(productImage) } : { type: 'sample' as const, value: activeSample.color };
   const storeVisual = storeImages[0]
     ? { type: 'image' as const, value: localFileUrl(storeImages[0]) }
@@ -636,11 +693,11 @@ function ProductVideoCreateView() {
     setAvatarMode('image');
     setAvatarSource('digital');
     setSelectedAvatarId(digitalHumanAvatars[1].id);
-    setSelectedAvatarVariant(digitalHumanAvatars[1].variants[0]);
+    setSelectedAvatarVariant(digitalHumanAvatars[1].variants[0].id);
     setCustomAvatarPath(null);
     setAvatarModalOpen(false);
     setAvatarModalTab('digital');
-    setModel('Seedance 1.5 Pro（有声口播）');
+    setModel('Seedance 2.0（多模态参考）');
     setQuality('720p');
     setRatio('9:16');
     setDuration('5s');
@@ -676,17 +733,27 @@ function ProductVideoCreateView() {
     setGeneratedVideoUrl('');
     uploadProgressMap.current = {};
     setGenerationProgress({
-      stage: 'uploading',
-      percent: 3,
-      label: '准备上传素材',
-      detail: '正在创建 OSS 上传任务'
+      stage: 'submitting',
+      percent: 1,
+      label: '检查生成配置',
+      detail: '正在确认火山视频生成服务可用'
     });
 
     try {
+      const videoConfig = await getProductVideoConfigStatus();
+      if (!videoConfig.configured) {
+        throw new Error(videoConfig.message || '火山视频生成未配置完整，请检查后台 .env。');
+      }
+      setGenerationProgress({
+        stage: 'uploading',
+        percent: 3,
+        label: '准备上传素材',
+        detail: '正在创建 OSS 上传任务'
+      });
       setStatus('正在准备素材...');
       const imagePaths = isStoreTraffic ? storeImages : productImage ? [productImage] : [];
       const imageAccessUrls: string[] = [];
-      const imageUploads = [];
+      const imageUploads: OssUploadResult[] = [];
       const uploadSpan = 47 / Math.max(imagePaths.length + (referenceVideo ? 1 : 0), 1);
       for (let index = 0; index < imagePaths.length; index += 1) {
         const input = {
@@ -700,22 +767,20 @@ function ProductVideoCreateView() {
           span: uploadSpan,
           label: input.label
         };
-        try {
-          const uploaded = await uploadProductVideoAsset(input.path, input.folder, taskId);
-          imageUploads.push(uploaded);
-          imageAccessUrls.push(await getProductVideoAssetAccessUrl(uploaded.mediaUrl));
-        } catch (error) {
-          if (!isOssConfigError(error)) throw error;
-          setStatus('OSS 配置未恢复，正在使用本地图片直传兜底...');
-          setGenerationProgress({
-            stage: 'uploading',
-            percent: Math.round(3 + (index + 1) * uploadSpan),
-            label: '本地图片直传',
-            detail: 'OSS 密钥未配置，已改用本地图片数据提交火山生成'
-          });
-          const inlineImage = await readProductVideoAssetAsDataUrl(input.path);
-          imageAccessUrls.push(inlineImage.dataUrl);
-        }
+        setGenerationProgress({
+          stage: 'uploading',
+          percent: Math.round(3 + index * uploadSpan),
+          label: input.label,
+          detail: '正在读取本地图片数据'
+        });
+        const inlineImage = await readProductVideoAssetAsDataUrl(input.path);
+        imageAccessUrls.push(inlineImage.dataUrl);
+        setGenerationProgress({
+          stage: 'uploading',
+          percent: Math.round(3 + (index + 1) * uploadSpan),
+          label: '本地图片已准备',
+          detail: '图片将直接提交给火山生成，不再等待 OSS 上传'
+        });
       }
       let referenceUpload = null;
       if (referenceVideo) {
@@ -726,7 +791,11 @@ function ProductVideoCreateView() {
           label: '上传参考视频'
         };
         try {
-          referenceUpload = await uploadProductVideoAsset(referenceVideo, `product-video/${activeScenario}/references`, taskId);
+          referenceUpload = await withTimeout(
+            uploadProductVideoAsset(referenceVideo, `product-video/${activeScenario}/references`, taskId),
+            120000,
+            '参考视频上传 OSS 超时，请检查网络后重试'
+          );
         } catch (error) {
           if (isOssConfigError(error)) {
             throw new Error('参考视频必须上传到 OSS 才能给火山访问，请先恢复 OSS AccessKey 配置。');
@@ -738,25 +807,18 @@ function ProductVideoCreateView() {
         stage: 'signing',
         percent: 55,
         label: '生成素材访问地址',
-        detail: imageUploads.length === imagePaths.length ? '正在为火山引擎创建临时可访问链接' : '本地图片已准备完成，正在提交生成'
+        detail: referenceUpload ? '正在为参考视频创建临时可访问链接' : '本地图片已准备完成，正在提交生成'
       });
       const referenceAccessUrl = referenceUpload ? await getProductVideoAssetAccessUrl(referenceUpload.mediaUrl) : undefined;
-      let avatarImageUrl = avatarSource === 'digital' ? selectedAvatarVariant || selectedAvatar.image : undefined;
+      let avatarImageUrl: string | undefined;
+      let avatarReferenceImages: string[] = [];
       if (avatarSource === 'upload' && customAvatarPath) {
         setGenerationProgress({
           stage: 'signing',
           percent: 60,
-          label: '上传数字人形象',
-          detail: '正在为自定义数字人创建参考图'
+          label: '确认数字人设定',
+          detail: '为避免真人图片风控，数字人照片仅作为本地预览，不提交给火山'
         });
-        try {
-          const avatarUpload = await uploadProductVideoAsset(customAvatarPath, `product-video/${activeScenario}/avatars`);
-          avatarImageUrl = await getProductVideoAssetAccessUrl(avatarUpload.mediaUrl);
-        } catch (error) {
-          if (!isOssConfigError(error)) throw error;
-          const inlineAvatar = await readProductVideoAssetAsDataUrl(customAvatarPath);
-          avatarImageUrl = inlineAvatar.dataUrl;
-        }
       }
 
       setStatus('素材上传完成，正在提交火山视频生成任务...');
@@ -777,6 +839,9 @@ function ProductVideoCreateView() {
         avatarId: avatarSource === 'digital' ? selectedAvatarId : 'custom-avatar',
         avatarName: avatarPromptName,
         avatarImageUrl,
+        avatarPrompt: avatarIdentityPrompt,
+        avatarReferenceImages,
+        identityLock: true,
         model,
         quality,
         ratio,
@@ -804,6 +869,9 @@ function ProductVideoCreateView() {
         avatarId: avatarSource === 'digital' ? selectedAvatarId : 'custom-avatar',
         avatarName: avatarPromptName,
         avatarImageUrl,
+        avatarPrompt: avatarIdentityPrompt,
+        avatarReferenceImages,
+        identityLock: true,
         model: created.model || model,
         quality,
         ratio,
@@ -1092,7 +1160,7 @@ function ProductVideoCreateView() {
                 <img src={avatarPreviewUrl} alt={avatarDisplayName} />
                 <span>
                   <strong>{avatarDisplayName}</strong>
-                  <small>{avatarSource === 'upload' ? '自定义形象' : selectedAvatar.role}</small>
+                  <small>{avatarSource === 'upload' ? '自定义形象 · 身份锁定' : `${selectedAvatar.role} · 身份锁定`}</small>
                 </span>
               </button>
             </div>
@@ -1105,6 +1173,7 @@ function ProductVideoCreateView() {
             <span>模型</span>
           </label>
           <select value={model} onChange={(event) => setModel(event.target.value)}>
+            <option>Seedance 2.0（多模态参考）</option>
             <option>Seedance 1.5 Pro（有声口播）</option>
             <option>Seedance 1.0 Pro（静默展示）</option>
           </select>
@@ -1366,7 +1435,7 @@ function ProductVideoCreateView() {
                       className={selectedAvatarId === avatar.id && avatarSource === 'digital' ? 'active' : undefined}
                       onClick={() => {
                         setSelectedAvatarId(avatar.id);
-                        setSelectedAvatarVariant(avatar.variants[0]);
+                        setSelectedAvatarVariant(avatar.variants[0].id);
                         setAvatarSource('digital');
                         setAvatarMode('image');
                       }}
@@ -1374,26 +1443,27 @@ function ProductVideoCreateView() {
                       <img src={avatar.image} alt={avatar.name} />
                       <strong>{avatar.name}</strong>
                       <span>{avatar.role}</span>
-                      <small>{avatar.scenes} 套外观</small>
+                      <small>3 个场景位 · 同一身份</small>
                     </button>
                   ))}
                 </div>
                 <div className="avatar-variant-panel">
-                  <button type="button" onClick={() => setAvatarModalOpen(false)}>‹ {selectedAvatar.name}</button>
+                  <button type="button" onClick={() => setAvatarModalOpen(false)}>‹ {selectedAvatar.name} · 3 个场景位同一身份</button>
                   <div className="avatar-variant-grid">
                     {selectedAvatar.variants.map((variant, index) => (
                       <button
-                        key={variant}
+                        key={variant.id}
                         type="button"
-                        className={selectedAvatarVariant === variant && avatarSource === 'digital' ? 'active' : undefined}
+                        className={`${selectedAvatarVariant === variant.id && avatarSource === 'digital' ? 'active' : ''} avatar-look-card ${variant.className}`}
                         onClick={() => {
-                          setSelectedAvatarVariant(variant);
+                          setSelectedAvatarVariant(variant.id);
                           setAvatarSource('digital');
                           setAvatarMode('image');
                         }}
                       >
-                        <img src={variant} alt={`${selectedAvatar.name} ${index + 1}`} />
-                        <span>{selectedAvatar.role} {index + 1}</span>
+                        <img src={variant.image} alt={`${selectedAvatar.name} ${index + 1}`} />
+                        <span>{selectedAvatar.name} {index + 1} · {variant.label}</span>
+                        <small>{variant.scene}</small>
                       </button>
                     ))}
                   </div>

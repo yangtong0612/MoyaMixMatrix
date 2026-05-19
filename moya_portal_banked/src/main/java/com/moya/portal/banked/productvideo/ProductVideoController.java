@@ -1,6 +1,7 @@
 package com.moya.portal.banked.productvideo;
 
 import com.moya.portal.banked.common.response.ApiResponse;
+import com.moya.portal.banked.productvideo.dto.ProductVideoConfigStatusResponse;
 import com.moya.portal.banked.productvideo.dto.ProductVideoCreateRequest;
 import com.moya.portal.banked.productvideo.dto.ProductVideoCreateResponse;
 import com.moya.portal.banked.productvideo.dto.ProductVideoStatusResponse;
@@ -27,6 +28,11 @@ public class ProductVideoController {
 	@PostMapping("/generate")
 	public ApiResponse<ProductVideoCreateResponse> generate(@Valid @RequestBody ProductVideoCreateRequest request) {
 		return ApiResponse.ok(service.create(request));
+	}
+
+	@GetMapping("/config/status")
+	public ApiResponse<ProductVideoConfigStatusResponse> configStatus() {
+		return ApiResponse.ok(service.configStatus());
 	}
 
 	@GetMapping("/tasks/{taskId}")

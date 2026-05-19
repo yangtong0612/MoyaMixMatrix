@@ -47,7 +47,13 @@ export interface MediaDataUrlResult {
   contentType: string;
   name: string;
   size: number;
+  originalSize?: number;
   localPath: string;
+}
+
+export interface MediaDataUrlOptions {
+  maxDimension?: number;
+  quality?: number;
 }
 
 export interface MediaDownloadResult {
@@ -163,7 +169,7 @@ declare global {
       media: {
         uploadToOss(filePath: string, options?: { folder?: string; contentType?: string; taskId?: string }): Promise<OssUploadResult>;
         downloadToLocal(source: string, options?: { fileName?: string; viralOverlay?: unknown }): Promise<MediaDownloadResult>;
-        readAsDataUrl(filePath: string): Promise<MediaDataUrlResult>;
+        readAsDataUrl(filePath: string, options?: MediaDataUrlOptions): Promise<MediaDataUrlResult>;
         onUploadToOssProgress(callback: (progress: OssUploadProgress) => void): () => void;
       };
     };

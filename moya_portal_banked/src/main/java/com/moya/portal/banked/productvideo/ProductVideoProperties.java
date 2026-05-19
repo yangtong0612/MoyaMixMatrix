@@ -8,7 +8,7 @@ public class ProductVideoProperties {
 	private boolean enabled = false;
 	private String baseUrl = "https://ark.cn-beijing.volces.com";
 	private String apiKey = "";
-	private String model = "doubao-seedance-1-5-pro-251215";
+	private String model = "doubao-seedance-2-0-260128";
 
 	public boolean isEnabled() {
 		return enabled;

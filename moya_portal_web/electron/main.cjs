@@ -8,7 +8,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const { Readable } = require('node:stream');
 const { TextDecoder } = require('node:util');
-const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeImage, net, protocol, shell } = require('electron');
 const Store = require('electron-store');
 const bundledFfmpegPath = require('ffmpeg-static');
 const bundledFfprobePath = require('ffprobe-static').path;
@@ -396,12 +396,23 @@ function registerIpc() {
     };
   });
 
-  ipcMain.handle('media:read-as-data-url', async (_event, filePath) => {
+  ipcMain.handle('media:read-as-data-url', async (_event, filePath, options = {}) => {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) throw new Error('Only files can be read');
     const contentType = contentTypeForFile(filePath);
     if (!contentType.startsWith('image/')) {
       throw new Error('当前仅支持图片素材转为本地直传数据');
+    }
+    const optimized = readOptimizedImageData(filePath, options);
+    if (optimized) {
+      return {
+        dataUrl: `data:${optimized.contentType};base64,${optimized.data.toString('base64')}`,
+        contentType: optimized.contentType,
+        name: path.basename(filePath),
+        size: optimized.data.length,
+        originalSize: stat.size,
+        localPath: filePath
+      };
     }
     const data = await fs.readFile(filePath);
     return {
@@ -412,6 +423,26 @@ function registerIpc() {
       localPath: filePath
     };
   });
+}
+
+function readOptimizedImageData(filePath, options = {}) {
+  const image = nativeImage.createFromPath(filePath);
+  if (!image || image.isEmpty()) return null;
+  const size = image.getSize();
+  const maxDimension = Math.max(320, Number(options.maxDimension) || 960);
+  const quality = Math.max(45, Math.min(92, Number(options.quality) || 72));
+  const scale = Math.min(1, maxDimension / Math.max(size.width || 1, size.height || 1));
+  const resized = scale < 1
+    ? image.resize({
+        width: Math.max(1, Math.round(size.width * scale)),
+        height: Math.max(1, Math.round(size.height * scale)),
+        quality: 'good'
+      })
+    : image;
+  return {
+    data: resized.toJPEG(quality),
+    contentType: 'image/jpeg'
+  };
 }
 
 function downloadUrlToFile(sourceUrl, destinationPath, redirectCount = 0) {

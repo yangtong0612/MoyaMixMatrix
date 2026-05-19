@@ -1633,20 +1633,25 @@ progress::-webkit-progress-value {
 .avatar-picker-overlay {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 1400;
   display: grid;
   place-items: center;
-  background: rgb(0 0 0 / 64%);
+  padding: 24px;
+  background: rgb(0 0 0 / 68%);
+  backdrop-filter: blur(8px);
 }
 
 .avatar-picker-modal {
-  width: min(604px, calc(100vw - 48px));
+  width: min(720px, calc(100vw - 48px));
   max-height: min(760px, calc(100vh - 80px));
   overflow: hidden;
-  border: 1px solid #2a2d34;
+  border: 1px solid #303744;
   border-radius: 14px;
-  background: #17191d;
-  box-shadow: 0 28px 90px rgb(0 0 0 / 46%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 5%), transparent 34%),
+    #171a20;
+  color: #f8fbff;
+  box-shadow: 0 28px 90px rgb(0 0 0 / 52%);
 }
 
 .avatar-picker-modal header {
@@ -1654,15 +1659,17 @@ progress::-webkit-progress-value {
   display: grid;
   grid-template-columns: 1fr 1fr;
   height: 58px;
-  border-bottom: 1px solid #292c32;
+  border-bottom: 1px solid #303744;
+  background: rgb(12 15 20 / 38%);
 }
 
 .avatar-picker-modal header > button:not(.avatar-picker-close) {
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: #aeb7c8;
+  color: #aebbd0;
   font-size: 15px;
+  font-weight: 800;
 }
 
 .avatar-picker-modal header > button.active {
@@ -1680,6 +1687,7 @@ progress::-webkit-progress-value {
   background: transparent;
   color: #b6bfcc;
   font-size: 24px;
+  line-height: 1;
 }
 
 .avatar-picker-body {
@@ -1689,11 +1697,26 @@ progress::-webkit-progress-value {
   max-height: calc(100vh - 158px);
   overflow: auto;
   padding: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: #46546a transparent;
+}
+
+.avatar-picker-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.avatar-picker-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.avatar-picker-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #46546a;
 }
 
 .avatar-card-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
   gap: 12px;
 }
 
@@ -1702,34 +1725,59 @@ progress::-webkit-progress-value {
 .custom-avatar-card {
   display: grid;
   gap: 6px;
-  border: 1px solid transparent;
-  background: transparent;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #2f3744;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 4%), transparent),
+    #1d222b;
   color: #ffffff;
   text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.avatar-card-grid button:hover,
+.avatar-variant-grid button:hover {
+  border-color: rgb(142 162 255 / 48%);
+  background: #222937;
+  transform: translateY(-1px);
 }
 
 .avatar-card-grid button.active,
 .avatar-variant-grid button.active {
-  border-color: #4a6dff;
-  background: rgb(74 109 255 / 10%);
+  border-color: #7890ff;
+  background:
+    linear-gradient(180deg, rgb(120 144 255 / 18%), transparent),
+    #222a3d;
+  box-shadow: 0 0 0 1px rgb(120 144 255 / 28%), 0 12px 26px rgb(0 0 0 / 20%);
 }
 
 .avatar-card-grid img,
 .avatar-variant-grid img {
   width: 100%;
   aspect-ratio: 3 / 4;
-  border-radius: 8px;
+  min-height: 0;
+  border-radius: 9px;
+  background: #0d1016;
   object-fit: cover;
 }
 
 .avatar-card-grid strong,
 .avatar-variant-grid span {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fbff;
   font-size: 14px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .avatar-card-grid span {
   color: #dfe8ff;
   font-size: 12px;
+  line-height: 1.3;
 }
 
 .avatar-card-grid small {
@@ -1744,29 +1792,95 @@ progress::-webkit-progress-value {
 
 .avatar-variant-panel > button {
   justify-self: start;
+  padding: 0;
   border: 0;
   background: transparent;
   color: #dfe8ff;
   font-size: 15px;
+  font-weight: 800;
 }
 
 .avatar-variant-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.avatar-variant-grid .avatar-look-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.avatar-variant-grid .avatar-look-card::before {
+  content: "";
+  position: absolute;
+  inset: 10px 10px auto 10px;
+  z-index: 1;
+  height: calc(100% - 58px);
+  border-radius: 9px;
+  pointer-events: none;
+  opacity: 0.42;
+}
+
+.avatar-variant-grid .avatar-look-card.scene-identity::before {
+  background: linear-gradient(135deg, rgb(96 165 250 / 0%), rgb(96 165 250 / 42%));
+}
+
+.avatar-variant-grid .avatar-look-card.scene-product::before {
+  background:
+    linear-gradient(180deg, rgb(250 204 21 / 0%), rgb(250 204 21 / 38%)),
+    radial-gradient(circle at 82% 20%, rgb(255 255 255 / 58%), transparent 18%);
+}
+
+.avatar-variant-grid .avatar-look-card.scene-store::before {
+  background:
+    linear-gradient(135deg, rgb(20 184 166 / 0%), rgb(20 184 166 / 38%)),
+    linear-gradient(90deg, transparent 0 62%, rgb(255 255 255 / 34%) 62% 64%, transparent 64% 100%);
+}
+
+.avatar-variant-grid .avatar-look-card img {
+  position: relative;
+  z-index: 0;
+}
+
+.avatar-variant-grid .avatar-look-card.scene-product img {
+  object-position: 54% 48%;
+  filter: saturate(1.04) contrast(1.03);
+}
+
+.avatar-variant-grid .avatar-look-card.scene-store img {
+  object-position: 44% 50%;
+  filter: saturate(0.98) brightness(1.03);
+}
+
+.avatar-variant-grid .avatar-look-card span,
+.avatar-variant-grid .avatar-look-card small {
+  position: relative;
+  z-index: 2;
+}
+
+.avatar-variant-grid .avatar-look-card small {
+  overflow: hidden;
+  color: #9fb0c9;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .avatar-upload-body {
   display: grid;
   gap: 18px;
   padding: 20px;
+  color: #f8fbff;
 }
 
 .avatar-upload-drop {
   min-height: 64px;
-  border: 1px dashed #3c414b;
-  background: #202329;
+  border: 1px dashed #46546a;
+  border-radius: 12px;
+  background: #202631;
   color: #dbe6ff;
+  font-weight: 800;
 }
 
 .avatar-upload-drop small {
@@ -1778,6 +1892,7 @@ progress::-webkit-progress-value {
 .custom-avatar-card {
   position: relative;
   width: 128px;
+  color: #f8fbff;
 }
 
 .custom-avatar-card img {
@@ -3116,6 +3231,109 @@ progress::-webkit-progress-value {
 
 .theme-light .product-avatar-actions button.active svg {
   color: #3153d9;
+}
+
+.theme-light .avatar-picker-overlay {
+  background: rgb(15 23 42 / 34%);
+  backdrop-filter: blur(10px);
+}
+
+.theme-light .avatar-picker-modal {
+  border-color: #d7e0ec;
+  background:
+    linear-gradient(180deg, rgb(91 126 255 / 7%), transparent 34%),
+    #ffffff;
+  color: #17202e;
+  box-shadow: 0 28px 80px rgb(15 23 42 / 22%);
+}
+
+.theme-light .avatar-picker-modal header {
+  border-bottom-color: #d7e0ec;
+  background: #f8fafc;
+}
+
+.theme-light .avatar-picker-modal header > button:not(.avatar-picker-close) {
+  color: #64748b;
+}
+
+.theme-light .avatar-picker-modal header > button:not(.avatar-picker-close):hover,
+.theme-light .avatar-picker-modal header > button.active {
+  color: #17202e;
+}
+
+.theme-light .avatar-picker-close {
+  color: #64748b;
+}
+
+.theme-light .avatar-picker-close:hover {
+  background: #eef3ff;
+  color: #17202e;
+}
+
+.theme-light .avatar-picker-body {
+  scrollbar-color: #c4cfdd transparent;
+}
+
+.theme-light .avatar-picker-body::-webkit-scrollbar-thumb {
+  background: #c4cfdd;
+}
+
+.theme-light .avatar-card-grid button,
+.theme-light .avatar-variant-grid button,
+.theme-light .custom-avatar-card {
+  border-color: #dbe4ef;
+  background:
+    linear-gradient(180deg, rgb(91 126 255 / 4%), transparent),
+    #ffffff;
+  color: #17202e;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 5%);
+}
+
+.theme-light .avatar-card-grid button:hover,
+.theme-light .avatar-variant-grid button:hover {
+  border-color: #b9c7da;
+  background: #f8fafc;
+}
+
+.theme-light .avatar-card-grid button.active,
+.theme-light .avatar-variant-grid button.active {
+  border-color: rgb(91 126 255 / 54%);
+  background:
+    linear-gradient(180deg, rgb(91 126 255 / 12%), transparent),
+    #ffffff;
+  box-shadow: 0 0 0 1px rgb(91 126 255 / 14%), 0 12px 26px rgb(15 23 42 / 9%);
+}
+
+.theme-light .avatar-card-grid img,
+.theme-light .avatar-variant-grid img {
+  background: #edf2f7;
+}
+
+.theme-light .avatar-card-grid strong,
+.theme-light .avatar-variant-grid span,
+.theme-light .avatar-upload-body,
+.theme-light .custom-avatar-card {
+  color: #17202e;
+}
+
+.theme-light .avatar-card-grid span,
+.theme-light .avatar-variant-panel > button {
+  color: #475569;
+}
+
+.theme-light .avatar-card-grid small,
+.theme-light .avatar-upload-drop small {
+  color: #64748b;
+}
+
+.theme-light .avatar-variant-grid .avatar-look-card small {
+  color: #64748b;
+}
+
+.theme-light .avatar-upload-drop {
+  border-color: #cbd7e6;
+  background: #f8fafc;
+  color: #17202e;
 }
 
 .theme-light .product-create-field > label,

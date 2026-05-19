@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +17,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.moya.portal.banked.productvideo.dto.ProductVideoCreateRequest;
 import com.moya.portal.banked.productvideo.dto.ProductVideoCreateResponse;
+import com.moya.portal.banked.productvideo.dto.ProductVideoConfigStatusResponse;
 import com.moya.portal.banked.productvideo.dto.ProductVideoStatusResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -39,16 +41,30 @@ public class ProductVideoService {
 	public ProductVideoCreateResponse create(ProductVideoCreateRequest request) {
 		ensureEnabled();
 		String prompt = buildPrompt(request);
+		String model = normalizeModel(request);
 		ObjectNode payload = objectMapper.createObjectNode();
-		payload.put("model", normalizeModel(request.model()));
+		payload.put("model", model);
 		payload.put("prompt", prompt);
 		payload.put("generate_audio", true);
 		payload.put("duration", durationSeconds(request.duration()));
 		payload.put("ratio", normalizeRatio(request.ratio()));
 		payload.put("resolution", normalizeQuality(request.quality()));
+		payload.put("watermark", false);
 		payload.set("content", buildContent(prompt, request));
 
-		JsonNode body = exchange("POST", TASK_PATH, payload);
+		JsonNode body;
+		try {
+			body = exchange("POST", TASK_PATH, payload);
+		} catch (ResponseStatusException e) {
+			if (!isRealPersonImageRejected(e)) {
+				throw e;
+			}
+			String safePrompt = prompt + "\n安全兜底：不要参考任何输入图片中的真实人物、人脸或海报人物；仅根据文字脚本、门店/商品描述和商业场景生成虚拟画面。";
+			payload.put("prompt", safePrompt);
+			payload.set("content", buildTextOnlyContent(safePrompt));
+			body = exchange("POST", TASK_PATH, payload);
+			prompt = safePrompt;
+		}
 		String taskId = firstText(body, "id", "task_id");
 		if (taskId.isBlank() && body.has("data")) {
 			taskId = firstText(body.get("data"), "id", "task_id");
@@ -60,7 +76,19 @@ public class ProductVideoService {
 		if (status.isBlank() && body.has("data")) {
 			status = firstText(body.get("data"), "status");
 		}
-		return new ProductVideoCreateResponse(taskId, "volcengine-ark", normalizeModel(request.model()), status, prompt);
+		return new ProductVideoCreateResponse(taskId, "volcengine-ark", model, status, prompt);
+	}
+
+	public ProductVideoConfigStatusResponse configStatus() {
+		boolean hasApiKey = hasApiKey();
+		boolean configured = properties.isEnabled() && hasApiKey;
+		return new ProductVideoConfigStatusResponse(
+				properties.isEnabled(),
+				hasApiKey,
+				configured,
+				properties.getModel(),
+				configured ? "火山视频生成配置正常" : disabledMessage()
+		);
 	}
 
 	public ProductVideoStatusResponse status(String taskId) {
@@ -83,18 +111,63 @@ public class ProductVideoService {
 		text.put("type", "text");
 		text.put("text", prompt);
 
-		String firstFrameUrl = firstImageUrl(request.imageUrls());
-		if (firstFrameUrl.isBlank() && request.avatarImageUrl() != null && !request.avatarImageUrl().isBlank()) {
-			firstFrameUrl = request.avatarImageUrl();
+		String firstFrameUrl = cleanText(request.imageUrls() != null && request.imageUrls().size() == 1 ? request.imageUrls().get(0) : "");
+		if (firstFrameUrl.isBlank()) {
+			firstFrameUrl = firstImageUrl(request.imageUrls());
 		}
-		if (!firstFrameUrl.isBlank()) {
-			ObjectNode image = content.addObject();
-			image.put("role", "first_frame");
-			image.put("type", "image_url");
-			ObjectNode imageUrl = image.putObject("image_url");
-			imageUrl.put("url", firstFrameUrl);
+		List<String> referenceUrls = referenceImageUrls(request);
+		boolean hasReferenceMedia = !cleanText(request.referenceVideoUrl()).isBlank();
+		for (String referenceUrl : referenceUrls) {
+			if (!referenceUrl.equals(firstFrameUrl)) {
+				hasReferenceMedia = true;
+				break;
+			}
+		}
+		if (!firstFrameUrl.isBlank() && !hasReferenceMedia) {
+			addImageContent(content, "first_frame", firstFrameUrl);
+			return content;
+		}
+		for (String imageUrl : referenceUrls) {
+			addImageContent(content, "reference_image", imageUrl);
+		}
+		String referenceVideoUrl = cleanText(request.referenceVideoUrl());
+		if (!referenceVideoUrl.isBlank()) {
+			addVideoContent(content, "reference_video", referenceVideoUrl);
 		}
 		return content;
+	}
+
+	private ArrayNode buildTextOnlyContent(String prompt) {
+		ArrayNode content = objectMapper.createArrayNode();
+		ObjectNode text = content.addObject();
+		text.put("type", "text");
+		text.put("text", prompt);
+		return content;
+	}
+
+	private void addImageContent(ArrayNode content, String role, String url) {
+		ObjectNode image = content.addObject();
+		image.put("role", role);
+		image.put("type", "image_url");
+		ObjectNode imageUrl = image.putObject("image_url");
+		imageUrl.put("url", url);
+	}
+
+	private void addVideoContent(ArrayNode content, String role, String url) {
+		ObjectNode video = content.addObject();
+		video.put("role", role);
+		video.put("type", "video_url");
+		ObjectNode videoUrl = video.putObject("video_url");
+		videoUrl.put("url", url);
+	}
+
+	private List<String> referenceImageUrls(ProductVideoCreateRequest request) {
+		List<String> urls = new ArrayList<>();
+		for (String imageUrl : request.imageUrls() == null ? List.<String>of() : request.imageUrls()) {
+			String value = cleanText(imageUrl);
+			if (!value.isBlank() && !urls.contains(value)) urls.add(value);
+		}
+		return urls.stream().limit(4).toList();
 	}
 
 	private String firstImageUrl(List<String> imageUrls) {
@@ -107,20 +180,26 @@ public class ProductVideoService {
 	private String buildPrompt(ProductVideoCreateRequest request) {
 		String scenario = scenarioName(request.scenario());
 		String script = normalizeScript(request.description(), request.scenario());
+		boolean hasAvatarName = request.avatarName() != null && !request.avatarName().isBlank();
 		List<String> parts = new ArrayList<>();
 		parts.add("请生成一条适合中文短视频平台的" + scenario + "视频。");
 		parts.add("画面要求：竖屏优先、节奏紧凑、主体清晰、真实商业摄影质感、可直接用于电商和本地生活投放。");
 		parts.add("音频要求：必须生成可播放的人声口播音轨，旁白声音清晰自然，不能静音。");
 		parts.add("字幕要求：必须把下面【口播脚本】按语义分句烧录为中文字幕，字幕要与人声口播同步，不遮挡主体。");
-		if (request.avatarName() != null && !request.avatarName().isBlank()) {
-			parts.add("数字人形象：" + request.avatarName().trim() + "，请让该数字人作为主要出镜口播人物，口型跟随旁白同步。");
+		if (hasAvatarName || Boolean.TRUE.equals(request.identityLock())) {
+			parts.add("人物一致性硬约束：按下面的数字人文字设定生成虚拟口播人物，必须保持同一张脸、同一性别、同一年龄感、同一发型、同一肤色和服装主特征。");
+			parts.add("禁止事项：不要生成新的演员，不要换脸，不要改变人物性别/年龄/发型，不要把商品图或门店图里的人当作主角。若人物与场景冲突，优先保持数字人身份一致。");
+			parts.add("商品图、门店图、参考视频只用于理解道具、环境、镜头节奏和商业场景，不能覆盖数字人身份。不要把参考素材中的真实人物作为主角。");
 		}
-		if (request.avatarImageUrl() != null && !request.avatarImageUrl().isBlank()) {
-			parts.add("数字人参考图仅用于人物设定理解；当前模型按首帧图生成，请优先保持上传素材的主体与场景。");
+		if (request.avatarName() != null && !request.avatarName().isBlank()) {
+			parts.add("数字人形象：" + request.avatarName().trim() + "，该数字人作为主要出镜口播人物，口型跟随旁白同步。");
+		}
+		if (request.avatarPrompt() != null && !request.avatarPrompt().isBlank()) {
+			parts.add("人物设定补充：" + request.avatarPrompt().trim());
 		}
 		int imageCount = request.imageUrls() == null ? 0 : (int) request.imageUrls().stream().filter((url) -> url != null && !url.isBlank()).count();
 		if (imageCount > 1) {
-			parts.add("用户上传了多张素材图；当前模型使用第一张作为首帧，请在镜头语言中自然延展同类门店/商品场景。");
+			parts.add("用户上传了多张素材图；请把这些素材作为商品/门店/环境参考，在镜头语言中自然延展，不要替换数字人。");
 		}
 		parts.add("口播脚本：" + script);
 		if (Boolean.TRUE.equals(request.scriptEnabled())) {
@@ -129,7 +208,7 @@ public class ProductVideoService {
 		if (request.referenceVideoUrl() != null && !request.referenceVideoUrl().isBlank()) {
 			parts.add("参考视频地址仅用于理解节奏和结构：" + request.referenceVideoUrl());
 		}
-		parts.add(scenarioInstruction(request.scenario()));
+		parts.add(scenarioInstruction(request.scenario(), hasAvatarName));
 		return String.join("\n", parts);
 	}
 
@@ -154,20 +233,26 @@ public class ProductVideoService {
 		};
 	}
 
-	private String scenarioInstruction(String scenario) {
+	private String scenarioInstruction(String scenario, boolean hasAvatar) {
 		return switch (scenario) {
-			case "product-showcase" -> "镜头围绕商品外观、细节、质感和使用场景展开，避免数字人口播，突出高级展示大片感。";
-			case "store-traffic" -> "镜头突出门头、环境、服务、优惠和到店理由，结尾给出同城到店行动引导。";
-			case "hot-replica" -> "复刻爆款短视频的三段式结构：强钩子、密集卖点、转化 CTA，但画面主体使用用户上传商品。";
+			case "product-showcase" -> hasAvatar
+					? "镜头围绕数字人展示商品外观、细节、质感和使用场景展开，人物可手持、指向或站在商品旁讲解，商品是道具和卖点主体。"
+					: "镜头围绕商品外观、细节、质感和使用场景展开，突出高级展示大片感。";
+			case "store-traffic" -> "镜头突出门头、环境、服务、优惠和到店理由，由同一数字人完成口播引导，结尾给出同城到店行动引导。";
+			case "hot-replica" -> "复刻爆款短视频的三段式结构：强钩子、密集卖点、转化 CTA；画面主体保持同一数字人，商品或门店素材作为道具/背景/转场参考。";
 			default -> "生成数字人口播风格的带货视频，人物自然讲解商品卖点，字幕与口播同步。";
 		};
+	}
+
+	private String cleanText(String value) {
+		return value == null ? "" : value.trim();
 	}
 
 	private JsonNode exchange(String method, String path, JsonNode payload) {
 		try {
 			HttpRequest.Builder builder = HttpRequest.newBuilder()
 					.uri(URI.create(trimTrailingSlash(properties.getBaseUrl()) + path))
-					.timeout(Duration.ofMinutes(3))
+					.timeout(Duration.ofMinutes(5))
 					.header("Authorization", "Bearer " + properties.getApiKey())
 					.header("Content-Type", "application/json");
 			if ("POST".equals(method)) {
@@ -184,6 +269,8 @@ public class ProductVideoService {
 				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, message.isBlank() ? "火山视频生成接口调用失败" : message);
 			}
 			return body;
+		} catch (HttpTimeoutException e) {
+			throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "火山视频生成任务创建超时，请减少图片数量或稍后重试", e);
 		} catch (IOException e) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "火山视频生成接口响应解析失败", e);
 		} catch (InterruptedException e) {
@@ -193,12 +280,36 @@ public class ProductVideoService {
 	}
 
 	private void ensureEnabled() {
-		if (!properties.isEnabled() || properties.getApiKey() == null || properties.getApiKey().isBlank()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "火山视频生成未启用，请配置 MOYA_VOLCENGINE_VIDEO_ENABLED=true 和 MOYA_VOLCENGINE_ARK_API_KEY");
+		if (!properties.isEnabled() || !hasApiKey()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, disabledMessage());
 		}
 	}
 
+	private boolean hasApiKey() {
+		return properties.getApiKey() != null && !properties.getApiKey().isBlank();
+	}
+
+	private String disabledMessage() {
+		if (!properties.isEnabled() && !hasApiKey()) {
+			return "火山视频生成未启用，且未检测到 Ark API Key。当前 OSS/ICE 密钥不能替代火山 Ark Key，请在后台 .env 配置 MOYA_VOLCENGINE_VIDEO_ENABLED=true 和 MOYA_VOLCENGINE_ARK_API_KEY。";
+		}
+		if (!properties.isEnabled()) {
+			return "火山视频生成开关未启用，请在后台 .env 配置 MOYA_VOLCENGINE_VIDEO_ENABLED=true。";
+		}
+		return "未检测到火山 Ark API Key，请在后台 .env 配置 MOYA_VOLCENGINE_ARK_API_KEY。";
+	}
+
+	private String normalizeModel(ProductVideoCreateRequest request) {
+		if (usesReferenceContent(request)) {
+			return "doubao-seedance-2-0-260128";
+		}
+		return normalizeModel(request.model());
+	}
+
 	private String normalizeModel(String requestedModel) {
+		if (requestedModel != null && requestedModel.contains("2.0")) {
+			return "doubao-seedance-2-0-260128";
+		}
 		if (requestedModel != null && requestedModel.contains("1.0")) {
 			return "doubao-seedance-1-0-pro-250528";
 		}
@@ -206,6 +317,22 @@ public class ProductVideoService {
 			return "doubao-seedance-1-5-pro-251215";
 		}
 		return properties.getModel();
+	}
+
+	private boolean usesReferenceContent(ProductVideoCreateRequest request) {
+		if (!cleanText(request.referenceVideoUrl()).isBlank()) {
+			return true;
+		}
+		String firstFrameUrl = firstImageUrl(request.imageUrls());
+		if (firstFrameUrl.isBlank()) {
+			firstFrameUrl = firstImageUrl(request.imageUrls());
+		}
+		for (String referenceUrl : referenceImageUrls(request)) {
+			if (!referenceUrl.equals(firstFrameUrl)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private String normalizeQuality(String quality) {
@@ -264,6 +391,11 @@ public class ProductVideoService {
 			if (child.isTextual() && !child.asText().isBlank()) return child.asText();
 		}
 		return "";
+	}
+
+	private boolean isRealPersonImageRejected(ResponseStatusException e) {
+		String reason = e.getReason() == null ? "" : e.getReason().toLowerCase(Locale.ROOT);
+		return reason.contains("input image may contain real person") || reason.contains("real person");
 	}
 
 	private String trimTrailingSlash(String value) {

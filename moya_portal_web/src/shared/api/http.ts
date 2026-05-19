@@ -50,6 +50,7 @@ function isPublicApi(url = '') {
     '/storage/',
     '/fission/',
     '/viral/',
+    '/product-video/',
     '/verification/',
     '/auth/login',
     '/auth/register',
