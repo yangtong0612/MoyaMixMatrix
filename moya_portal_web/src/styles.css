@@ -15458,3 +15458,553 @@ progress::-webkit-progress-value {
   border-color: #d7e0ec;
   color: #94a3b8;
 }
+
+/* Polished light mode for fission workspace */
+.theme-light.editor-workbench .fission-board {
+  gap: 14px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at 64% 2%, rgb(91 126 255 / 9%), transparent 28%),
+    radial-gradient(circle at 18% 96%, rgb(20 184 166 / 5%), transparent 32%),
+    linear-gradient(180deg, #f4f7fb 0%, #ecf2f8 100%);
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-column {
+  overflow: hidden;
+  border: 1px solid #d6e0ec;
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 96%), rgb(248 251 255 / 94%));
+  box-shadow: 0 18px 42px rgb(15 23 42 / 7%), inset 0 1px 0 #ffffff;
+}
+
+.theme-light.editor-workbench .fission-section-title,
+.theme-light.editor-workbench .fission-setting-tabs,
+.theme-light.editor-workbench .fission-generate-bar,
+.theme-light.editor-workbench .fission-pagination {
+  border-color: #dbe4ef;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8fb 100%);
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-section-title strong,
+.theme-light.editor-workbench .fission-result-group-header strong,
+.theme-light.editor-workbench .fission-preview-grid strong,
+.theme-light.editor-workbench .shot-group-list span,
+.theme-light.editor-workbench .audio-item-list strong,
+.theme-light.editor-workbench .group-audio-list strong,
+.theme-light.editor-workbench .shot-av-brief strong,
+.theme-light.editor-workbench .storyboard-script-card strong {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .shot-group-list small,
+.theme-light.editor-workbench .fission-board .audio-drop-panel header,
+.theme-light.editor-workbench .fission-board .strategy-summary,
+.theme-light.editor-workbench .fission-result-group-header span,
+.theme-light.editor-workbench .fission-preview-meta,
+.theme-light.editor-workbench .fission-result-empty span,
+.theme-light.editor-workbench .audio-item-list span,
+.theme-light.editor-workbench .group-audio-list span,
+.theme-light.editor-workbench .shot-av-brief span,
+.theme-light.editor-workbench .storyboard-script-card span {
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .fission-left .shot-group-list,
+.theme-light.editor-workbench .fission-left .audio-drop-panel,
+.theme-light.editor-workbench .fission-settings-stack,
+.theme-light.editor-workbench .strategy-card-shell,
+.theme-light.editor-workbench .fission-preview-grid {
+  border-color: #dbe4ef;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 78%), rgb(247 250 253 / 92%));
+}
+
+.theme-light.editor-workbench .fission-setting-card,
+.theme-light.editor-workbench .fission-result-group,
+.theme-light.editor-workbench .shot-group-list article,
+.theme-light.editor-workbench .audio-item-list article,
+.theme-light.editor-workbench .group-audio-list article,
+.theme-light.editor-workbench .shot-av-brief section,
+.theme-light.editor-workbench .storyboard-script-card,
+.theme-light.editor-workbench .strategy-card-row article,
+.theme-light.editor-workbench .fission-preview-grid article {
+  border-color: #dce5f1;
+  background: #ffffff;
+  color: #17202e;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 5%);
+}
+
+.theme-light.editor-workbench .shot-group-list article:hover,
+.theme-light.editor-workbench .strategy-card-row article:hover,
+.theme-light.editor-workbench .fission-preview-grid article:hover {
+  border-color: #b8c7dc;
+  box-shadow: 0 12px 26px rgb(15 23 42 / 8%);
+}
+
+.theme-light.editor-workbench .shot-group-list article.active,
+.theme-light.editor-workbench .strategy-card-row article.active,
+.theme-light.editor-workbench .fission-preview-grid article.selected,
+.theme-light.editor-workbench .fission-preview-grid article.batch-selected {
+  border-color: rgb(91 126 255 / 56%);
+  background:
+    linear-gradient(90deg, rgb(91 126 255 / 12%), transparent 54%),
+    #ffffff;
+  box-shadow: inset 3px 0 0 #5f6fe8, 0 12px 28px rgb(91 126 255 / 10%);
+}
+
+.theme-light.editor-workbench .fission-setting-card select,
+.theme-light.editor-workbench .fission-setting-card input[type="number"],
+.theme-light.editor-workbench .fission-generate-bar select {
+  min-height: 34px;
+  border-color: #cbd7e6;
+  background: #ffffff;
+  color: #17202e;
+  box-shadow: inset 0 1px 2px rgb(15 23 42 / 4%);
+}
+
+.theme-light.editor-workbench .fission-section-title button,
+.theme-light.editor-workbench .fission-mode-row button,
+.theme-light.editor-workbench .fission-setting-tabs button,
+.theme-light.editor-workbench .combo-mode button,
+.theme-light.editor-workbench .fission-setting-card button,
+.theme-light.editor-workbench .fission-result-actions button:not(.danger-action),
+.theme-light.editor-workbench .fission-pagination button {
+  border-color: #d2dce8;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f7fb 100%);
+  color: #334155;
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+
+.theme-light.editor-workbench .fission-section-title button:hover,
+.theme-light.editor-workbench .fission-mode-row button:hover,
+.theme-light.editor-workbench .fission-setting-tabs button:hover,
+.theme-light.editor-workbench .combo-mode button:hover,
+.theme-light.editor-workbench .fission-setting-card button:hover,
+.theme-light.editor-workbench .fission-result-actions button:not(.danger-action):hover,
+.theme-light.editor-workbench .fission-pagination button:hover {
+  border-color: #b8c7dc;
+  background: #ffffff;
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-mode-row button.active,
+.theme-light.editor-workbench .fission-setting-tabs button.active,
+.theme-light.editor-workbench .combo-mode button.active,
+.theme-light.editor-workbench .fission-pagination button.active {
+  border-color: rgb(91 126 255 / 38%);
+  background: #eef3ff;
+  color: #4f63d8;
+  box-shadow: inset 0 -2px 0 #5f6fe8;
+}
+
+.theme-light.editor-workbench .fission-generate-button {
+  height: 38px;
+  min-height: 38px;
+  border: 1px solid rgb(91 126 255 / 44%);
+  border-radius: 7px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 18%), rgb(255 255 255 / 4%) 42%, rgb(0 0 0 / 14%)),
+    linear-gradient(135deg, #2563eb 0%, #5b21b6 100%);
+  color: #ffffff;
+  box-shadow: 0 12px 26px rgb(91 126 255 / 18%), inset 0 1px 0 rgb(255 255 255 / 22%);
+}
+
+.theme-light.editor-workbench .fission-generate-button:hover {
+  border-color: rgb(91 126 255 / 58%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 22%), rgb(255 255 255 / 6%) 42%, rgb(0 0 0 / 12%)),
+    linear-gradient(135deg, #3158f6 0%, #6630c7 100%);
+  box-shadow: 0 14px 30px rgb(91 126 255 / 22%), inset 0 1px 0 rgb(255 255 255 / 26%);
+}
+
+.theme-light.editor-workbench .fission-result-actions .danger-action {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #dc2626;
+}
+
+.theme-light.editor-workbench .fission-result-empty {
+  border-color: #dbe4ef;
+  background:
+    radial-gradient(circle at 50% 0%, rgb(91 126 255 / 8%), transparent 34%),
+    #ffffff;
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .fission-result-message {
+  border-color: rgb(91 126 255 / 18%);
+  background: #f5f7ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-preview-grid::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-settings-stack::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-left .shot-group-list::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-left .audio-drop-panel::-webkit-scrollbar-thumb {
+  background: #c5d1e0;
+  background-clip: padding-box;
+}
+
+/* Remove remaining dark-mode blocks from fission light mode */
+.theme-light.editor-workbench .fission-board .fission-right .fission-section-title strong {
+  height: 28px;
+  border-color: #dbe4ef;
+  background: #ffffff;
+  color: #17202e;
+  box-shadow: inset 0 1px 0 #ffffff, 0 6px 14px rgb(15 23 42 / 5%);
+}
+
+.theme-light.editor-workbench .fission-board .fission-right .fission-section-title button {
+  border-color: #cbd7e6;
+  background: linear-gradient(180deg, #ffffff, #f4f7fb);
+  color: #334155;
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .shot-group-actions button,
+.theme-light.editor-workbench .fission-board .audio-header-actions button,
+.theme-light.editor-workbench .fission-board .audio-row-actions button,
+.theme-light.editor-workbench .fission-board .group-audio-list article > button:last-child {
+  border-color: #d2dce8;
+  background: linear-gradient(180deg, #ffffff, #f3f6fa);
+  color: #475569;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
+}
+
+.theme-light.editor-workbench .fission-board .shot-group-actions button:hover,
+.theme-light.editor-workbench .fission-board .audio-header-actions button:hover,
+.theme-light.editor-workbench .fission-board .audio-row-actions button:hover {
+  border-color: rgb(91 126 255 / 34%);
+  background: #eef3ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .audio-row-actions button:last-child:hover,
+.theme-light.editor-workbench .fission-board .audio-header-actions button:last-child:hover {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #dc2626;
+}
+
+.theme-light.editor-workbench .fission-left .audio-drop-panel > button,
+.theme-light.editor-workbench .fission-board .shot-clip-add {
+  border-color: #cbd7e6;
+  background:
+    radial-gradient(circle at 50% 0%, rgb(91 126 255 / 7%), transparent 34%),
+    #f8fafc;
+  color: #526173;
+}
+
+.theme-light.editor-workbench .fission-left .audio-drop-panel > button:hover,
+.theme-light.editor-workbench .fission-board .shot-clip-add:hover {
+  border-color: rgb(91 126 255 / 36%);
+  background: #eef3ff;
+  color: #3153d9;
+}
+
+.theme-light.editor-workbench .fission-board .storyboard-script-card header {
+  border-color: #dbe4ef;
+  background: #f8fafc;
+}
+
+.theme-light.editor-workbench .fission-board .storyboard-script-card header span,
+.theme-light.editor-workbench .fission-board .shot-script-line span,
+.theme-light.editor-workbench .fission-board .shot-clip-card > span,
+.theme-light.editor-workbench .fission-board .fission-preview-grid article > span {
+  background: #17202e;
+  color: #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .storyboard-script-card dt,
+.theme-light.editor-workbench .fission-board .storyboard-script-card header strong,
+.theme-light.editor-workbench .fission-board .shot-script-line p {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .storyboard-script-card dd {
+  color: #526173;
+}
+
+.theme-light.editor-workbench .fission-board .storyboard-script-card dl div {
+  border-bottom-color: #edf2f7;
+}
+
+.theme-light.editor-workbench .fission-board .shot-clip-card,
+.theme-light.editor-workbench .fission-board .fission-preview-grid article {
+  border-color: #d8e2ee;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgb(15 23 42 / 5%);
+}
+
+.theme-light.editor-workbench .fission-board .shot-clip-card strong,
+.theme-light.editor-workbench .fission-board .fission-preview-grid strong {
+  color: #17202e;
+  background: #f7f9fc;
+}
+
+.theme-light.editor-workbench .fission-board .shot-clip-card small,
+.theme-light.editor-workbench .fission-board .fission-preview-meta {
+  color: #526173;
+  background: #ffffff;
+  border-top: 1px solid #eef2f7;
+}
+
+.theme-light.editor-workbench .fission-board .fission-result-message {
+  background: #fff7ed;
+  color: #9a3412;
+  border-top: 1px solid #fed7aa;
+}
+
+.theme-light.editor-workbench .fission-board .shot-clip-card div,
+.theme-light.editor-workbench .fission-board .fission-card-cover {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 22%), transparent 34%),
+    linear-gradient(180deg, #d7c2b3 0%, #a6806d 48%, #5c4036 100%);
+}
+
+.theme-light.editor-workbench .fission-board .shot-clip-card.tone-cool div {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 22%), transparent 34%),
+    linear-gradient(180deg, #d7e0e8 0%, #8d9ca8 48%, #43505b 100%);
+}
+
+.theme-light.editor-workbench .fission-board .shot-clip-card.tone-dark div {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 18%), transparent 34%),
+    linear-gradient(180deg, #b8c0cb 0%, #6b7280 52%, #343a46 100%);
+}
+
+.theme-light.editor-workbench .fission-board .preview-card-select,
+.theme-light.editor-workbench .fission-board .preview-card-play {
+  border-color: rgb(15 23 42 / 10%);
+  background: rgb(255 255 255 / 92%);
+  color: #17202e;
+  box-shadow: 0 4px 10px rgb(15 23 42 / 12%);
+}
+
+.theme-light.editor-workbench .fission-board .preview-card-select:hover,
+.theme-light.editor-workbench .fission-board .preview-card-play:hover {
+  border-color: rgb(91 126 255 / 36%);
+  background: #eef3ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-summary span {
+  background: #eef3ff;
+  color: #526173;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-card-shell {
+  border-top: 1px solid #dbe4ef;
+  border-bottom: 1px solid #dbe4ef;
+  padding-top: 8px;
+  background: #f8fafc;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-card-shell > button {
+  border-color: #d2dce8;
+  background: linear-gradient(180deg, #ffffff, #f3f6fa);
+  color: #526173;
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-card-shell > button:hover {
+  border-color: rgb(91 126 255 / 36%);
+  background: #eef3ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-card-row {
+  scrollbar-color: #c5d1e0 #eef2f7;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-card-row::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .fission-settings-stack::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .fission-preview-grid::-webkit-scrollbar-track {
+  background: #eef2f7;
+  border-color: #dbe4ef;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-card-row::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .fission-settings-stack::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .fission-preview-grid::-webkit-scrollbar-thumb {
+  border-color: #eef2f7;
+  background: #c5d1e0;
+}
+
+.theme-light.editor-workbench .fission-board .material-filter-row {
+  border-color: #dbe4ef;
+  background: #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .material-filter-row select,
+.theme-light.editor-workbench .fission-board .material-filter-row button {
+  height: 30px;
+  border-color: #cbd7e6;
+  background: #ffffff;
+  color: #334155;
+}
+
+.theme-light.editor-workbench .fission-board .material-filter-row select:focus,
+.theme-light.editor-workbench .fission-board .material-filter-row button:hover {
+  border-color: rgb(91 126 255 / 38%);
+  outline: none;
+  box-shadow: 0 0 0 2px rgb(91 126 255 / 10%);
+}
+
+.theme-light.editor-workbench .fission-board .fission-preview-toolbar {
+  color: #64748b;
+  background: #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .fission-preview-toolbar strong {
+  color: #526173;
+}
+
+/* Fission light-mode readability pass */
+.theme-light.editor-workbench .fission-board .fission-setting-card header,
+.theme-light.editor-workbench .fission-board .fission-card-header-row header,
+.theme-light.editor-workbench .fission-board .audio-drop-panel header strong,
+.theme-light.editor-workbench .fission-board .shot-av-brief header {
+  color: #17202e;
+  opacity: 1;
+}
+
+.theme-light.editor-workbench .fission-board .fission-setting-card label,
+.theme-light.editor-workbench .fission-board .range-row,
+.theme-light.editor-workbench .fission-board .switch-row,
+.theme-light.editor-workbench .fission-board .group-audio-empty {
+  color: #475569;
+}
+
+.theme-light.editor-workbench .fission-board .fission-setting-card.compact header,
+.theme-light.editor-workbench .fission-board .fission-setting-card:has(input:disabled) header {
+  color: #8da0b8;
+}
+
+.theme-light.editor-workbench .fission-board .shot-group-row,
+.theme-light.editor-workbench .fission-board .shot-group-list span,
+.theme-light.editor-workbench .fission-board .shot-group-list article.active .shot-group-row {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .shot-group-list small,
+.theme-light.editor-workbench .fission-board .audio-item-list span,
+.theme-light.editor-workbench .fission-board .group-audio-list span {
+  color: #526173;
+}
+
+.theme-light.editor-workbench .fission-board .shot-group-list article.active {
+  border-color: rgb(91 126 255 / 52%);
+  background:
+    linear-gradient(90deg, rgb(91 126 255 / 12%), transparent 55%),
+    #ffffff;
+  box-shadow: inset 3px 0 0 #5f6fe8, 0 8px 18px rgb(91 126 255 / 10%);
+}
+
+.theme-light.editor-workbench .fission-board .storyboard-script-card header span,
+.theme-light.editor-workbench .fission-board .shot-script-line span,
+.theme-light.editor-workbench .fission-board .shot-clip-card > span,
+.theme-light.editor-workbench .fission-board .fission-preview-grid article > span {
+  min-width: 18px;
+  border: 1px solid rgb(91 126 255 / 28%);
+  background: #eef3ff;
+  color: #3153d9;
+  box-shadow: 0 3px 8px rgb(91 126 255 / 12%);
+}
+
+.theme-light.editor-workbench .fission-board .fission-preview-grid.generated article > span {
+  background: rgb(255 255 255 / 92%);
+  color: #17202e;
+  border-color: rgb(15 23 42 / 12%);
+  box-shadow: 0 4px 10px rgb(15 23 42 / 14%);
+}
+
+.theme-light.editor-workbench .fission-board .shot-clip-card strong,
+.theme-light.editor-workbench .fission-board .shot-clip-card small,
+.theme-light.editor-workbench .fission-board .fission-preview-grid strong,
+.theme-light.editor-workbench .fission-board .fission-preview-meta {
+  font-weight: 650;
+  text-shadow: none;
+}
+
+.theme-light.editor-workbench .fission-board .fission-preview-grid.generated strong {
+  color: #17202e;
+  background: #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .fission-preview-grid.generated .fission-preview-meta {
+  color: #475569;
+  background: #f8fafc;
+}
+
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel,
+.theme-light.editor-workbench .fission-board .fission-settings-stack,
+.theme-light.editor-workbench .fission-board .fission-preview-grid,
+.theme-light.editor-workbench .fission-board .strategy-card-row {
+  scrollbar-color: #aebfd4 #eef3f9;
+  scrollbar-width: thin;
+}
+
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list::-webkit-scrollbar,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel::-webkit-scrollbar,
+.theme-light.editor-workbench .fission-board .fission-settings-stack::-webkit-scrollbar,
+.theme-light.editor-workbench .fission-board .fission-preview-grid::-webkit-scrollbar,
+.theme-light.editor-workbench .fission-board .strategy-card-row::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+  background: #eef3f9;
+}
+
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .fission-settings-stack::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .fission-preview-grid::-webkit-scrollbar-track,
+.theme-light.editor-workbench .fission-board .strategy-card-row::-webkit-scrollbar-track {
+  border: 1px solid #e1e8f2;
+  background: #eef3f9;
+  box-shadow: none;
+}
+
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .fission-settings-stack::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .fission-preview-grid::-webkit-scrollbar-thumb,
+.theme-light.editor-workbench .fission-board .strategy-card-row::-webkit-scrollbar-thumb {
+  border: 2px solid #eef3f9;
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 45%), transparent),
+    #aebfd4;
+  box-shadow: none;
+}
+
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list::-webkit-scrollbar-thumb:hover,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel::-webkit-scrollbar-thumb:hover,
+.theme-light.editor-workbench .fission-board .fission-settings-stack::-webkit-scrollbar-thumb:hover,
+.theme-light.editor-workbench .fission-board .fission-preview-grid::-webkit-scrollbar-thumb:hover,
+.theme-light.editor-workbench .fission-board .strategy-card-row::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 45%), transparent),
+    #93a7c0;
+}
+
+.theme-light.editor-workbench .fission-board .fission-left .shot-group-list::-webkit-scrollbar-corner,
+.theme-light.editor-workbench .fission-board .fission-left .audio-drop-panel::-webkit-scrollbar-corner,
+.theme-light.editor-workbench .fission-board .fission-settings-stack::-webkit-scrollbar-corner,
+.theme-light.editor-workbench .fission-board .fission-preview-grid::-webkit-scrollbar-corner,
+.theme-light.editor-workbench .fission-board .strategy-card-row::-webkit-scrollbar-corner {
+  background: #eef3f9;
+}
+
+.theme-light.editor-workbench .fission-board .fission-column {
+  scrollbar-color: #aebfd4 #eef3f9;
+}
