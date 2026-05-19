@@ -882,11 +882,16 @@ async function uploadLocalFileToOss(filePath, options = {}) {
 }
 
 async function createUploadTicket(payload) {
-  const response = await fetch(`${apiBaseUrl}/storage/upload-ticket`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  let response;
+  try {
+    response = await fetch(`${apiBaseUrl}/storage/upload-ticket`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw new Error(`无法连接后端上传服务：${apiBaseUrl}/storage/upload-ticket。请确认后端已启动且 OSS 配置可用。${error?.message ? ` (${error.message})` : ''}`);
+  }
   const body = await response.json().catch(() => null);
   if (!response.ok || !body?.success) {
     throw new Error(body?.message || body?.error || `Create upload ticket failed: HTTP ${response.status}`);

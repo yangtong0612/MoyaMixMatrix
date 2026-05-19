@@ -139,10 +139,10 @@ export function buildAliyunMixRequest(input: {
   variantIndex?: number;
   dryRun?: boolean;
 }): AliyunMixRequest {
-  const uploadedGlobalAudios = dedupeAudios(input.audioItems).filter((audio) => isCloudMediaUrl(audio.path));
+  const uploadedGlobalAudios = dedupeAudios(input.audioItems).filter(isUsableCloudMedia);
   const eligibleSourceGroups = input.groups.filter((group) =>
-    group.clips.some((clip) => isCloudMediaUrl(clip.path)) &&
-    ((group.groupAudios || []).some((audio) => isCloudMediaUrl(audio.path)) || uploadedGlobalAudios.length > 0)
+    group.clips.some(isUsableCloudMedia) &&
+    ((group.groupAudios || []).some(isUsableCloudMedia) || uploadedGlobalAudios.length > 0)
   );
 
   if (eligibleSourceGroups.length === 0) {
@@ -161,8 +161,8 @@ export function buildAliyunMixRequest(input: {
   }
 
   const groups = eligibleSourceGroups.map((group) => {
-    const uploadedGroupClips = group.clips.filter((clip) => isCloudMediaUrl(clip.path));
-    const uploadedGroupAudios = (group.groupAudios || []).filter((audio) => isCloudMediaUrl(audio.path));
+    const uploadedGroupClips = group.clips.filter(isUsableCloudMedia);
+    const uploadedGroupAudios = (group.groupAudios || []).filter(isUsableCloudMedia);
     return {
       id: group.id,
       sceneNo: group.sceneNo,
@@ -343,4 +343,9 @@ function formatTimestamp(date: Date) {
 
 function isCloudMediaUrl(path?: string) {
   return Boolean(path && /^(https?:\/\/|oss:\/\/)/i.test(path));
+}
+
+function isUsableCloudMedia(media?: { path?: string; uploadStatus?: string }) {
+  if (!isCloudMediaUrl(media?.path)) return false;
+  return media?.uploadStatus !== 'uploading' && media?.uploadStatus !== 'failed' && media?.uploadStatus !== 'local';
 }
