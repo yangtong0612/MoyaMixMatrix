@@ -668,6 +668,8 @@ interface ViralTemplateCard extends ViralTemplate {
   cardId: string;
   cardName: string;
   variantIndex: number;
+  custom?: boolean;
+  sourceSummary?: string;
 }
 
 interface ViralTimelineClip {
@@ -684,6 +686,14 @@ interface ViralOverlayTextStyle {
 }
 
 type ViralPreviewVideoFit = 'contain' | 'cover' | 'fill';
+type ViralTemplateMakerMode = 'manual' | 'analyze';
+type ViralTemplateMarkerZone = 'opening' | 'body' | 'ending' | 'global';
+
+interface ViralTemplateMarker {
+  id: string;
+  label: string;
+  zone: ViralTemplateMarkerZone;
+}
 
 interface ViralPackageVersion {
   id: string;
@@ -724,11 +734,13 @@ interface ViralRecentTask {
 interface ViralCaptionSegment {
   time: string;
   text: string;
+  translation?: string;
 }
 
 const VIRAL_TIMELINE_DURATION = 13;
 const VIRAL_TEMPLATE_PREVIEW_DURATION = 10;
 const VIRAL_RECENT_TASKS_KEY = 'editor:viral-recent-tasks';
+const VIRAL_CUSTOM_TEMPLATES_KEY = 'editor:viral-custom-templates';
 
 const viralTemplates: ViralTemplate[] = [
   {
@@ -815,6 +827,20 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const templatePreviewStartedAtRef = useRef(0);
   const [sourceVideo, setSourceVideo] = useState<MaterialItem | null>(null);
   const [recentTasks, setRecentTasks] = useState<ViralRecentTask[]>([]);
+  const [customTemplateCards, setCustomTemplateCards] = useState<ViralTemplateCard[]>([]);
+  const [templateMakerOpen, setTemplateMakerOpen] = useState(false);
+  const [templateMakerMode, setTemplateMakerMode] = useState<ViralTemplateMakerMode>('manual');
+  const [templateMarkers, setTemplateMarkers] = useState<ViralTemplateMarker[]>([
+    { id: 'marker-opening-title', label: '三秒大标题', zone: 'opening' },
+    { id: 'marker-keyword', label: '关键词高亮', zone: 'body' },
+    { id: 'marker-bilingual', label: '双语字幕', zone: 'global' }
+  ]);
+  const [templateDraft, setTemplateDraft] = useState({
+    name: '',
+    source: '',
+    description: '',
+    baseKey: 'street' as ViralTemplateKey
+  });
   const [selectedTemplateCardId, setSelectedTemplateCardId] = useState(viralTemplateCards[0].cardId);
   const [hoverTemplateCardId, setHoverTemplateCardId] = useState<string | null>(null);
   const [activePackageTab, setActivePackageTab] = useState<'template' | 'captions' | 'sound'>('template');
@@ -847,7 +873,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const [timelineClips, setTimelineClips] = useState<ViralTimelineClip[]>(createViralDefaultClips);
   const [selectedClipId, setSelectedClipId] = useState('clip-1');
   const [recognizedCaptionSegments, setRecognizedCaptionSegments] = useState<ViralCaptionSegment[]>([]);
-  const appliedTemplate = viralTemplateCards.find((item) => item.cardId === selectedTemplateCardId) || viralTemplateCards[0];
+  const allViralTemplateCards = [...viralTemplateCards, ...customTemplateCards];
+  const appliedTemplate = allViralTemplateCards.find((item) => item.cardId === selectedTemplateCardId) || allViralTemplateCards[0] || viralTemplateCards[0];
   const template = appliedTemplate;
   const previewVersion = versions.find((item) => selectedVersionIds.includes(item.id)) || versions[0];
   const captionSegments = recognizedCaptionSegments.length > 0 ? recognizedCaptionSegments : buildViralCaptionSegments(keywords);
@@ -872,12 +899,20 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
 
   useEffect(() => {
     let canceled = false;
-    window.surgicol.store.get<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY)
-      .then((tasks) => {
-        if (!canceled) setRecentTasks(Array.isArray(tasks) ? tasks : []);
+    Promise.all([
+      window.surgicol.store.get<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY).catch(() => []),
+      window.surgicol.store.get<ViralTemplateCard[]>(VIRAL_CUSTOM_TEMPLATES_KEY).catch(() => [])
+    ])
+      .then(([tasks, templates]) => {
+        if (canceled) return;
+        setRecentTasks(Array.isArray(tasks) ? tasks : []);
+        setCustomTemplateCards(Array.isArray(templates) ? templates : []);
       })
       .catch(() => {
-        if (!canceled) setRecentTasks([]);
+        if (!canceled) {
+          setRecentTasks([]);
+          setCustomTemplateCards([]);
+        }
       });
     return () => {
       canceled = true;
@@ -1011,7 +1046,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       setTimelineClips(createViralDefaultClips(nextDuration));
       setSelectedClipId('clip-1');
       setUploadProgress(100);
-      setNotice(`已通过阿里云智能字幕断句识别 ${nextCaptions.length} 段字幕，已同步到文字快剪、左侧预览和保存渲染。`);
+      const recognizedKeywords = extractViralKeywordsFromText(nextCaptions.map((caption) => caption.text).join(' '));
+      if (recognizedKeywords.length) setKeywords(recognizedKeywords.join(', '));
+      setNotice(`已通过阿里云智能字幕断句识别 ${nextCaptions.length} 段字幕${recognizedKeywords.length ? `，并识别 ${recognizedKeywords.length} 个关键词` : ''}，已同步到文字快剪、左侧预览和保存渲染。`);
       void persistViralRecentTask({
         id: nextVideo.id,
         name: nextVideo.name,
@@ -1020,7 +1057,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         subtitleJobId: recognized.jobId,
         templateKey: appliedTemplate.key,
         templateCardId: selectedTemplateCardId,
-        keywords,
+        keywords: recognizedKeywords.length ? recognizedKeywords.join(', ') : keywords,
         subtitleSegments: nextCaptions,
         savedAt: new Date().toISOString(),
         duration: formatViralDuration(nextDuration)
@@ -1041,6 +1078,84 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     await window.surgicol.store.set(VIRAL_RECENT_TASKS_KEY, nextTasks);
   }
 
+  async function saveCustomTemplate(mode: 'manual' | 'analyze') {
+    const trimmedName = templateDraft.name.trim();
+    const markerText = templateMarkers.map((item) => item.label).join(' ');
+    const sourceText = `${templateDraft.source} ${templateDraft.description} ${markerText}`.trim();
+    if (!trimmedName && !sourceText) {
+      setNotice('请填写模板名称，或输入一个平台爆款视频链接/描述。');
+      return;
+    }
+    const analyzed = analyzeViralTemplateDraft(templateDraft.baseKey, sourceText || trimmedName);
+    const baseTemplate = viralTemplates.find((item) => item.key === analyzed.key) || viralTemplates[0];
+    const nextTemplate: ViralTemplateCard = {
+      ...baseTemplate,
+      key: analyzed.key,
+      cardId: `custom-${Date.now()}`,
+      cardName: trimmedName || analyzed.name,
+      name: analyzed.name,
+      accent: analyzed.accent,
+      caption: analyzed.caption,
+      scene: analyzed.scene,
+      rhythm: analyzed.rhythm,
+      effects: analyzed.effects,
+      variantIndex: 100 + customTemplateCards.length,
+      custom: true,
+      sourceSummary: mode === 'analyze' ? analyzed.sourceSummary : templateDraft.description.trim()
+    };
+    const nextTemplates = [nextTemplate, ...customTemplateCards.filter((item) => !item.cardId.startsWith('draft-preview-'))].slice(0, 24);
+    setCustomTemplateCards(nextTemplates);
+    await window.surgicol.store.set(VIRAL_CUSTOM_TEMPLATES_KEY, nextTemplates);
+    setSelectedTemplateCardId(nextTemplate.cardId);
+    setTemplateMakerOpen(false);
+    setTemplateDraft({ name: '', source: '', description: '', baseKey: 'street' });
+    setTemplateMakerMode('manual');
+    setNotice(`已生成并应用自定义模板「${nextTemplate.cardName}」。`);
+  }
+
+  function previewDraftTemplateOnStage() {
+    const markerText = templateMarkers.map((item) => item.label).join(' ');
+    const analyzed = analyzeViralTemplateDraft(templateDraft.baseKey, `${templateDraft.source} ${templateDraft.description} ${markerText}`.trim() || templateDraft.name);
+    const previewTemplate: ViralTemplateCard = {
+      ...analyzed,
+      cardId: `draft-preview-${Date.now()}`,
+      cardName: templateDraft.name.trim() || analyzed.name,
+      variantIndex: 100 + customTemplateCards.length,
+      custom: true,
+      sourceSummary: analyzed.sourceSummary
+    };
+    const nextTemplates = [previewTemplate, ...customTemplateCards.filter((item) => !item.cardId.startsWith('draft-preview-'))];
+    setCustomTemplateCards(nextTemplates);
+    setSelectedTemplateCardId(previewTemplate.cardId);
+    setActivePackageTab('template');
+    setHoverTemplateCardId(null);
+    setCurrentTime(0);
+    setCustomPreviewHook('');
+    setNotice(`正在左侧预览「${previewTemplate.cardName}」，满意后可保存为模板。`);
+  }
+
+  function dropTemplateMarker(event: DragEvent<HTMLDivElement>, zone: ViralTemplateMarkerZone) {
+    event.preventDefault();
+    const label = event.dataTransfer.getData('text/plain');
+    if (!label) return;
+    setTemplateMarkers((markers) => [
+      ...markers,
+      { id: `marker-${Date.now()}-${markers.length}`, label, zone }
+    ]);
+  }
+
+  function removeTemplateMarker(markerId: string) {
+    setTemplateMarkers((markers) => markers.filter((item) => item.id !== markerId));
+  }
+
+  async function deleteCustomTemplate(cardId: string) {
+    const nextTemplates = customTemplateCards.filter((item) => item.cardId !== cardId);
+    setCustomTemplateCards(nextTemplates);
+    await window.surgicol.store.set(VIRAL_CUSTOM_TEMPLATES_KEY, nextTemplates);
+    if (selectedTemplateCardId === cardId) setSelectedTemplateCardId(viralTemplateCards[0].cardId);
+    setNotice('已删除自定义网感模板。');
+  }
+
   function restoreRecentTask(task: ViralRecentTask) {
     setPreviewRecentTask(null);
     setSourceVideo({
@@ -1051,8 +1166,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       path: task.path,
       duration: VIRAL_TIMELINE_DURATION
     });
-    const restoredCard = viralTemplateCards.find((item) => item.cardId === task.templateCardId)
-      || viralTemplateCards.find((item) => item.key === task.templateKey)
+    const restoredCard = allViralTemplateCards.find((item) => item.cardId === task.templateCardId)
+      || allViralTemplateCards.find((item) => item.key === task.templateKey)
       || viralTemplateCards[0];
     setSelectedTemplateCardId(restoredCard.cardId);
     setHoverTemplateCardId(null);
@@ -1099,7 +1214,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   function previewTemplate(cardId: string | null) {
     setHoverTemplateCardId(cardId);
     if (cardId) {
-      const previewCard = viralTemplateCards.find((item) => item.cardId === cardId);
+      const previewCard = allViralTemplateCards.find((item) => item.cardId === cardId);
       setNotice(`正在预览「${previewCard?.cardName || '模板'}」效果，点击应用后才会包装。`);
       return;
     }
@@ -1154,7 +1269,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   }
 
   function applyTemplate(cardId: string) {
-    const nextTemplate = viralTemplateCards.find((item) => item.cardId === cardId) || viralTemplateCards[0];
+    const nextTemplate = allViralTemplateCards.find((item) => item.cardId === cardId) || viralTemplateCards[0];
     const nextFeature = getViralTemplateFeature(nextTemplate);
     setSelectedTemplateCardId(nextTemplate.cardId);
     setHoverTemplateCardId(null);
@@ -1360,11 +1475,29 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     )));
   }
 
+  function updateViralCaptionTranslation(captionIndex: number, translation: string) {
+    const sourceCaptions = recognizedCaptionSegments.length > 0 ? recognizedCaptionSegments : captionSegments;
+    setRecognizedCaptionSegments(sourceCaptions.map((caption, index) => (
+      index === captionIndex ? { ...caption, translation } : caption
+    )));
+  }
+
   function deleteViralCaption(captionIndex: number) {
     const sourceCaptions = recognizedCaptionSegments.length > 0 ? recognizedCaptionSegments : captionSegments;
     const nextCaptions = sourceCaptions.filter((_, index) => index !== captionIndex);
     setRecognizedCaptionSegments(nextCaptions);
     setNotice(nextCaptions.length ? '已删除选中字幕，左侧预览和保存渲染已同步更新。' : '已清空字幕，左侧预览将显示模板默认文案。');
+  }
+
+  function recognizeKeywordsFromCaptions() {
+    const text = editedCaptionSegments.map((caption) => caption.text).join(' ');
+    const nextKeywords = extractViralKeywordsFromText(text);
+    if (nextKeywords.length === 0) {
+      setNotice('当前字幕内容不足，暂时没有识别到可用关键词。');
+      return;
+    }
+    setKeywords(nextKeywords.join(', '));
+    setNotice(`已从字幕识别 ${nextKeywords.length} 个关键词，并同步到字幕高亮。`);
   }
 
   function beginOverlayDrag(event: PointerEvent<HTMLDivElement>, layer: 'title' | 'caption') {
@@ -1472,7 +1605,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     const groupId = `viral-${sourceVideo.id}`;
     const savedSubtitleSegments = editedCaptionSegments.map((caption) => ({
       time: caption.time,
-      text: caption.text
+      text: caption.text,
+      translation: caption.translation
     }));
     const savedOverlayBase: ViralRecentTask = {
       id: sourceVideo.id,
@@ -1726,7 +1860,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                   </span>
                   {isBilingualTemplate ? (
                     <span className="viral-caption-translation">
-                      {buildViralBilingualCaption(activeCaption?.text || previewSubtitle, previewKeywordList)}
+                      {getViralCaptionTranslation(activeCaption, previewKeywordList, previewSubtitle)}
                     </span>
                   ) : null}
                 </span>
@@ -1738,11 +1872,12 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
               <button className={activePackageTab === 'template' ? 'active' : undefined} type="button" onClick={() => setActivePackageTab('template')}>网感模板</button>
               <button className={activePackageTab === 'captions' ? 'active' : undefined} type="button" onClick={() => setActivePackageTab('captions')}>文字快剪</button>
               <button className={activePackageTab === 'sound' ? 'active' : undefined} type="button" onClick={() => setActivePackageTab('sound')}>声音</button>
+              <button className="viral-template-maker-button" type="button" onClick={() => setTemplateMakerOpen(true)}>制作模板</button>
             </div>
             {activePackageTab === 'template' ? (
               <>
                 <div className="viral-template-gallery">
-                  {viralTemplateCards.map((item) => {
+                  {allViralTemplateCards.map((item) => {
                     const previewCaptionTime = mapTemplatePreviewTimeToTimeline(hoverTemplateTime, timelineDuration);
                     const cardCaptionIndex = findEditedViralCaptionIndex(editedCaptionSegments, previewCaptionTime);
                     const cardCaption = editedCaptionSegments[cardCaptionIndex] || editedCaptionSegments[0];
@@ -1790,6 +1925,19 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                           }}>
                             {item.cardId === selectedTemplateCardId ? '已应用' : '应用该模板'}
                           </i>
+                          {item.custom ? (
+                            <button
+                              className="viral-template-delete"
+                              type="button"
+                              title="删除自定义模板"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void deleteCustomTemplate(item.cardId);
+                              }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          ) : null}
                         </div>
                         <div className="viral-template-card-meta">
                           <strong>{item.cardName}</strong>
@@ -1879,17 +2027,45 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                     </select>
                   </label>
                 </div>
+                <div className="viral-keyword-panel">
+                  <div>
+                    <strong>字幕关键词</strong>
+                    <span>{keywords.split(/[,，、\s]+/).filter(Boolean).slice(0, 8).join(' / ') || '未设置关键词'}</span>
+                  </div>
+                  <input value={keywords} placeholder="手动输入关键词，用逗号分隔" onChange={(event) => setKeywords(event.target.value)} />
+                  <button type="button" onClick={recognizeKeywordsFromCaptions}>从字幕识别</button>
+                </div>
                 <div className="viral-caption-list">
                   {editedCaptionSegments.map((caption, index) => (
                     <article key={caption.key} className={index === activeCaptionIndex ? 'active' : undefined} onClick={() => setViralSourceTime(caption.sourceStart)}>
                       <span className="viral-caption-time">{caption.time}</span>
-                      <textarea
-                        rows={2}
-                        value={caption.text}
-                        onClick={(event) => event.stopPropagation()}
-                        onFocus={() => setViralSourceTime(caption.sourceStart)}
-                        onChange={(event) => updateViralCaptionText(caption.captionIndex, event.target.value)}
-                      />
+                      <div className="viral-caption-copy">
+                        <label className="viral-caption-cn-row">
+                          <span>中文</span>
+                          <textarea
+                            aria-label="编辑中文字幕"
+                            rows={2}
+                            value={caption.text}
+                            placeholder="编辑中文字幕"
+                            onClick={(event) => event.stopPropagation()}
+                            onFocus={() => setViralSourceTime(caption.sourceStart)}
+                            onChange={(event) => updateViralCaptionText(caption.captionIndex, event.target.value)}
+                          />
+                        </label>
+                        <label className="viral-caption-en-row">
+                          <span>英文</span>
+                          <textarea
+                            className="viral-caption-translation-input"
+                            aria-label="编辑英文字幕"
+                            rows={2}
+                            value={getViralCaptionTranslation(caption, previewKeywordList)}
+                            placeholder="编辑英文字幕"
+                            onClick={(event) => event.stopPropagation()}
+                            onFocus={() => setViralSourceTime(caption.sourceStart)}
+                            onChange={(event) => updateViralCaptionTranslation(caption.captionIndex, event.target.value)}
+                          />
+                        </label>
+                      </div>
                       <div className="viral-caption-actions">
                         <Edit3 size={14} />
                         <button type="button" aria-label="删除字幕" title="删除字幕" onClick={(event) => {
@@ -1925,6 +2101,120 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 <Upload size={46} />
                 <strong>智能包装中...{packagingProgress}%</strong>
                 <button type="button" onClick={() => setPackagingProgress(null)}>取消</button>
+              </section>
+            </div>
+          ) : null}
+          {templateMakerOpen ? (
+            <div className="viral-template-maker-mask">
+              <section>
+                <header>
+                  <strong>制作网感模板</strong>
+                  <button type="button" onClick={() => setTemplateMakerOpen(false)}><X size={18} /></button>
+                </header>
+                <div className="viral-template-maker-tabs">
+                  <button className={templateMakerMode === 'manual' ? 'active' : undefined} type="button" onClick={() => setTemplateMakerMode('manual')}>手动搭建</button>
+                  <button className={templateMakerMode === 'analyze' ? 'active' : undefined} type="button" onClick={() => setTemplateMakerMode('analyze')}>视频分析</button>
+                </div>
+                <div className="viral-template-maker-body">
+                  <div className="viral-template-maker-form">
+                    <label>
+                      模板名称
+                      <input value={templateDraft.name} placeholder="例如：本地探店强转化" onChange={(event) => setTemplateDraft((draft) => ({ ...draft, name: event.target.value }))} />
+                    </label>
+                    <label>
+                      基础风格
+                      <select value={templateDraft.baseKey} onChange={(event) => setTemplateDraft((draft) => ({ ...draft, baseKey: event.target.value as ViralTemplateKey }))}>
+                        <option value="street">爆点节奏</option>
+                        <option value="seed">柔和种草</option>
+                        <option value="deal">成交导向</option>
+                        <option value="story">故事包装</option>
+                      </select>
+                    </label>
+                    {templateMakerMode === 'manual' ? (
+                      <div className="viral-template-marker-builder">
+                        <strong>拖拽标记到模板结构</strong>
+                        <div className="viral-template-marker-palette">
+                          {['三秒大标题', '关键词高亮', '双语字幕', 'CTA按钮', '卡点转场', '提示音效', '卖点贴纸', '痛点警示', '反转闪白'].map((marker) => (
+                            <button
+                              key={marker}
+                              type="button"
+                              draggable
+                              onDragStart={(event) => event.dataTransfer.setData('text/plain', marker)}
+                            >
+                              {marker}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="viral-template-marker-zones">
+                          {[
+                            ['opening', '开头 0-3s'],
+                            ['body', '中段卖点'],
+                            ['ending', '结尾行动'],
+                            ['global', '全局效果']
+                          ].map(([zone, label]) => (
+                            <div
+                              key={zone}
+                              onDragOver={(event) => event.preventDefault()}
+                              onDrop={(event) => dropTemplateMarker(event, zone as ViralTemplateMarkerZone)}
+                            >
+                              <span>{label}</span>
+                              {templateMarkers.filter((item) => item.zone === zone).map((marker) => (
+                                <button key={marker.id} type="button" onClick={() => removeTemplateMarker(marker.id)}>{marker.label}<X size={12} /></button>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <label>
+                          平台视频链接或爆款描述
+                          <textarea value={templateDraft.source} rows={3} placeholder="粘贴抖音/小红书/视频号链接，或描述这个视频的标题、字幕、节奏、镜头、转场、音效。" onChange={(event) => setTemplateDraft((draft) => ({ ...draft, source: event.target.value }))} />
+                        </label>
+                        <div className="viral-template-analysis-grid">
+                          {buildViralTemplateAnalysisCards(templateDraft.baseKey, `${templateDraft.source} ${templateDraft.description}`).map((item) => (
+                            <article key={item.title}>
+                              <strong>{item.title}</strong>
+                              <span>{item.value}</span>
+                            </article>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    <label>
+                      模板规则补充
+                      <textarea value={templateDraft.description} rows={3} placeholder="例如：前三秒大标题，关键词酒红高亮，字幕双语，结尾强 CTA。" onChange={(event) => setTemplateDraft((draft) => ({ ...draft, description: event.target.value }))} />
+                    </label>
+                  </div>
+                  {(() => {
+                    const markerText = templateMarkers.map((item) => item.label).join(' ');
+                    const analyzed = analyzeViralTemplateDraft(templateDraft.baseKey, `${templateDraft.source} ${templateDraft.description} ${markerText}`);
+                    const previewName = templateDraft.name.trim() || analyzed.name;
+                    const previewClass = getViralTemplatePreviewClass({ ...analyzed, cardId: 'draft-preview', cardName: previewName, variantIndex: 100, custom: true });
+                    return (
+                      <div className="viral-template-maker-live">
+                        <div className={`viral-template-maker-phone template-${analyzed.key} ${previewClass}`}>
+                          {sourceVideo?.path ? <video src={toMediaUrl(sourceVideo.path)} muted loop playsInline autoPlay /> : null}
+                          <div className="viral-maker-title">{buildViralHook(analyzed, activeCaption?.text || '核心卖点', activeCaptionIndex)}</div>
+                          <div className="viral-maker-caption">
+                            <strong>{activeCaption?.text || '自动识别字幕'}</strong>
+                            {/双语/.test(analyzed.caption) ? <span>{buildViralBilingualCaption(activeCaption?.text || '自动识别字幕', previewKeywordList)}</span> : null}
+                          </div>
+                        </div>
+                        <div className="viral-template-maker-preview">
+                          <span>{analyzed.caption}</span>
+                          <small>{analyzed.rhythm}</small>
+                          <p>{analyzed.effects.join(' / ')}</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+                <footer>
+                  <button type="button" onClick={previewDraftTemplateOnStage}>预览到左侧</button>
+                  <button type="button" onClick={() => void saveCustomTemplate('manual')}>手动添加模板</button>
+                  <button className="viral-primary" type="button" onClick={() => void saveCustomTemplate('analyze')}>分析并生成模板</button>
+                </footer>
               </section>
             </div>
           ) : null}
@@ -2068,7 +2358,7 @@ function ViralSavedOverlay({ task, currentTime = 0 }: { task: ViralRecentTask; c
           </span>
           {isBilingualTemplate ? (
             <span className="viral-caption-translation">
-              {buildViralBilingualCaption(activeCaption?.text || '自动识别添加字幕', keywordList)}
+              {getViralCaptionTranslation(activeCaption, keywordList, '自动识别添加字幕')}
             </span>
           ) : null}
         </span>
@@ -2103,6 +2393,65 @@ function buildViralHook(template: ViralTemplate, keyword: string, index: number)
     story: [`一开始我也不信${keyword}`, `${keyword}背后有个反转`, `这个${keyword}案例，把我看懂了`]
   };
   return hooks[template.key][index % hooks[template.key].length];
+}
+
+function analyzeViralTemplateDraft(baseKey: ViralTemplateKey, input: string): ViralTemplate & { sourceSummary: string } {
+  const text = input.toLowerCase();
+  const key: ViralTemplateKey = /成交|转化|下单|私信|团购|到店|优惠|报价|痛点|cta/.test(input)
+    ? 'deal'
+    : /故事|反转|悬念|剧情|前后对比|vlog/.test(input)
+      ? 'story'
+      : /种草|清单|好物|测评|体验|开箱|卖点/.test(input)
+        ? 'seed'
+        : baseKey;
+  const base = viralTemplates.find((item) => item.key === key) || viralTemplates[0];
+  const bilingual = /双语|英文|english|字幕翻译/.test(input);
+  const keyword = /关键词|高亮|重点|爆点|数字/.test(input);
+  const fast = /快节奏|卡点|快切|节奏|爆款|热门|抖音|shorts|reels/.test(text);
+  const cta = /私信|下单|点击|关注|预约|到店|团购|领取/.test(input);
+  return {
+    ...base,
+    name: cta ? '平台转化复刻' : fast ? '爆款节奏复刻' : `${base.name}复刻`,
+    accent: keyword ? '关键词高亮大标题' : base.accent,
+    caption: `${bilingual ? '双语字幕' : '分句字幕'} + ${keyword ? '关键词高亮' : cta ? 'CTA 强调' : '节奏强调'}`,
+    rhythm: fast ? '前三秒强钩子 / 1-2 秒一次强调 / 卡点转场' : cta ? '痛点-证明-行动 / CTA 段加重音效' : base.rhythm,
+    scene: input.trim() ? `来自平台视频分析：${input.trim().slice(0, 72)}` : base.scene,
+    effects: [
+      keyword ? '关键词花字高亮' : '分句字幕强调',
+      bilingual ? '中英双语字幕' : '智能断句字幕',
+      fast ? '卡点缩放转场' : '轻微推拉',
+      cta ? '行动按钮动效' : '标题钩子动效',
+      '自动适配保存渲染'
+    ],
+    sourceSummary: input.trim()
+  };
+}
+
+function buildViralTemplateAnalysisCards(baseKey: ViralTemplateKey, input: string) {
+  const analyzed = analyzeViralTemplateDraft(baseKey, input);
+  const text = input || analyzed.scene;
+  return [
+    {
+      title: '视频结构',
+      value: /反转|故事/.test(text) ? '悬念开头 - 反转解释 - 结尾复盘' : /成交|转化|私信/.test(text) ? '痛点开头 - 证明信任 - CTA 收口' : '强钩子开头 - 卖点递进 - 行动提示'
+    },
+    {
+      title: '字幕策略',
+      value: analyzed.caption
+    },
+    {
+      title: '节奏拆解',
+      value: analyzed.rhythm
+    },
+    {
+      title: '特效组合',
+      value: analyzed.effects.slice(0, 3).join(' / ')
+    },
+    {
+      title: '转化点',
+      value: /私信|下单|预约|团购|领取/.test(text) ? '结尾强化行动指令和利益点' : '强化记忆点，适合引导关注或继续观看'
+    }
+  ];
 }
 
 function normalizeUploadPercent(percent: number) {
@@ -2176,8 +2525,28 @@ function getViralTemplatePreviewClass(template: ViralTemplateCard | ViralTemplat
 function buildViralKeywordList(keywords: string, captionText: string) {
   const explicitKeywords = keywords.split(/[,，、\s]+/).map((item) => item.trim()).filter((item) => item.length >= 2);
   const captionTokens = captionText.match(/[\u4e00-\u9fa5]{2,}|[A-Za-z0-9]{2,}/g) || [];
-  return [...new Set([...explicitKeywords, ...captionTokens])]
+  const sourceKeywords = explicitKeywords.length ? explicitKeywords : captionTokens;
+  return [...new Set(sourceKeywords)]
     .sort((left, right) => right.length - left.length)
+    .slice(0, 8);
+}
+
+function extractViralKeywordsFromText(text: string) {
+  const stopWords = new Set([
+    '我们', '你们', '他们', '这个', '那个', '还是', '然后', '因为', '所以', '就是', '可以', '已经', '现在', '如果', '不是', '没有', '一个', '一下',
+    '视频', '字幕', '选择', '完成', '调整', '生成'
+  ]);
+  const tokens = text.match(/[\u4e00-\u9fa5]{2,6}|[A-Za-z0-9]{3,}/g) || [];
+  const scores = new Map<string, number>();
+  for (const token of tokens) {
+    const value = token.trim();
+    if (value.length < 2 || stopWords.has(value)) continue;
+    const hasSignal = /数字|创作|文案|模板|配音|小白|基础|口播|卖点|门店|爆款|成交|引流|剪辑|智能|高亮/.test(value);
+    scores.set(value, (scores.get(value) || 0) + (hasSignal ? 3 : 1) + Math.min(2, value.length / 3));
+  }
+  return [...scores.entries()]
+    .sort((left, right) => right[1] - left[1] || right[0].length - left[0].length)
+    .map(([value]) => value)
     .slice(0, 8);
 }
 
@@ -2190,6 +2559,12 @@ function renderViralHighlightedText(text: string, keywords: string[]) {
     const isKeyword = keywords.some((keyword) => keyword.toLowerCase() === part.toLowerCase());
     return isKeyword ? <mark key={`${part}-${index}`}>{part}</mark> : part;
   });
+}
+
+function getViralCaptionTranslation(caption: Partial<ViralCaptionSegment> | undefined, keywords: string[], fallbackText = '') {
+  const editedTranslation = caption?.translation?.trim();
+  if (editedTranslation) return editedTranslation;
+  return buildViralBilingualCaption(caption?.text || fallbackText, keywords);
 }
 
 function buildViralBilingualCaption(text: string, keywords: string[]) {
@@ -2210,12 +2585,22 @@ function buildViralCaptionSegments(keywords: string) {
   const words = keywords.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean);
   const [first = '零基础', second = '视频创作', third = '数字人', fourth = '专业创作者'] = words;
   return [
-    { time: '00:00:00 - 00:00:02', text: `${first}入门，让普通人也能快速做起来` },
-    { time: '00:00:02 - 00:00:05', text: `${second}其实只需要找准内容节奏` },
-    { time: '00:00:05 - 00:00:07', text: `生成文案，选择${third}或网感模板` },
-    { time: '00:00:07 - 00:00:10', text: '调整配音和字幕，即可完成视频创作' },
-    { time: '00:00:10 - 00:00:12', text: `小白也能变成${fourth}` }
-  ];
+    `${first}入门，让普通人也能快速做起来`,
+    `${second}其实只需要找准内容节奏`,
+    `生成文案，选择${third}或网感模板`,
+    '调整配音和字幕，即可完成视频创作',
+    `小白也能变成${fourth}`
+  ].map((text, index) => ({
+    time: [
+      '00:00:00 - 00:00:02',
+      '00:00:02 - 00:00:05',
+      '00:00:05 - 00:00:07',
+      '00:00:07 - 00:00:10',
+      '00:00:10 - 00:00:12'
+    ][index],
+    text,
+    translation: buildViralBilingualCaption(text, words)
+  }));
 }
 
 function viralSubtitleSegmentsToCaptions(segments: ViralSubtitleSegment[]): ViralCaptionSegment[] {
@@ -2223,7 +2608,8 @@ function viralSubtitleSegmentsToCaptions(segments: ViralSubtitleSegment[]): Vira
     .filter((segment) => segment.text?.trim() && Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start)
     .map((segment) => ({
       time: `${formatViralTime(segment.start)} - ${formatViralTime(segment.end)}`,
-      text: segment.text.trim()
+      text: segment.text.trim(),
+      translation: buildViralBilingualCaption(segment.text.trim(), [])
     }));
 }
 
@@ -2262,6 +2648,7 @@ function buildEditedViralCaptionSegments(captions: ViralCaptionSegment[], clips:
         key: `${caption.time}-${clip.id}`,
         time: `${formatViralTime(timelineStart)} - ${formatViralTime(timelineEnd)}`,
         text: caption.text,
+        translation: caption.translation,
         sourceStart,
         sourceEnd,
         timelineStart,

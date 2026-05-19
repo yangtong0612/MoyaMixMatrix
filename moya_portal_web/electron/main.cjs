@@ -545,7 +545,7 @@ function buildViralAss(overlay, metadata) {
   const captionStyle = readOverlayTextStyle(overlay.captionTextStyle, { fontSize: Math.round(height * 0.024) }, width);
   const palette = viralAssPalette(overlay);
   const titleColor = assBackColor(palette.title);
-  const captionColor = assBackColor(palette.caption);
+  const captionColor = assBackColor('#000000', '70');
   const titleText = overlay.hook || overlay.templateName || overlay.name || '网感剪辑';
   const captions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
     ? overlay.subtitleSegments
@@ -573,10 +573,11 @@ function buildViralAss(overlay, metadata) {
   ];
   for (const caption of captions) {
     const range = parseCaptionRange(caption.time, duration);
+    const translation = String(caption.translation || '').trim() || buildOverlayBilingualCaption(caption.text || '', keywords);
     const captionText = isBilingual
-      ? `${caption.text || ''}\n${buildOverlayBilingualCaption(caption.text || '', keywords)}`
+      ? `${caption.text || ''}\n${translation}`
       : caption.text || '';
-    lines.push(`Dialogue: 3,${formatAssTime(range.start)},${formatAssTime(range.end)},Caption,,0,0,0,,{\\an7\\pos(${captionPoint.x},${captionPoint.y})}${escapeAssText(wrapAssText(captionText, captionStyle))}`);
+    lines.push(`Dialogue: 3,${formatAssTime(range.start)},${formatAssTime(range.end)},Caption,,0,0,0,,{\\an7\\pos(${captionPoint.x},${captionPoint.y})}${highlightAssKeywords(wrapAssText(captionText, captionStyle), keywords, palette.keyword)}`);
   }
   return lines.join('\n');
 }
@@ -661,21 +662,21 @@ function visualTextLength(text) {
 
 function viralAssPalette(overlay) {
   const name = String(overlay.templateName || '');
-  if (/高级红/.test(name)) return { title: '#8a1230', caption: '#34181f' };
-  if (/黄白|白金|轻奢/.test(name)) return { title: '#fff7d6', caption: '#fff7d6' };
-  if (/经典蓝/.test(name)) return { title: '#1d4ed8', caption: '#0f172a' };
-  if (/黄色|百搭黄/.test(name)) return { title: '#facc15', caption: '#18181b' };
-  if (/科技/.test(name)) return { title: '#0f172a', caption: '#082f49' };
-  if (/转化|成交/.test(name) || overlay.templateKey === 'deal') return { title: '#111827', caption: '#111827' };
-  if (overlay.templateKey === 'seed') return { title: '#f59e0b', caption: '#ffffff' };
-  if (overlay.templateKey === 'story') return { title: '#0f172a', caption: '#0f172a' };
-  return { title: '#2563eb', caption: '#101010' };
+  if (/高级红/.test(name)) return { title: '#8a1230', keyword: '#8a1230' };
+  if (/黄白|白金|轻奢|黄色|百搭黄/.test(name)) return { title: '#fff7d6', keyword: '#facc15' };
+  if (/经典蓝/.test(name)) return { title: '#1d4ed8', keyword: '#2563eb' };
+  if (/科技/.test(name)) return { title: '#0f172a', keyword: '#67e8f9' };
+  if (/转化|成交/.test(name) || overlay.templateKey === 'deal') return { title: '#111827', keyword: '#dc2626' };
+  if (overlay.templateKey === 'seed') return { title: '#f59e0b', keyword: '#f9a8d4' };
+  if (overlay.templateKey === 'story') return { title: '#0f172a', keyword: '#a855f7' };
+  return { title: '#2563eb', keyword: '#2563eb' };
 }
 
 function buildOverlayKeywords(keywords, captionText) {
   const explicit = String(keywords || '').split(/[,，、\s]+/).map((item) => item.trim()).filter((item) => item.length >= 2);
   const inferred = String(captionText || '').match(/[\u4e00-\u9fa5]{2,}|[A-Za-z0-9]{2,}/g) || [];
-  return [...new Set([...explicit, ...inferred])].sort((left, right) => right.length - left.length).slice(0, 8);
+  const sourceKeywords = explicit.length ? explicit : inferred;
+  return [...new Set(sourceKeywords)].sort((left, right) => right.length - left.length).slice(0, 8);
 }
 
 function buildOverlayBilingualCaption(text, keywords = []) {
@@ -741,6 +742,34 @@ function escapeAssText(text) {
     .replace(/\r?\n/g, '\\N');
 }
 
+function highlightAssKeywords(text, keywords, keywordHex) {
+  const safeKeywords = Array.isArray(keywords)
+    ? keywords.map((item) => String(item || '').trim()).filter((item) => item.length >= 2)
+    : [];
+  if (safeKeywords.length === 0) return escapeAssText(text);
+  const matcher = new RegExp(`(${safeKeywords.map(escapeRegExp).join('|')})`, 'gi');
+  const keywordColor = assInlineColor(keywordHex || '#8a1230');
+  const baseColor = assInlineColor('#ffffff');
+  return String(text || '').split(matcher).filter(Boolean).map((part) => {
+    const isKeyword = safeKeywords.some((keyword) => keyword.toLowerCase() === part.toLowerCase());
+    const escaped = escapeAssText(part);
+    return isKeyword ? `{\\c${keywordColor}}${escaped}{\\c${baseColor}}` : escaped;
+  }).join('');
+}
+
+function assInlineColor(hex) {
+  const normalized = String(hex || '#ffffff').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return '&HFFFFFF&';
+  const rr = normalized.slice(0, 2);
+  const gg = normalized.slice(2, 4);
+  const bb = normalized.slice(4, 6);
+  return `&H${bb}${gg}${rr}&`;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function percentX(value, width) {
   return Math.round((Math.max(0, Math.min(100, Number(value) || 50)) / 100) * width);
 }
@@ -749,13 +778,14 @@ function percentY(value, height) {
   return Math.round((Math.max(0, Math.min(100, Number(value) || 50)) / 100) * height);
 }
 
-function assBackColor(hex) {
+function assBackColor(hex, alpha = '00') {
   const normalized = String(hex || '#000000').replace('#', '');
   if (!/^[0-9a-f]{6}$/i.test(normalized)) return '&H00000000';
   const rr = normalized.slice(0, 2);
   const gg = normalized.slice(2, 4);
   const bb = normalized.slice(4, 6);
-  return `&H00${bb}${gg}${rr}`;
+  const aa = /^[0-9a-f]{2}$/i.test(String(alpha)) ? String(alpha) : '00';
+  return `&H${aa}${bb}${gg}${rr}`;
 }
 
 function templateNameForKey(key) {
