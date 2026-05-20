@@ -1,14 +1,18 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
   Cloud,
   Clapperboard,
   Download,
+  Eye,
   Flame,
   Home,
   ImagePlus,
+  Info,
+  ListVideo,
   LogOut,
   MonitorSmartphone,
   Moon,
@@ -18,6 +22,8 @@ import {
   RotateCcw,
   Settings,
   ShoppingBag,
+  Search,
+  X,
   Sparkles,
   Store,
   Sun,
@@ -55,6 +61,28 @@ const navItems = [
 type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
 type ProductVideoScenarioKey = 'product-spokesperson' | 'product-showcase' | 'store-traffic' | 'hot-replica';
 type ProductVideoProgressStage = 'idle' | 'uploading' | 'signing' | 'submitting' | 'generating' | 'done' | 'failed';
+type ProductVideoTaskThread = {
+  id: string;
+  taskId: string;
+  title?: string;
+  scenario?: ProductVideoScenarioKey;
+  description?: string;
+  productImage?: string;
+  productImages?: string[];
+  storeImages?: string[];
+  referenceVideo?: string | null;
+  status?: string;
+  successful?: boolean;
+  finished?: boolean;
+  videoUrl?: string;
+  message?: string;
+  model?: string;
+  quality?: string;
+  ratio?: string;
+  duration?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
 
 const productVideoScenarios: Array<{
   key: ProductVideoScenarioKey;
@@ -278,6 +306,11 @@ function localFileUrl(filePath: string) {
   return `moya-media://file?path=${encodeURIComponent(filePath)}`;
 }
 
+function mediaPreviewUrl(path?: string | null) {
+  if (!path) return '';
+  return /^(https?:|data:|blob:|moya-media:)/i.test(path) ? path : localFileUrl(path);
+}
+
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -308,6 +341,19 @@ function updateProductVideoRecentTask(taskId: string, nextTask: Record<string, u
   localStorage.setItem('moya-product-video-tasks', JSON.stringify(next.slice(0, 12)));
 }
 
+function readProductVideoRecentTasks() {
+  try {
+    return JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as ProductVideoTaskThread[];
+  } catch {
+    return [];
+  }
+}
+
+function formatTaskTime(value?: string) {
+  if (!value) return '刚刚';
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
 function isOssConfigError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '');
   return /OSS.*(未配置|endpoint|访问密钥|AccessKey|access key|未启用)/i.test(message);
@@ -324,6 +370,20 @@ function mergeMediaPaths(existing: string[], incoming: string[], limit = 6) {
     if (filePath && !next.includes(filePath)) next.push(filePath);
   });
   return next.slice(0, limit);
+}
+
+const supportedImageExtensions = new Set(['jpg', 'jpeg', 'png', 'webp']);
+
+function isSupportedImagePath(filePath: string) {
+  const extension = filePath.split(/[\\/]/).pop()?.split('.').pop()?.toLowerCase();
+  return Boolean(extension && supportedImageExtensions.has(extension));
+}
+
+function droppedImagePaths(event: DragEvent<HTMLElement>) {
+  const files = Array.from(event.dataTransfer.files || []);
+  return files
+    .map((file) => window.surgicol.file.getDroppedPath(file))
+    .filter((filePath) => filePath && isSupportedImagePath(filePath));
 }
 
 interface ProductScenarioVisualProps {
@@ -377,8 +437,10 @@ function ImageAssetManager({
   sampleLabel,
   onUpload,
   onSelect,
-  onReplace,
-  onRemove
+  onPreview,
+  onRemove,
+  onDropFiles,
+  onInvalidDrop
 }: {
   title: string;
   images: string[];
@@ -386,20 +448,66 @@ function ImageAssetManager({
   sampleLabel: string;
   onUpload: () => void;
   onSelect: (index: number) => void;
-  onReplace: (index: number) => void;
+  onPreview: (index: number) => void;
   onRemove: (index: number) => void;
+  onDropFiles?: (files: string[]) => void;
+  onInvalidDrop?: () => void;
 }) {
   const selectedImage = images[selectedIndex] || images[0];
+  const [isDraggingUpload, setIsDraggingUpload] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  function handleDragEnter(event: DragEvent<HTMLElement>) {
+    if (!onDropFiles) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDraggingUpload(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLElement>) {
+    if (!onDropFiles) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLElement>) {
+    if (!onDropFiles) return;
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDraggingUpload(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>) {
+    if (!onDropFiles) return;
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDraggingUpload(false);
+    const files = droppedImagePaths(event);
+    if (files.length) {
+      onDropFiles(files);
+      return;
+    }
+    onInvalidDrop?.();
+  }
+
   return (
     <div className="image-asset-manager">
-      <button className={`image-asset-preview${selectedImage ? ' has-image' : ''}`} type="button" onClick={onUpload}>
+      <button
+        className={`image-asset-preview${selectedImage ? ' has-image' : ''}${isDraggingUpload ? ' drag-over' : ''}`}
+        type="button"
+        onClick={onUpload}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         {selectedImage ? (
           <img src={localFileUrl(selectedImage)} alt={`${title}预览`} />
         ) : (
           <>
             <ImagePlus size={24} />
             <strong>{title}</strong>
-            <span>支持单张或批量上传</span>
+            <span>仅支持 jpg、jpeg、png、webp 图片，可批量上传</span>
           </>
         )}
       </button>
@@ -410,8 +518,8 @@ function ImageAssetManager({
               <img src={localFileUrl(image)} alt={`素材 ${index + 1}`} />
             </button>
             <div className="image-asset-actions">
-              <button type="button" onClick={() => onReplace(index)} aria-label={`替换素材 ${index + 1}`}>
-                <Upload size={12} />
+              <button type="button" onClick={() => onPreview(index)} aria-label={`预览素材 ${index + 1}`}>
+                <Eye size={12} />
               </button>
               <button type="button" onClick={() => onRemove(index)} aria-label={`删除素材 ${index + 1}`}>
                 <Trash2 size={12} />
@@ -419,11 +527,20 @@ function ImageAssetManager({
             </div>
           </div>
         ))}
-        <button type="button" className="image-asset-add" onClick={onUpload} aria-label="添加素材">
+        <button
+          type="button"
+          className={`image-asset-add${isDraggingUpload ? ' drag-over' : ''}`}
+          onClick={onUpload}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          aria-label="添加素材"
+        >
           <ImagePlus size={16} />
         </button>
       </div>
-      {!images.length ? <span className="image-asset-empty">{sampleLabel}</span> : null}
+      <span className="image-asset-empty">{images.length ? '仅支持图片文件：jpg、jpeg、png、webp' : sampleLabel}</span>
     </div>
   );
 }
@@ -813,6 +930,129 @@ function HomeView() {
   );
 }
 
+function taskPrompt(task: ProductVideoTaskThread) {
+  if (task.description) return task.description;
+  if (task.scenario === 'store-traffic') return '给我生成一个同城探店引流的视频';
+  if (task.scenario === 'product-showcase') return '给我生成一个商品展示的视频';
+  if (task.scenario === 'hot-replica') return '给我生成一个爆款复刻的视频';
+  return '给我生成一个商品口播的视频';
+}
+
+function taskThumbnail(task: ProductVideoTaskThread) {
+  return task.storeImages?.[0] || task.productImages?.[0] || task.productImage || '';
+}
+
+function taskStateText(task: ProductVideoTaskThread, activeTaskId: string | undefined, activePercent: number) {
+  if (task.videoUrl) return '生成完成';
+  if (task.finished && !task.successful) return '生成失败';
+  if (task.taskId === activeTaskId) return `${Math.max(1, activePercent)}% 生成中`;
+  if ((task.status || '').toLowerCase().includes('queue')) return '排队加速中';
+  return task.status || '排队加速中';
+}
+
+function outputRatioStyle(ratio?: string) {
+  if (ratio === '9:16') return { aspectRatio: '9 / 16', width: 'min(280px, 62vw)' };
+  if (ratio === '1:1') return { aspectRatio: '1 / 1', width: 'min(420px, 72vw)' };
+  return { aspectRatio: '16 / 9', width: 'min(506px, 100%)' };
+}
+
+function ProductTaskThreads({
+  tasks,
+  activeTaskId,
+  progress,
+  currentTask,
+  onBackToPreview,
+  onOpenVideo
+}: {
+  tasks: ProductVideoTaskThread[];
+  activeTaskId?: string;
+  progress: { stage: ProductVideoProgressStage; percent: number; label: string; detail: string };
+  currentTask?: ProductVideoTaskThread | null;
+  onBackToPreview: () => void;
+  onOpenVideo: (url: string) => void;
+}) {
+  const mergedTasks = currentTask && !tasks.some((task) => task.taskId === currentTask.taskId) ? [currentTask, ...tasks] : tasks;
+  const visibleTasks = mergedTasks.slice(0, 10);
+  return (
+    <section className="product-task-history" aria-label="生成任务历史">
+      <header className="product-task-history-head">
+        <h2>今天</h2>
+        <div className="product-task-filters">
+          <button type="button" onClick={onBackToPreview}>
+            <X size={14} />
+            返回预览
+          </button>
+          <button type="button" aria-label="搜索任务">
+            <Search size={15} />
+          </button>
+          <button type="button">
+            时间
+            <ChevronDown size={14} />
+          </button>
+          <button type="button">
+            生成模式
+            <ChevronDown size={14} />
+          </button>
+          <button type="button">
+            操作类型
+            <ChevronDown size={14} />
+          </button>
+        </div>
+      </header>
+
+      <div className="product-task-feed">
+        {visibleTasks.map((task, index) => {
+          const isActive = task.taskId === activeTaskId && !task.videoUrl;
+          const stateText = taskStateText(task, activeTaskId, progress.percent);
+          const thumb = taskThumbnail(task);
+          const isFailed = task.finished && !task.successful;
+          return (
+            <article className={`product-task-message${isActive ? ' active' : ''}${isFailed ? ' failed' : ''}`} key={task.id || task.taskId || index}>
+              <div className="product-task-avatar">
+                {thumb ? <img src={mediaPreviewUrl(thumb)} alt="" /> : <WandSparkles size={18} />}
+              </div>
+              <div className="product-task-body">
+                <div className="product-task-line">
+                  <strong>{taskPrompt(task)}</strong>
+                </div>
+                <div className="product-task-meta">
+                  <span>{task.model || 'Seedance 2.0 Fast VIP'}</span>
+                  <span>{task.duration || '5s'}</span>
+                  <button type="button">
+                    详细信息
+                    <Info size={13} />
+                  </button>
+                </div>
+                <button
+                  className="product-task-preview-card"
+                  type="button"
+                  style={outputRatioStyle(task.ratio)}
+                  onClick={() => task.videoUrl && onOpenVideo(task.videoUrl)}
+                >
+                  <em className={task.videoUrl ? 'done' : isFailed ? 'failed' : ''}>{stateText}</em>
+                  {task.videoUrl ? (
+                    <video src={task.videoUrl} controls playsInline />
+                  ) : thumb ? (
+                    <img src={mediaPreviewUrl(thumb)} alt="" />
+                  ) : (
+                    <span />
+                  )}
+                  {isActive ? <i style={{ width: `${Math.max(4, Math.min(progress.percent || 1, 100))}%` }} /> : null}
+                </button>
+                <p>
+                  <CheckCircle2 size={14} />
+                  {task.videoUrl ? '视频已生成，可点击预览' : isFailed ? task.message || '生成失败，请稍后重试' : progress.detail || '会员加速已生效，正在为你生成视频'}
+                </p>
+              </div>
+            </article>
+          );
+        })}
+        {!visibleTasks.length ? <p className="product-task-empty">每次点击生成都会在这里新建一条任务记录。</p> : null}
+      </div>
+    </section>
+  );
+}
+
 function ProductVideoCreateView() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -846,6 +1086,11 @@ function ProductVideoCreateView() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedTask, setGeneratedTask] = useState<ProductVideoTaskStatus | null>(null);
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState('');
+  const [currentTaskId, setCurrentTaskId] = useState('');
+  const [generationScenario, setGenerationScenario] = useState<ProductVideoScenarioKey | null>(null);
+  const [historyScenario, setHistoryScenario] = useState<ProductVideoScenarioKey | null>(null);
+  const [previewImagePath, setPreviewImagePath] = useState<string | null>(null);
+  const [taskThreads, setTaskThreads] = useState<ProductVideoTaskThread[]>(() => readProductVideoRecentTasks());
   const [generationProgress, setGenerationProgress] = useState({
     stage: 'idle' as ProductVideoProgressStage,
     percent: 0,
@@ -853,6 +1098,10 @@ function ProductVideoCreateView() {
     detail: ''
   });
   const uploadProgressMap = useRef<Record<string, { base: number; span: number; label: string }>>({});
+
+  function refreshTaskThreads() {
+    setTaskThreads(readProductVideoRecentTasks());
+  }
 
   useEffect(() => {
     if (queryScenario && productVideoScenarios.some((scenario) => scenario.key === queryScenario)) {
@@ -925,6 +1174,10 @@ function ProductVideoCreateView() {
   const isShowcase = activeScenario === 'product-showcase';
   const isStoreTraffic = activeScenario === 'store-traffic';
   const isHotReplica = activeScenario === 'hot-replica';
+  const isActiveScenarioGeneration = generationScenario === activeScenario && (generationProgress.stage !== 'idle' || Boolean(generatedVideoUrl));
+  const activeScenarioTasks = taskThreads.filter((task) => !task.scenario || task.scenario === activeScenario);
+  const canOpenScenarioHistory = activeScenarioTasks.length > 0 || isActiveScenarioGeneration;
+  const shouldShowScenarioHistory = isActiveScenarioGeneration || historyScenario === activeScenario;
   const descriptionLimit = isHotReplica ? 3000 : isStoreTraffic || activeScenario === 'product-spokesperson' ? 500 : 200;
   const previewHeadline = isHotReplica
     ? '拆解爆款元素，一键复刻专属爆款视频。'
@@ -944,6 +1197,29 @@ function ProductVideoCreateView() {
     : active.title === '商品口播'
       ? '上传商品图与卖点，一键生成专业带货口播视频。'
       : active.subtitle;
+  const currentGenerationTask: ProductVideoTaskThread | null = isActiveScenarioGeneration
+    ? {
+        id: currentTaskId || 'current-generation-task',
+        taskId: currentTaskId || 'current-generation-task',
+        title: active.title,
+        scenario: generationScenario || activeScenario,
+        description: description.trim(),
+        productImage: productImage || undefined,
+        productImages,
+        storeImages,
+        referenceVideo,
+        status: generationProgress.label || status,
+        finished: generationProgress.stage === 'done' || generationProgress.stage === 'failed',
+        successful: generationProgress.stage === 'done',
+        videoUrl: generatedVideoUrl || undefined,
+        message: generationProgress.detail || status,
+        model,
+        quality,
+        ratio,
+        duration,
+        createdAt: new Date().toISOString()
+      }
+    : null;
 
   async function handlePickProductImage() {
     const files = await window.surgicol.dialog.openFiles({
@@ -959,6 +1235,15 @@ function ProductVideoCreateView() {
       });
       setStatus(files.length > 1 ? `已添加 ${files.length} 张商品图，右侧预览已同步更新。` : '商品图已添加，右侧预览已同步更新。');
     }
+  }
+
+  function handleDropProductImages(files: string[]) {
+    setProductImages((current) => {
+      const next = mergeMediaPaths(current, files);
+      setSelectedProductImageIndex(Math.min(current.length, next.length - 1));
+      return next;
+    });
+    setStatus(files.length > 1 ? `已拖入 ${files.length} 张商品图，右侧预览已同步更新。` : '商品图已拖入，右侧预览已同步更新。');
   }
 
   async function handleReplaceProductImage(index: number) {
@@ -981,6 +1266,11 @@ function ProductVideoCreateView() {
       return next;
     });
     setStatus('商品图已移除。');
+  }
+
+  function handlePreviewProductImage(index: number) {
+    const image = productImages[index];
+    if (image) setPreviewImagePath(image);
   }
 
   async function handlePickReferenceVideo() {
@@ -1011,6 +1301,19 @@ function ProductVideoCreateView() {
     }
   }
 
+  function handleDropStoreImages(files: string[]) {
+    setStoreImages((current) => {
+      const next = mergeMediaPaths(current, files);
+      setSelectedStoreImageIndex(Math.min(current.length, next.length - 1));
+      return next;
+    });
+    setStatus(files.length > 1 ? `已拖入 ${files.length} 张门店图，右侧探店视频预览已同步更新。` : '门店图已拖入，右侧探店视频预览已同步更新。');
+  }
+
+  function handleInvalidImageDrop() {
+    setStatus('请拖入 jpg、jpeg、png 或 webp 图片文件。');
+  }
+
   async function handleReplaceStoreImage(index: number) {
     const files = await window.surgicol.dialog.openFiles({
       title: '替换门店图片',
@@ -1031,6 +1334,11 @@ function ProductVideoCreateView() {
       return next;
     });
     setStatus('门店图已移除。');
+  }
+
+  function handlePreviewStoreImage(index: number) {
+    const image = storeImages[index];
+    if (image) setPreviewImagePath(image);
   }
 
   async function handlePickAvatarImage() {
@@ -1073,12 +1381,18 @@ function ProductVideoCreateView() {
     setIsGenerating(false);
     setGeneratedTask(null);
     setGeneratedVideoUrl('');
+    setCurrentTaskId('');
+    setGenerationScenario(null);
+    setHistoryScenario(null);
     uploadProgressMap.current = {};
     setGenerationProgress({ stage: 'idle', percent: 0, label: '', detail: '' });
   }
 
   async function handleGenerate() {
-    if (isGenerating) return;
+    if (isGenerating) {
+      setStatus(generationScenario === activeScenario ? '当前任务正在生成中，请稍等。' : '已有其他场景任务正在生成，切回对应场景可查看进度。');
+      return;
+    }
     if (isHotReplica && !referenceVideo) {
       setStatus('请先上传参考视频，用来拆解爆款节奏与结构。');
       return;
@@ -1097,6 +1411,7 @@ function ProductVideoCreateView() {
     }
 
     setIsGenerating(true);
+    setGenerationScenario(activeScenario);
     setGeneratedTask(null);
     setGeneratedVideoUrl('');
     uploadProgressMap.current = {};
@@ -1277,8 +1592,10 @@ function ProductVideoCreateView() {
         prompt: created.prompt,
         createdAt: new Date().toISOString()
       };
+      setCurrentTaskId(created.taskId);
       const existing = JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as unknown[];
       localStorage.setItem('moya-product-video-tasks', JSON.stringify([savedTask, ...existing].slice(0, 12)));
+      refreshTaskThreads();
       setStatus(`${active.title}任务已提交，正在等待云端生成...`);
       setGenerationProgress({
         stage: 'generating',
@@ -1325,6 +1642,7 @@ function ProductVideoCreateView() {
         message: task.message,
         updatedAt: new Date().toISOString()
       });
+      refreshTaskThreads();
       if (task.finished) return;
     }
     setStatus('任务已提交，云端仍在生成中，稍后可回到最近任务查看。');
@@ -1413,11 +1731,13 @@ function ProductVideoCreateView() {
                 title="商品图"
                 images={productImages}
                 selectedIndex={selectedProductImageIndex}
-                sampleLabel="可一次选择多张商品图"
+                sampleLabel="仅支持图片，可一次选择多张商品图"
                 onUpload={handlePickProductImage}
                 onSelect={setSelectedProductImageIndex}
-                onReplace={handleReplaceProductImage}
+                onPreview={handlePreviewProductImage}
                 onRemove={handleRemoveProductImage}
+                onDropFiles={handleDropProductImages}
+                onInvalidDrop={handleInvalidImageDrop}
               />
             </>
           ) : isStoreTraffic ? (
@@ -1425,22 +1745,26 @@ function ProductVideoCreateView() {
               title="门店图"
               images={storeImages}
               selectedIndex={selectedStoreImageIndex}
-              sampleLabel="可一次选择多张门店图"
+              sampleLabel="仅支持图片，可一次选择多张门店图"
               onUpload={handlePickStoreImages}
               onSelect={setSelectedStoreImageIndex}
-              onReplace={handleReplaceStoreImage}
+              onPreview={handlePreviewStoreImage}
               onRemove={handleRemoveStoreImage}
+              onDropFiles={handleDropStoreImages}
+              onInvalidDrop={handleInvalidImageDrop}
             />
           ) : isShowcase ? (
             <ImageAssetManager
               title="商品图"
               images={productImages}
               selectedIndex={selectedProductImageIndex}
-              sampleLabel="可一次选择多张商品图"
+              sampleLabel="仅支持图片，可一次选择多张商品图"
               onUpload={handlePickProductImage}
               onSelect={setSelectedProductImageIndex}
-              onReplace={handleReplaceProductImage}
+              onPreview={handlePreviewProductImage}
               onRemove={handleRemoveProductImage}
+              onDropFiles={handleDropProductImages}
+              onInvalidDrop={handleInvalidImageDrop}
             />
           ) : (
             <>
@@ -1448,11 +1772,13 @@ function ProductVideoCreateView() {
                 title="商品图"
                 images={productImages}
                 selectedIndex={selectedProductImageIndex}
-                sampleLabel="可一次选择多张商品图"
+                sampleLabel="仅支持图片，可一次选择多张商品图"
                 onUpload={handlePickProductImage}
                 onSelect={setSelectedProductImageIndex}
-                onReplace={handleReplaceProductImage}
+                onPreview={handlePreviewProductImage}
                 onRemove={handleRemoveProductImage}
+                onDropFiles={handleDropProductImages}
+                onInvalidDrop={handleInvalidImageDrop}
               />
               <div className="product-sample-row">
                 {productSamples.map((sample) => (
@@ -1597,67 +1923,28 @@ function ProductVideoCreateView() {
             <RotateCcw size={15} />
             重置
           </button>
-          <button type="button" className="primary-action" onClick={handleGenerate} disabled={isGenerating}>
+          <button type="button" className="primary-action" onClick={handleGenerate} disabled={isGenerating && generationScenario === activeScenario}>
             <WandSparkles size={16} />
-            {isGenerating ? '生成中...' : '生成 150 美豆'}
+            {isGenerating && generationScenario === activeScenario ? '生成中...' : '生成 150 美豆'}
           </button>
         </div>
       </aside>
 
       <main
         className={`product-create-preview${isShowcase ? ' showcase-preview' : ''}${isStoreTraffic ? ' store-preview' : ''}${isHotReplica ? ' replica-preview' : ''}${
-          generationProgress.stage !== 'idle' || generatedVideoUrl ? ' generation-page' : ' guide-page'
+          shouldShowScenarioHistory ? ' generation-page' : ' guide-page'
         }`}
       >
-        {generationProgress.stage !== 'idle' || generatedVideoUrl ? (
+        {shouldShowScenarioHistory ? (
           <section className="product-generation-page">
-            {generatedVideoUrl ? (
-              <div className="product-generated-video-card">
-                <video src={generatedVideoUrl} controls playsInline />
-                <span>{active.title}成片预览</span>
-              </div>
-            ) : (
-              <div className={`product-generation-live-card progress-${generationProgress.stage}`}>
-              <div className="product-generation-card-stack" aria-hidden="true">
-                <span className="product-generation-card ghost-card" />
-                <span className="product-generation-card active-card">
-                  <span className="generation-card-media">
-                    {isStoreTraffic && storeVisual.type === 'image' ? (
-                      <img src={storeVisual.value} alt="" />
-                    ) : productVisual.type === 'image' ? (
-                      <img src={productVisual.value} alt="" />
-                    ) : avatarSource === 'digital' ? (
-                      <AvatarFallbackImage src={avatarPreviewUrl} alt={avatarDisplayName} label={avatarDisplayName} />
-                    ) : (
-                      <strong>{isStoreTraffic ? activeStoreSample.copy : activeSample.copy}</strong>
-                    )}
-                  </span>
-                  <span className="generation-card-caption">{active.title}</span>
-                </span>
-                <span className="product-generation-card mini-card">
-                  <WandSparkles size={22} />
-                </span>
-              </div>
-              <div className="product-generation-live-copy">
-                <span>{generationProgress.stage === 'failed' ? '任务异常' : '云端生成任务'}</span>
-                <strong>{generationProgress.label || status || `${active.title}生成中`}</strong>
-                <p>{generationProgress.detail || status || '正在处理素材并渲染成片'}</p>
-                <div className="product-progress-track large">
-                  <i style={{ width: `${Math.max(3, Math.min(generationProgress.percent || 1, 100))}%` }} />
-                </div>
-                <div className="product-generation-live-meta">
-                  <span>{generationProgress.percent || 1}%</span>
-                  <span>{quality} · {ratio} · {duration}</span>
-                </div>
-                <div className="product-generation-steps">
-                  <span className={generationProgress.percent >= 12 ? 'active' : undefined}>上传素材</span>
-                  <span className={generationProgress.percent >= 55 ? 'active' : undefined}>生成链接</span>
-                  <span className={generationProgress.percent >= 65 ? 'active' : undefined}>提交任务</span>
-                  <span className={generationProgress.percent >= 72 ? 'active' : undefined}>渲染成片</span>
-                </div>
-              </div>
-            </div>
-            )}
+            <ProductTaskThreads
+              tasks={activeScenarioTasks}
+              activeTaskId={currentTaskId || currentGenerationTask?.taskId}
+              progress={generationProgress}
+              currentTask={currentGenerationTask}
+              onBackToPreview={() => setHistoryScenario(null)}
+              onOpenVideo={setGeneratedVideoUrl}
+            />
           </section>
         ) : (
           <>
@@ -1675,6 +1962,12 @@ function ProductVideoCreateView() {
               <div>
                 <h1>{previewHeadline}</h1>
                 <p>{previewSubtext}</p>
+                {canOpenScenarioHistory ? (
+                  <button className="product-history-return" type="button" onClick={() => setHistoryScenario(activeScenario)}>
+                    <ListVideo size={15} />
+                    查看历史任务
+                  </button>
+                ) : null}
               </div>
               {!isShowcase && !isStoreTraffic && !isHotReplica ? (
                 <div className="product-preview-metrics">
@@ -1696,6 +1989,18 @@ function ProductVideoCreateView() {
           </>
         )}
       </main>
+
+      {previewImagePath ? (
+        <div className="image-preview-overlay" role="dialog" aria-modal="true" aria-label="图片预览" onClick={() => setPreviewImagePath(null)}>
+          <div className="image-preview-modal" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <strong>图片预览</strong>
+              <button type="button" onClick={() => setPreviewImagePath(null)} aria-label="关闭">×</button>
+            </header>
+            <img src={localFileUrl(previewImagePath)} alt="图片预览" />
+          </div>
+        </div>
+      ) : null}
 
       {avatarModalOpen ? (
         <div className="avatar-picker-overlay" role="dialog" aria-modal="true" aria-label="选择数字人">
