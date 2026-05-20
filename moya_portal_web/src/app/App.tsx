@@ -318,12 +318,114 @@ function isRecoverableImageUploadError(error: unknown) {
   return isOssConfigError(error) || /OSS.*(timeout|timed out|failed|HTTP|network|socket|ECONN|ETIMEDOUT)|上传.*(超时|失败)/i.test(message);
 }
 
+function mergeMediaPaths(existing: string[], incoming: string[], limit = 6) {
+  const next = [...existing];
+  incoming.forEach((filePath) => {
+    if (filePath && !next.includes(filePath)) next.push(filePath);
+  });
+  return next.slice(0, limit);
+}
+
 interface ProductScenarioVisualProps {
   scenario: typeof productVideoScenarios[number];
   productVisual: { type: 'image' | 'sample'; value: string };
   storeVisual: { type: 'image' | 'sample'; value: string };
   referenceVideo?: string | null;
   sampleCopy: string;
+}
+
+function ScenarioFallbackImage({ src, alt = '', label, tone = 'product' }: { src: string; alt?: string; label: string; tone?: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+  return (
+    <>
+      {!failed ? <img src={src} alt={alt} onError={() => setFailed(true)} /> : null}
+      {failed ? (
+        <span className={`scenario-fallback-art ${tone}`}>
+          <i />
+          <b>{label}</b>
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function AvatarFallbackImage({ src, alt, label }: { src: string; alt: string; label: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+  return (
+    <span className="avatar-fallback-image">
+      {!failed ? <img src={src} alt={alt} onError={() => setFailed(true)} /> : null}
+      {failed ? (
+        <span className="scenario-fallback-art avatar">
+          <i />
+          <b>{label}</b>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function ImageAssetManager({
+  title,
+  images,
+  selectedIndex,
+  sampleLabel,
+  onUpload,
+  onSelect,
+  onReplace,
+  onRemove
+}: {
+  title: string;
+  images: string[];
+  selectedIndex: number;
+  sampleLabel: string;
+  onUpload: () => void;
+  onSelect: (index: number) => void;
+  onReplace: (index: number) => void;
+  onRemove: (index: number) => void;
+}) {
+  const selectedImage = images[selectedIndex] || images[0];
+  return (
+    <div className="image-asset-manager">
+      <button className={`image-asset-preview${selectedImage ? ' has-image' : ''}`} type="button" onClick={onUpload}>
+        {selectedImage ? (
+          <img src={localFileUrl(selectedImage)} alt={`${title}预览`} />
+        ) : (
+          <>
+            <ImagePlus size={24} />
+            <strong>{title}</strong>
+            <span>支持单张或批量上传</span>
+          </>
+        )}
+      </button>
+      <div className="image-asset-grid">
+        {images.map((image, index) => (
+          <div className={`image-asset-item${index === selectedIndex ? ' active' : ''}`} key={`${image}-${index}`}>
+            <button type="button" className="image-asset-thumb" onClick={() => onSelect(index)} aria-label={`预览素材 ${index + 1}`}>
+              <img src={localFileUrl(image)} alt={`素材 ${index + 1}`} />
+            </button>
+            <div className="image-asset-actions">
+              <button type="button" onClick={() => onReplace(index)} aria-label={`替换素材 ${index + 1}`}>
+                <Upload size={12} />
+              </button>
+              <button type="button" onClick={() => onRemove(index)} aria-label={`删除素材 ${index + 1}`}>
+                <Trash2 size={12} />
+              </button>
+            </div>
+          </div>
+        ))}
+        <button type="button" className="image-asset-add" onClick={onUpload} aria-label="添加素材">
+          <ImagePlus size={16} />
+        </button>
+      </div>
+      {!images.length ? <span className="image-asset-empty">{sampleLabel}</span> : null}
+    </div>
+  );
 }
 
 function ProductScenarioVisual({ scenario, productVisual, storeVisual, referenceVideo, sampleCopy }: ProductScenarioVisualProps) {
@@ -356,7 +458,7 @@ function ProductScenarioVisual({ scenario, productVisual, storeVisual, reference
             {referenceVideo ? (
               <video src={localFileUrl(referenceVideo)} muted />
             ) : (
-              <img src={visual.inputImages[0]} alt="" />
+              <ScenarioFallbackImage src={visual.inputImages[0]} label="爆款参考" tone={scenario.tone} />
             )}
             <span>
               <PlayCircle size={16} />
@@ -366,7 +468,7 @@ function ProductScenarioVisual({ scenario, productVisual, storeVisual, reference
 
         <div className="replica-product-transfer">
           <div className="replica-product-card">
-            <img src={replicaProduct} alt="" />
+            <ScenarioFallbackImage src={replicaProduct} label={sampleCopy} tone={scenario.tone} />
           </div>
           <small>商品图</small>
           <ArrowRight size={34} />
@@ -375,9 +477,9 @@ function ProductScenarioVisual({ scenario, productVisual, storeVisual, reference
         <div className="replica-output-block">
           <strong>AI 复刻</strong>
           <div className="replica-video-phone replica-result">
-            <img src={outputImage} alt="" />
+            <ScenarioFallbackImage src={outputImage} label="AI 复刻" tone={scenario.tone} />
             <div className="replica-hand-product">
-              <img src={replicaProduct} alt="" />
+              <ScenarioFallbackImage src={replicaProduct} label={sampleCopy} tone={scenario.tone} />
             </div>
             <span>AI生成</span>
           </div>
@@ -399,7 +501,7 @@ function ProductScenarioVisual({ scenario, productVisual, storeVisual, reference
               ) : scenario.key === 'hot-replica' && index === 0 ? (
                 <PlayCircle size={24} />
               ) : (
-                <img src={image} alt="" />
+                <ScenarioFallbackImage src={image} label={index === 0 ? sampleCopy : visual.inputTitle} tone={scenario.tone} />
               )}
             </div>
           ))}
@@ -413,20 +515,20 @@ function ProductScenarioVisual({ scenario, productVisual, storeVisual, reference
       <div className="scenario-output-phone">
         <span>AI生成</span>
         <div className={`scenario-phone-video ${scenario.key}`} aria-hidden="true">
-          <img src={outputImage} alt="" />
+          <ScenarioFallbackImage src={outputImage} label={visual.outputTitle} tone={scenario.tone} />
           <i className="scenario-video-shine" />
           <i className="scenario-video-focus" />
           {scenario.key === 'product-spokesperson' ? (
             <div className="scenario-spokesperson-layout">
               <div className="scenario-product-prop">
-                <img src={hasUserProduct ? productVisual.value : inputImages[0]} alt="" />
+                <ScenarioFallbackImage src={hasUserProduct ? productVisual.value : inputImages[0]} label={sampleCopy} tone={scenario.tone} />
               </div>
             </div>
           ) : null}
           {scenario.key === 'product-showcase' ? (
             <div className="scenario-showcase-layout">
               <div className="scenario-showcase-product">
-                <img src={hasUserProduct ? productVisual.value : inputImages[0]} alt="" />
+                <ScenarioFallbackImage src={hasUserProduct ? productVisual.value : inputImages[0]} label={sampleCopy} tone={scenario.tone} />
               </div>
               <div className="scenario-showcase-reflections">
                 <i />
@@ -437,7 +539,7 @@ function ProductScenarioVisual({ scenario, productVisual, storeVisual, reference
           {scenario.key === 'store-traffic' ? (
             <div className="scenario-store-layout">
               <div className="scenario-store-prop">
-                <img src={storeProp} alt="" />
+                <ScenarioFallbackImage src={storeProp} label={sampleCopy} tone={scenario.tone} />
               </div>
               <div className="scenario-store-sign">{sampleCopy}</div>
               <div className="scenario-store-frames">
@@ -720,9 +822,11 @@ function ProductVideoCreateView() {
     ? queryScenario!
     : 'product-spokesperson';
   const [activeScenario, setActiveScenario] = useState<ProductVideoScenarioKey>(initialScenario);
-  const [productImage, setProductImage] = useState<string | null>(null);
+  const [productImages, setProductImages] = useState<string[]>([]);
+  const [selectedProductImageIndex, setSelectedProductImageIndex] = useState(0);
   const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
   const [storeImages, setStoreImages] = useState<string[]>([]);
+  const [selectedStoreImageIndex, setSelectedStoreImageIndex] = useState(0);
   const [selectedStoreSample, setSelectedStoreSample] = useState(storeSamples[0].id);
   const [selectedSample, setSelectedSample] = useState(productSamples[0].id);
   const [description, setDescription] = useState('');
@@ -800,6 +904,8 @@ function ProductVideoCreateView() {
   const active = productVideoScenarios.find((scenario) => scenario.key === activeScenario) ?? productVideoScenarios[0];
   const activeSample = productSamples.find((sample) => sample.id === selectedSample) ?? productSamples[0];
   const activeStoreSample = storeSamples.find((sample) => sample.id === selectedStoreSample) ?? storeSamples[0];
+  const productImage = productImages[selectedProductImageIndex] || productImages[0] || null;
+  const storePreviewImage = storeImages[selectedStoreImageIndex] || storeImages[0] || null;
   const selectedAvatar = digitalHumanAvatars.find((avatar) => avatar.id === selectedAvatarId) ?? digitalHumanAvatars[0];
   const selectedAvatarLook = selectedAvatar.variants.find((look) => look.id === selectedAvatarVariant) ?? selectedAvatar.variants[0];
   const avatarPreviewUrl = customAvatarPath && avatarSource === 'upload' ? localFileUrl(customAvatarPath) : selectedAvatarLook.image || selectedAvatar.image;
@@ -813,8 +919,8 @@ function ProductVideoCreateView() {
       ? '以用户上传的数字人照片为唯一人物身份参考，保持同一张脸、同一年龄感、同一发型和服装主特征。'
       : `${selectedAvatar.prompt} 当前场景：${selectedAvatarLook.label}，${selectedAvatarLook.prompt}`;
   const productVisual = productImage ? { type: 'image' as const, value: localFileUrl(productImage) } : { type: 'sample' as const, value: activeSample.color };
-  const storeVisual = storeImages[0]
-    ? { type: 'image' as const, value: localFileUrl(storeImages[0]) }
+  const storeVisual = storePreviewImage
+    ? { type: 'image' as const, value: localFileUrl(storePreviewImage) }
     : { type: 'sample' as const, value: activeStoreSample.color };
   const isShowcase = activeScenario === 'product-showcase';
   const isStoreTraffic = activeScenario === 'store-traffic';
@@ -842,13 +948,39 @@ function ProductVideoCreateView() {
   async function handlePickProductImage() {
     const files = await window.surgicol.dialog.openFiles({
       title: '选择商品图片',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    });
+    if (files.length) {
+      setProductImages((current) => {
+        const next = mergeMediaPaths(current, files);
+        setSelectedProductImageIndex(Math.min(current.length, next.length - 1));
+        return next;
+      });
+      setStatus(files.length > 1 ? `已添加 ${files.length} 张商品图，右侧预览已同步更新。` : '商品图已添加，右侧预览已同步更新。');
+    }
+  }
+
+  async function handleReplaceProductImage(index: number) {
+    const files = await window.surgicol.dialog.openFiles({
+      title: '替换商品图片',
       properties: ['openFile'],
       filters: [{ name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
     });
     if (files[0]) {
-      setProductImage(files[0]);
-      setStatus('商品图已添加，右侧预览已同步更新。');
+      setProductImages((current) => current.map((image, imageIndex) => (imageIndex === index ? files[0] : image)));
+      setSelectedProductImageIndex(index);
+      setStatus('商品图已替换。');
     }
+  }
+
+  function handleRemoveProductImage(index: number) {
+    setProductImages((current) => {
+      const next = current.filter((_, imageIndex) => imageIndex !== index);
+      setSelectedProductImageIndex(Math.max(0, Math.min(selectedProductImageIndex, next.length - 1)));
+      return next;
+    });
+    setStatus('商品图已移除。');
   }
 
   async function handlePickReferenceVideo() {
@@ -870,9 +1002,35 @@ function ProductVideoCreateView() {
       filters: [{ name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
     });
     if (files.length) {
-      setStoreImages(files.slice(0, 6));
-      setStatus('门店图已添加，右侧探店视频预览已同步更新。');
+      setStoreImages((current) => {
+        const next = mergeMediaPaths(current, files);
+        setSelectedStoreImageIndex(Math.min(current.length, next.length - 1));
+        return next;
+      });
+      setStatus(files.length > 1 ? `已添加 ${files.length} 张门店图，右侧探店视频预览已同步更新。` : '门店图已添加，右侧探店视频预览已同步更新。');
     }
+  }
+
+  async function handleReplaceStoreImage(index: number) {
+    const files = await window.surgicol.dialog.openFiles({
+      title: '替换门店图片',
+      properties: ['openFile'],
+      filters: [{ name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    });
+    if (files[0]) {
+      setStoreImages((current) => current.map((image, imageIndex) => (imageIndex === index ? files[0] : image)));
+      setSelectedStoreImageIndex(index);
+      setStatus('门店图已替换。');
+    }
+  }
+
+  function handleRemoveStoreImage(index: number) {
+    setStoreImages((current) => {
+      const next = current.filter((_, imageIndex) => imageIndex !== index);
+      setSelectedStoreImageIndex(Math.max(0, Math.min(selectedStoreImageIndex, next.length - 1)));
+      return next;
+    });
+    setStatus('门店图已移除。');
   }
 
   async function handlePickAvatarImage() {
@@ -891,9 +1049,11 @@ function ProductVideoCreateView() {
   }
 
   function resetForm() {
-    setProductImage(null);
+    setProductImages([]);
+    setSelectedProductImageIndex(0);
     setReferenceVideo(null);
     setStoreImages([]);
+    setSelectedStoreImageIndex(0);
     setSelectedStoreSample(storeSamples[0].id);
     setSelectedSample(productSamples[0].id);
     setDescription('');
@@ -959,7 +1119,7 @@ function ProductVideoCreateView() {
         detail: '正在创建 OSS 上传任务'
       });
       setStatus('正在准备素材...');
-      const imagePaths = isStoreTraffic ? storeImages : productImage ? [productImage] : [];
+      const imagePaths = isStoreTraffic ? storeImages : productImages;
       const imageAccessUrls: string[] = [];
       const imageUploads: OssUploadResult[] = [];
       const uploadSpan = 47 / Math.max(imagePaths.length + (referenceVideo ? 1 : 0), 1);
@@ -979,15 +1139,43 @@ function ProductVideoCreateView() {
           stage: 'uploading',
           percent: Math.round(3 + index * uploadSpan),
           label: input.label,
-          detail: '正在读取本地图片数据'
+          detail: '正在上传图片素材'
         });
-        const inlineImage = await readProductVideoAssetAsDataUrl(input.path);
-        imageAccessUrls.push(inlineImage.dataUrl);
+        try {
+          const uploaded = await withTimeout(
+            uploadProductVideoAsset(input.path, input.folder, taskId),
+            30000,
+            '图片上传 OSS 超时，正在尝试本地压缩直传'
+          );
+          imageUploads.push(uploaded);
+          setGenerationProgress({
+            stage: 'signing',
+            percent: Math.round(3 + (index + 0.85) * uploadSpan),
+            label: '生成图片访问地址',
+            detail: '正在为图片创建火山可访问的临时链接'
+          });
+          imageAccessUrls.push(await getProductVideoAssetAccessUrl(uploaded.mediaUrl));
+        } catch (error) {
+          if (isOssConfigError(error)) {
+            throw new Error('图片素材必须上传到 OSS 才能稳定提供给火山访问，请先恢复 OSS AccessKey 配置。');
+          }
+          if (!isRecoverableImageUploadError(error)) {
+            throw error;
+          }
+          setGenerationProgress({
+            stage: 'uploading',
+            percent: Math.round(3 + (index + 0.4) * uploadSpan),
+            label: '切换本地图片直传',
+            detail: 'OSS 图片上传超时，正在压缩图片作为兜底素材'
+          });
+          const inlineImage = await readProductVideoAssetAsDataUrl(input.path, { maxDimension: 720, quality: 68 });
+          imageAccessUrls.push(inlineImage.dataUrl);
+        }
         setGenerationProgress({
           stage: 'uploading',
           percent: Math.round(3 + (index + 1) * uploadSpan),
-          label: '本地图片已准备',
-          detail: '图片将直接提交给火山生成，不再等待 OSS 上传'
+          label: '图片素材已准备',
+          detail: '图片访问地址已准备完成'
         });
       }
       let referenceUpload = null;
@@ -1063,6 +1251,7 @@ function ProductVideoCreateView() {
         title: active.title,
         description: description.trim(),
         productImage,
+        productImages,
         referenceVideo,
         storeImages,
         imageUrls: imageUploads.map((item) => item.mediaUrl),
@@ -1196,81 +1385,75 @@ function ProductVideoCreateView() {
             </button>
           </label>
           {isHotReplica ? (
-            <button className="store-upload-zone replica-product-zone" type="button" onClick={handlePickProductImage}>
-              <span>
-                拖拽 & <strong>上传</strong>
-              </span>
-              <small>试试这些</small>
-              <div className="store-sample-strip">
-                {productSamples.map((sample, index) => (
-                  <i
-                    key={sample.id}
-                    className={selectedSample === sample.id && !productImage ? 'active' : undefined}
-                    style={{ '--sample-color': sample.color, '--sample-index': index } as CSSProperties}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setProductImage(null);
-                      setSelectedSample(sample.id);
-                    }}
-                  >
-                    {productImage && index === 0 ? <img src={localFileUrl(productImage)} alt="商品图" /> : sample.copy.slice(0, 2)}
-                  </i>
-                ))}
-              </div>
-            </button>
+            <>
+              <button className="store-upload-zone replica-product-zone" type="button" onClick={handlePickProductImage}>
+                <span>
+                  拖拽 & <strong>上传</strong>
+                </span>
+                <small>试试这些</small>
+                <div className="store-sample-strip">
+                  {productSamples.map((sample, index) => (
+                    <i
+                      key={sample.id}
+                      className={selectedSample === sample.id && !productImage ? 'active' : undefined}
+                      style={{ '--sample-color': sample.color, '--sample-index': index } as CSSProperties}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setProductImages([]);
+                        setSelectedProductImageIndex(0);
+                        setSelectedSample(sample.id);
+                      }}
+                    >
+                      {productImages[index] ? <img src={localFileUrl(productImages[index])} alt="商品图" /> : sample.copy.slice(0, 2)}
+                    </i>
+                  ))}
+                </div>
+              </button>
+              <ImageAssetManager
+                title="商品图"
+                images={productImages}
+                selectedIndex={selectedProductImageIndex}
+                sampleLabel="可一次选择多张商品图"
+                onUpload={handlePickProductImage}
+                onSelect={setSelectedProductImageIndex}
+                onReplace={handleReplaceProductImage}
+                onRemove={handleRemoveProductImage}
+              />
+            </>
           ) : isStoreTraffic ? (
-            <button className="store-upload-zone" type="button" onClick={handlePickStoreImages}>
-              <span>
-                拖拽 & <strong>上传</strong>
-              </span>
-              <small>试试这些</small>
-              <div className="store-sample-strip">
-                {storeSamples.map((sample, index) => (
-                  <i
-                    key={sample.id}
-                    className={selectedStoreSample === sample.id && !storeImages.length ? 'active' : undefined}
-                    style={{ '--sample-color': sample.color, '--sample-index': index } as CSSProperties}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setStoreImages([]);
-                      setSelectedStoreSample(sample.id);
-                    }}
-                  >
-                    {storeImages[index] ? <img src={localFileUrl(storeImages[index])} alt="门店图" /> : sample.copy.slice(0, 2)}
-                  </i>
-                ))}
-              </div>
-            </button>
+            <ImageAssetManager
+              title="门店图"
+              images={storeImages}
+              selectedIndex={selectedStoreImageIndex}
+              sampleLabel="可一次选择多张门店图"
+              onUpload={handlePickStoreImages}
+              onSelect={setSelectedStoreImageIndex}
+              onReplace={handleReplaceStoreImage}
+              onRemove={handleRemoveStoreImage}
+            />
           ) : isShowcase ? (
-            <div className="showcase-upload-panel">
-              <button
-                type="button"
-                className="showcase-upload-thumb"
-                onClick={() => {
-                  setProductImage(null);
-                  setSelectedSample(activeSample.id);
-                }}
-                style={{ '--sample-color': activeSample.color } as CSSProperties}
-              >
-                {productImage ? <img src={localFileUrl(productImage)} alt="商品图预览" /> : <span>{activeSample.copy}</span>}
-              </button>
-              <button className="showcase-upload-add" type="button" onClick={handlePickProductImage} aria-label="添加商品图">
-                <ImagePlus size={18} />
-              </button>
-            </div>
+            <ImageAssetManager
+              title="商品图"
+              images={productImages}
+              selectedIndex={selectedProductImageIndex}
+              sampleLabel="可一次选择多张商品图"
+              onUpload={handlePickProductImage}
+              onSelect={setSelectedProductImageIndex}
+              onReplace={handleReplaceProductImage}
+              onRemove={handleRemoveProductImage}
+            />
           ) : (
             <>
-              <button className="product-upload-zone" type="button" onClick={handlePickProductImage}>
-                {productImage ? (
-                  <img src={localFileUrl(productImage)} alt="商品图预览" />
-                ) : (
-                  <>
-                    <ImagePlus size={28} />
-                    <strong>拖入或上传商品图</strong>
-                    <span>支持 JPG / PNG / WebP</span>
-                  </>
-                )}
-              </button>
+              <ImageAssetManager
+                title="商品图"
+                images={productImages}
+                selectedIndex={selectedProductImageIndex}
+                sampleLabel="可一次选择多张商品图"
+                onUpload={handlePickProductImage}
+                onSelect={setSelectedProductImageIndex}
+                onReplace={handleReplaceProductImage}
+                onRemove={handleRemoveProductImage}
+              />
               <div className="product-sample-row">
                 {productSamples.map((sample) => (
                   <button
@@ -1278,7 +1461,8 @@ function ProductVideoCreateView() {
                     type="button"
                     className={selectedSample === sample.id && !productImage ? 'active' : undefined}
                     onClick={() => {
-                      setProductImage(null);
+                      setProductImages([]);
+                      setSelectedProductImageIndex(0);
                       setSelectedSample(sample.id);
                     }}
                     style={{ '--sample-color': sample.color } as CSSProperties}
@@ -1365,7 +1549,7 @@ function ProductVideoCreateView() {
                 </button>
               </div>
               <button className="avatar-current-preview" type="button" onClick={() => setAvatarModalOpen(true)}>
-                <img src={avatarPreviewUrl} alt={avatarDisplayName} />
+                <AvatarFallbackImage src={avatarPreviewUrl} alt={avatarDisplayName} label={avatarDisplayName} />
                 <span>
                   <strong>{avatarDisplayName}</strong>
                   <small>{avatarSource === 'upload' ? '自定义形象 · 身份锁定' : `${selectedAvatar.role} · 身份锁定`}</small>
@@ -1443,7 +1627,7 @@ function ProductVideoCreateView() {
                     ) : productVisual.type === 'image' ? (
                       <img src={productVisual.value} alt="" />
                     ) : avatarSource === 'digital' ? (
-                      <img src={avatarPreviewUrl} alt="" />
+                      <AvatarFallbackImage src={avatarPreviewUrl} alt={avatarDisplayName} label={avatarDisplayName} />
                     ) : (
                       <strong>{isStoreTraffic ? activeStoreSample.copy : activeSample.copy}</strong>
                     )}
@@ -1551,7 +1735,7 @@ function ProductVideoCreateView() {
                         setAvatarMode('image');
                       }}
                     >
-                      <img src={avatar.image} alt={avatar.name} />
+                      <AvatarFallbackImage src={avatar.image} alt={avatar.name} label={avatar.name} />
                       <strong>{avatar.name}</strong>
                       <span>{avatar.role}</span>
                       <small>3 个场景位 · 同一身份</small>
@@ -1572,7 +1756,7 @@ function ProductVideoCreateView() {
                           setAvatarMode('image');
                         }}
                       >
-                        <img src={variant.image} alt={`${selectedAvatar.name} ${index + 1}`} />
+                        <AvatarFallbackImage src={variant.image} alt={`${selectedAvatar.name} ${index + 1}`} label={`${selectedAvatar.name} ${index + 1}`} />
                         <span>{selectedAvatar.name} {index + 1} · {variant.label}</span>
                         <small>{variant.scene}</small>
                       </button>

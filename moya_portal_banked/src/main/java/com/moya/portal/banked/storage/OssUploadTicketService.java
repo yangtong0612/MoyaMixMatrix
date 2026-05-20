@@ -53,7 +53,7 @@ public class OssUploadTicketService {
 		try {
 			URL uploadUrl = ossClient.generatePresignedUrl(signedRequest);
 			return new OssUploadTicketResponse(
-					uploadUrl.toString(),
+					forceHttps(uploadUrl.toString()),
 					oss.getBucket(),
 					objectKey,
 					buildPublicMediaUrl(oss, objectKey),
@@ -190,6 +190,11 @@ public class OssUploadTicketService {
 	private String trimEndpoint(String value) {
 		if (isBlank(value)) return "";
 		return value.replaceAll("^https?://", "").replaceAll("/+$", "");
+	}
+
+	private String forceHttps(String url) {
+		if (isBlank(url)) return url;
+		return url.replaceFirst("^http://", "https://");
 	}
 
 	private void requireOssEnabled(StorageProperties.Oss oss) {

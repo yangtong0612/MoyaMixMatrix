@@ -6,7 +6,6 @@ const fs = require('node:fs/promises');
 const { execFile, execFileSync } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
-const { Readable } = require('node:stream');
 const { TextDecoder } = require('node:util');
 const { app, BrowserWindow, Menu, dialog, ipcMain, nativeImage, net, protocol, shell } = require('electron');
 const Store = require('electron-store');
@@ -114,7 +113,7 @@ function registerMediaProtocol() {
         const end = match[2] ? Number(match[2]) : stat.size - 1;
         const safeStart = Math.max(0, Math.min(start, stat.size - 1));
         const safeEnd = Math.max(safeStart, Math.min(end, stat.size - 1));
-        return new Response(Readable.toWeb(fsSync.createReadStream(filePath, { start: safeStart, end: safeEnd })), {
+        return new Response(createSafeFileWebStream(filePath, { start: safeStart, end: safeEnd }), {
           status: 206,
           headers: {
             'Content-Type': contentType,
@@ -126,7 +125,7 @@ function registerMediaProtocol() {
       }
     }
 
-    return new Response(Readable.toWeb(fsSync.createReadStream(filePath)), {
+    return new Response(createSafeFileWebStream(filePath), {
       status: 200,
       headers: {
         'Content-Type': contentType,
@@ -134,6 +133,48 @@ function registerMediaProtocol() {
         'Accept-Ranges': 'bytes'
       }
     });
+  });
+}
+
+function createSafeFileWebStream(filePath, options = {}) {
+  let nodeStream;
+  let settled = false;
+  return new ReadableStream({
+    start(controller) {
+      nodeStream = fsSync.createReadStream(filePath, options);
+      nodeStream.on('data', (chunk) => {
+        if (settled) return;
+        try {
+          controller.enqueue(new Uint8Array(chunk));
+        } catch {
+          settled = true;
+          nodeStream.destroy();
+        }
+      });
+      nodeStream.once('end', () => {
+        if (settled) return;
+        settled = true;
+        try {
+          controller.close();
+        } catch {
+          // The browser may cancel media range requests after enough bytes are read.
+        }
+      });
+      nodeStream.once('error', (error) => {
+        if (settled) return;
+        settled = true;
+        try {
+          controller.error(error);
+        } catch {
+          // Ignore late stream errors after the response has already been closed.
+        }
+      });
+    },
+    cancel() {
+      if (settled) return;
+      settled = true;
+      if (nodeStream) nodeStream.destroy();
+    }
   });
 }
 

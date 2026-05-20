@@ -18,7 +18,7 @@ http.interceptors.response.use(
   (error) => {
     const data = error?.response?.data;
     const status = error?.response?.status;
-    const message = extractErrorMessage(data) || statusMessage(status) || error.message || '请求失败';
+    const message = extractErrorMessage(data) || statusMessage(status, error) || error.message || '请求失败';
     if ((status === 401 || status === 403) && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('moya-auth-expired'));
     }
@@ -38,10 +38,30 @@ function extractErrorMessage(data: unknown) {
   return '';
 }
 
-function statusMessage(status?: number) {
+function statusMessage(status?: number, error?: unknown) {
   if (status === 401) return '登录已过期，请重新登录';
   if (status === 403) return '登录已过期或没有权限，请重新登录';
+  if (isApiProxyFailure(status, error)) {
+    return '无法连接后端服务，请先启动 moya_portal_banked，并确认前端代理目标为 http://localhost:8081。';
+  }
   return '';
+}
+
+function isApiProxyFailure(status?: number, error?: unknown) {
+  const message = readErrorText(error).toLowerCase();
+  if (!message.includes('status code 500') && !message.includes('econnrefused') && !message.includes('proxy')) return false;
+  const config = (error as { config?: { url?: string } } | undefined)?.config;
+  return status === 500 && typeof config?.url === 'string' && config.url.startsWith('/product-video/');
+}
+
+function readErrorText(error: unknown) {
+  if (!error || typeof error !== 'object') return String(error || '');
+  const body = error as Record<string, unknown>;
+  return [
+    body.message,
+    (body.cause as Record<string, unknown> | undefined)?.message,
+    (body.response as Record<string, unknown> | undefined)?.data
+  ].filter((item) => typeof item === 'string').join(' ');
 }
 
 function isPublicApi(url = '') {

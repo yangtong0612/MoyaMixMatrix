@@ -19,6 +19,8 @@ import com.moya.portal.banked.productvideo.dto.ProductVideoCreateRequest;
 import com.moya.portal.banked.productvideo.dto.ProductVideoCreateResponse;
 import com.moya.portal.banked.productvideo.dto.ProductVideoConfigStatusResponse;
 import com.moya.portal.banked.productvideo.dto.ProductVideoStatusResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -27,6 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class ProductVideoService {
 
 	private static final String TASK_PATH = "/api/v3/contents/generations/tasks";
+	private static final Logger log = LoggerFactory.getLogger(ProductVideoService.class);
 
 	private final ProductVideoProperties properties;
 	private final ObjectMapper objectMapper;
@@ -266,6 +269,8 @@ public class ProductVideoService {
 					: objectMapper.readTree(response.body());
 			if (response.statusCode() < 200 || response.statusCode() >= 300) {
 				String message = errorMessage(body);
+				log.warn("Volcengine video API failed, method={}, path={}, status={}, message={}, body={}",
+						method, path, response.statusCode(), message, body);
 				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, message.isBlank() ? "火山视频生成接口调用失败" : message);
 			}
 			return body;
@@ -273,6 +278,8 @@ public class ProductVideoService {
 			throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "火山视频生成任务创建超时，请减少图片数量或稍后重试", e);
 		} catch (IOException e) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "火山视频生成接口响应解析失败", e);
+		} catch (IllegalArgumentException e) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "火山视频生成服务地址配置无效，请检查 MOYA_VOLCENGINE_VIDEO_BASE_URL", e);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "火山视频生成接口调用被中断", e);
@@ -282,6 +289,9 @@ public class ProductVideoService {
 	private void ensureEnabled() {
 		if (!properties.isEnabled() || !hasApiKey()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, disabledMessage());
+		}
+		if (properties.getBaseUrl() == null || properties.getBaseUrl().isBlank()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "火山视频生成服务地址未配置，请检查 MOYA_VOLCENGINE_VIDEO_BASE_URL。");
 		}
 	}
 
@@ -381,6 +391,12 @@ public class ProductVideoService {
 	}
 
 	private String errorMessage(JsonNode node) {
+		if (node != null && node.isArray()) {
+			for (JsonNode child : node) {
+				String nested = errorMessage(child);
+				if (!nested.isBlank()) return nested;
+			}
+		}
 		String direct = firstText(node, "message", "error", "msg", "code");
 		if (!direct.isBlank()) return direct;
 		for (String key : List.of("error", "data", "detail")) {
