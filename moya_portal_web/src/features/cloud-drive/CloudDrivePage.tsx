@@ -53,6 +53,7 @@ import {
 } from './api/netdisk';
 import { useCloudDriveStore, type CloudMenuKey, type FileCategory, type UploadState } from './cloudDriveStore';
 import { CloudFileTable, formatSize, type CloudFileViewMode } from './components/CloudFileTable';
+import { DocumentPreview } from './components/DocumentPreview';
 import { TransferPanel } from './components/TransferPanel';
 import './cloudDrive.css';
 
@@ -803,6 +804,10 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
 
   function previewNode(node: DriveNodeView) {
     if (node.nodeType !== 'FILE') return;
+    if (!isNativeMediaPreview(node)) {
+      store.setPreviewState({ node, url: node.previewUrl || node.downloadUrl || '' });
+      return;
+    }
     if (!node.previewUrl && !node.downloadUrl) return toast('当前文件没有可用预览地址');
     store.setPreviewState({ node, url: node.previewUrl || node.downloadUrl || '' });
   }
@@ -1637,8 +1642,11 @@ function PreviewModal() {
   const preview = useCloudDriveStore((store) => store.previewState);
   const setPreview = useCloudDriveStore((store) => store.setPreviewState);
   if (!preview) return null;
-  const name = preview.node.name;
-  const mimeType = preview.node.mimeType || '';
+  const node = preview.node;
+  const url = preview.url;
+  const name = node.name;
+  const mimeType = node.mimeType || '';
+  const isNativeMedia = isNativeMediaPreview(node);
   return (
     <div className="modal-mask">
       <div className="cloud-preview-dialog">
@@ -1648,12 +1656,13 @@ function PreviewModal() {
             ×
           </button>
         </header>
-        <div>
-          {mimeType.startsWith('image/') ? <img src={preview.url} alt={name} /> : null}
-          {mimeType.startsWith('video/') ? <video src={preview.url} controls /> : null}
-          {mimeType.startsWith('audio/') ? <audio src={preview.url} controls /> : null}
-          {mimeType === 'application/pdf' || /\.pdf$/i.test(name) ? <iframe title={name} src={preview.url} /> : null}
-          {!mimeType.startsWith('image/') && !mimeType.startsWith('video/') && !mimeType.startsWith('audio/') && mimeType !== 'application/pdf' && !/\.pdf$/i.test(name) ? (
+        <div className={clsx('cloud-preview-body', isNativeMedia ? 'media-preview-body' : 'document-preview-body')}>
+          {mimeType.startsWith('image/') ? <img src={url} alt={name} /> : null}
+          {mimeType.startsWith('video/') ? <video src={url} controls /> : null}
+          {mimeType.startsWith('audio/') ? <audio src={url} controls /> : null}
+          {!isNativeMedia ? <DocumentPreview node={node} onDownload={downloadPreviewNode} /> : null}
+          {false && (mimeType === 'application/pdf' || /\.pdf$/i.test(name)) ? <iframe title={name} src={url} /> : null}
+          {false && !mimeType.startsWith('image/') && !mimeType.startsWith('video/') && !mimeType.startsWith('audio/') && mimeType !== 'application/pdf' && !/\.pdf$/i.test(name) ? (
             <div className="empty-state compact">
               <File size={24} />
               当前类型暂不支持内嵌预览，请下载查看。
@@ -1663,6 +1672,24 @@ function PreviewModal() {
       </div>
     </div>
   );
+}
+
+function downloadPreviewNode(node: DriveNodeView) {
+  const url = node.downloadUrl || node.previewUrl;
+  if (!url) return;
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = node.name;
+  anchor.target = '_blank';
+  anchor.rel = 'noopener noreferrer';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function isNativeMediaPreview(node: DriveNodeView) {
+  const mimeType = node.mimeType || '';
+  return mimeType.startsWith('image/') || mimeType.startsWith('video/') || mimeType.startsWith('audio/');
 }
 
 function detectCategory(name = '', mimeType?: string): FileCategory {

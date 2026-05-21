@@ -22,10 +22,13 @@
     "ffprobe-static": "^3.1.0",
     "fluent-ffmpeg": "^2.1.2",
     "lucide-react": "^0.468.0",
+    "mammoth": "^1.12.0",
+    "pdfjs-dist": "^5.7.284",
     "pupcaps": "^1.0.0-alpha2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.0",
+    "xlsx": "^0.18.5",
     "zustand": "^4.5.7"
   },
   "devDependencies": {

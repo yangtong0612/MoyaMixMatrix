@@ -1,6 +1,9 @@
 package com.moya.portal.banked.storage;
 
 import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.time.Duration;
 import java.util.Date;
@@ -44,6 +47,36 @@ public class OssStorageService implements StorageService {
 			return ossClient.generatePresignedUrl(ossProperties.getBucket(), objectKey, expiration);
 		} finally {
 			ossClient.shutdown();
+		}
+	}
+
+	@Override
+	public InputStream openObjectStream(String objectKey) {
+		StorageProperties.Oss ossProperties = properties.getOss();
+		OSS ossClient = new OSSClientBuilder().build(
+				ossProperties.getEndpoint(),
+				ossProperties.getAccessKeyId(),
+				ossProperties.getAccessKeySecret()
+		);
+		try {
+			OSSObject object = ossClient.getObject(ossProperties.getBucket(), objectKey);
+			return new FilterInputStream(object.getObjectContent()) {
+				@Override
+				public void close() throws IOException {
+					try {
+						super.close();
+					} finally {
+						try {
+							object.close();
+						} finally {
+							ossClient.shutdown();
+						}
+					}
+				}
+			};
+		} catch (RuntimeException ex) {
+			ossClient.shutdown();
+			throw ex;
 		}
 	}
 

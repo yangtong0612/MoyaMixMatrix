@@ -1,5 +1,6 @@
 package com.moya.portal.banked.storage;
 
+import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.time.Duration;
@@ -28,6 +29,11 @@ public class NoopStorageService implements StorageService {
 		} catch (MalformedURLException ex) {
 			throw new IllegalArgumentException("Invalid object key: " + objectKey, ex);
 		}
+	}
+
+	@Override
+	public InputStream openObjectStream(String objectKey) {
+		throw new UnsupportedOperationException("Noop storage cannot read objects");
 	}
 
 	@Override

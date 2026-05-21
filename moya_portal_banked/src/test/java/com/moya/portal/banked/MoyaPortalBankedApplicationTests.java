@@ -37,7 +37,7 @@ class MoyaPortalBankedApplicationTests {
 				.contains("\"success\":true")
 				.contains("\"application\":\"moya-portal-banked\"")
 				.contains("\"status\":\"UP\"")
-				.contains("\"storageProvider\":\"noop\"");
+				.contains("\"storageEnabled\":false");
 	}
 
 }

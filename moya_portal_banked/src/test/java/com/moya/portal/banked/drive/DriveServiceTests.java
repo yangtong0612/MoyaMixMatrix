@@ -1,5 +1,6 @@
 package com.moya.portal.banked.drive;
 
+import java.io.ByteArrayInputStream;
 import java.net.URL;
 import java.util.List;
 import java.util.UUID;
@@ -135,6 +136,50 @@ class DriveServiceTests {
 		verify(authService).consumeQuota(userId, 123L);
 		verify(thumbnailService).generateForAsync(any(DriveNode.class));
 		verify(thumbnailService, never()).generateFor(any(DriveNode.class));
+	}
+
+	@Test
+	void openContentReturnsReadableFileStream() {
+		UUID userId = UUID.randomUUID();
+		DriveNode file = file(userId, UUID.randomUUID(), null, 12L);
+		file.setName("report.pdf");
+		file.setMimeType("application/pdf");
+		file.setOssKey("drive/report.pdf");
+		when(driveNodeMapper.selectById(file.getId())).thenReturn(file);
+		when(storageService.openObjectStream("drive/report.pdf")).thenReturn(new ByteArrayInputStream(new byte[] { 1, 2, 3 }));
+
+		var content = driveService.openContent(userId, file.getId());
+
+		assertThat(content.fileName()).isEqualTo("report.pdf");
+		assertThat(content.mimeType()).isEqualTo("application/pdf");
+		assertThat(content.size()).isEqualTo(12L);
+		assertThat(content.stream()).isNotNull();
+	}
+
+	@Test
+	void openContentRejectsFolder() {
+		UUID userId = UUID.randomUUID();
+		DriveNode folder = folder(userId, UUID.randomUUID(), null);
+		when(driveNodeMapper.selectById(folder.getId())).thenReturn(folder);
+
+		assertThatThrownBy(() -> driveService.openContent(userId, folder.getId()))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("node must be a file");
+
+		verify(storageService, never()).openObjectStream(any());
+	}
+
+	@Test
+	void openContentRejectsFileWithoutStorageObject() {
+		UUID userId = UUID.randomUUID();
+		DriveNode file = file(userId, UUID.randomUUID(), null, 12L);
+		when(driveNodeMapper.selectById(file.getId())).thenReturn(file);
+
+		assertThatThrownBy(() -> driveService.openContent(userId, file.getId()))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("file has no readable storage object");
+
+		verify(storageService, never()).openObjectStream(any());
 	}
 
 	@Test

@@ -1,15 +1,24 @@
 package com.moya.portal.banked.drive.controller;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import com.moya.portal.banked.common.response.ApiResponse;
 import com.moya.portal.banked.common.security.CurrentUser;
 import com.moya.portal.banked.drive.DriveService;
 import com.moya.portal.banked.drive.dto.DriveListResult;
+import com.moya.portal.banked.drive.dto.DriveNodeContent;
 import com.moya.portal.banked.drive.dto.DriveNodeView;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,6 +50,24 @@ public class DriveController {
 	@GetMapping("/nodes/{id}")
 	public ApiResponse<DriveNodeView> detail(@AuthenticationPrincipal CurrentUser currentUser, @PathVariable UUID id) {
 		return ApiResponse.ok(driveService.detail(currentUser.id(), id));
+	}
+
+	@GetMapping("/nodes/{id}/content")
+	public ResponseEntity<InputStreamResource> content(@AuthenticationPrincipal CurrentUser currentUser, @PathVariable UUID id) {
+		DriveNodeContent content = driveService.openContent(currentUser.id(), id);
+		MediaType mediaType = resolveMediaType(content);
+		HttpHeaders headers = new HttpHeaders();
+		headers.setContentDisposition(ContentDisposition.inline()
+				.filename(content.fileName(), StandardCharsets.UTF_8)
+				.build());
+		headers.setCacheControl(CacheControl.noStore());
+		ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
+				.headers(headers)
+				.contentType(mediaType);
+		if (content.size() != null && content.size() >= 0) {
+			builder.contentLength(content.size());
+		}
+		return builder.body(new InputStreamResource(content.stream()));
 	}
 
 	@PostMapping("/folders")
@@ -91,5 +118,19 @@ public class DriveController {
 	}
 
 	public record MoveRequest(UUID targetParentId) {
+	}
+
+	private MediaType resolveMediaType(DriveNodeContent content) {
+		if (content.mimeType() != null && !content.mimeType().isBlank()) {
+			try {
+				MediaType mediaType = MediaType.parseMediaType(content.mimeType());
+				if (!MediaType.APPLICATION_OCTET_STREAM.equals(mediaType)) {
+					return mediaType;
+				}
+			} catch (Exception ignored) {
+				// Fall back to filename detection below.
+			}
+		}
+		return MediaTypeFactory.getMediaType(content.fileName()).orElse(MediaType.APPLICATION_OCTET_STREAM);
 	}
 }

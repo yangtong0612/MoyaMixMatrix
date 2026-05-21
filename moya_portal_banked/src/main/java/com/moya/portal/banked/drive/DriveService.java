@@ -1,5 +1,6 @@
 package com.moya.portal.banked.drive;
 
+import java.io.InputStream;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -7,6 +8,7 @@ import java.util.UUID;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.moya.portal.banked.drive.dto.DriveListResult;
+import com.moya.portal.banked.drive.dto.DriveNodeContent;
 import com.moya.portal.banked.drive.dto.DriveNodeView;
 import com.moya.portal.banked.drive.entity.DriveNode;
 import com.moya.portal.banked.drive.entity.StorageObject;
@@ -56,6 +58,18 @@ public class DriveService {
 
 	public DriveNodeView detail(UUID userId, UUID nodeId) {
 		return toView(requireNode(userId, nodeId));
+	}
+
+	public DriveNodeContent openContent(UUID userId, UUID nodeId) {
+		DriveNode node = requireNode(userId, nodeId);
+		if (!NodeType.FILE.name().equals(node.getNodeType())) {
+			throw badRequest("node must be a file");
+		}
+		if (!StringUtils.hasText(node.getOssKey())) {
+			throw badRequest("file has no readable storage object");
+		}
+		InputStream stream = storageService.openObjectStream(node.getOssKey());
+		return new DriveNodeContent(node.getName(), node.getMimeType(), node.getSize(), stream);
 	}
 
 	public DriveNodeView findCompletedUploadNode(UUID userId, UUID parentId, String name, String fileHash) {

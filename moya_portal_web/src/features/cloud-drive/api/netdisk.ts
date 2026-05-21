@@ -199,6 +199,10 @@ export function listDriveNodes(parentId?: UUID | null) {
   );
 }
 
+export function buildDriveContentUrl(id: UUID) {
+  return `/api/drive/nodes/${encodeURIComponent(id)}/content`;
+}
+
 export function createFolder(data: { parentId?: UUID | null; name: string }) {
   return unwrap(http.post<unknown, ApiResponse<DriveNodeView>>('/drive/folders', data));
 }

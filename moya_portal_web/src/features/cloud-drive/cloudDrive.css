@@ -1399,6 +1399,153 @@
   height: min(680px, calc(100vh - 180px));
 }
 
+.cloud-preview-dialog .document-preview-body {
+  align-items: stretch;
+  place-items: stretch;
+  min-height: min(680px, calc(100vh - 180px));
+  padding: 0;
+  background: var(--panel-2);
+}
+
+.cloud-preview-dialog .media-preview-body {
+  background: #050607;
+}
+
+.document-preview-status {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  min-height: 320px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.document-preview-status strong {
+  color: var(--text);
+}
+
+.document-preview-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: center;
+  margin-top: 4px;
+}
+
+.pdf-preview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.document-preview-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+
+.document-preview-toolbar button {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.document-preview-toolbar span {
+  min-width: 54px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.pdf-canvas-shell {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  background: #d8dee8;
+}
+
+.pdf-canvas-shell .pdf-inline-status {
+  min-height: 280px;
+  background: transparent;
+}
+
+.pdf-canvas-shell canvas {
+  display: block;
+  margin: 0 auto;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 10px 34px rgb(15 23 42 / 20%);
+}
+
+.text-document-preview {
+  min-height: 0;
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  background: var(--panel);
+  color: var(--text);
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workbook-preview {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+
+.workbook-preview section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workbook-preview h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.workbook-preview section > div {
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.workbook-preview table {
+  min-width: 100%;
+  border-collapse: collapse;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.workbook-preview td {
+  max-width: 260px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cloud-drive-product .toast {
   position: fixed;
   right: 20px;
@@ -1450,6 +1597,14 @@
 
 .theme-light .cloud-preview-dialog > div {
   background: #f8fafc;
+}
+
+.theme-light .cloud-preview-dialog .media-preview-body {
+  background: #050607;
+}
+
+.theme-light .pdf-canvas-shell {
+  background: #d8dee8;
 }
 
 @media (max-width: 1280px) {
