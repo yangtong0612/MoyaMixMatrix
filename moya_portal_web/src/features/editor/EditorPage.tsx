@@ -652,7 +652,7 @@ const publishChannels = [
   { name: '小红书', state: '已授权', plan: '明天 11:00' }
 ];
 
-type ViralTemplateKey = 'street' | 'seed' | 'deal' | 'story';
+type ViralTemplateKey = 'street' | 'seed' | 'deal' | 'story' | 'list' | 'expert' | 'compare' | 'urgency' | 'local' | 'live';
 
 interface ViralTemplate {
   key: ViralTemplateKey;
@@ -670,6 +670,17 @@ interface ViralTemplateCard extends ViralTemplate {
   variantIndex: number;
   custom?: boolean;
   sourceSummary?: string;
+}
+
+interface ViralTemplateTheme {
+  titleBackground: string;
+  titleColor: string;
+  captionBackground: string;
+  captionColor: string;
+  keywordBackground: string;
+  keywordColor: string;
+  effectBackground: string;
+  glowColor: string;
 }
 
 interface ViralTimelineClip {
@@ -778,6 +789,60 @@ const viralTemplates: ViralTemplate[] = [
     accent: '电影感字幕条',
     caption: '分句字幕 + 情绪词强调',
     effects: ['悬念标题', '反转闪白', '镜头慢推', '情绪音效', '结尾复盘卡']
+  },
+  {
+    key: 'list',
+    name: '清单盘点',
+    scene: '按 1/2/3 递进讲卖点，适合教程、工具、好物合集',
+    rhythm: '每 1.5 秒切一条 / 条目出现时轻弹',
+    accent: '编号标签 + 清单进度',
+    caption: '短句字幕 + 序号高亮',
+    effects: ['编号卡片', '进度条', '条目弹出', '清单音效', '结尾总结卡']
+  },
+  {
+    key: 'expert',
+    name: '专家背书',
+    scene: '用身份、数据、案例建立信任，适合知识付费、专业服务、B2B',
+    rhythm: '稳重口播 / 证据点放慢停留',
+    accent: '深色信息条 + 数据角标',
+    caption: '数据词高亮 + 结论加粗',
+    effects: ['身份铭牌', '数据卡片', '案例截图框', '低频提示音', '结论定版']
+  },
+  {
+    key: 'compare',
+    name: '前后对比',
+    scene: '先展示问题，再展示改变，适合改造、护肤、学习、工具效率',
+    rhythm: '前后段落强对照 / 转折处闪切',
+    accent: '左右对比标签',
+    caption: '对比词双色强调',
+    effects: ['前后标签', '分屏辅助线', '转折闪切', '结果放大', '差异总结']
+  },
+  {
+    key: 'urgency',
+    name: '限时促单',
+    scene: '利益点和截止时间前置，适合活动、团购、直播预告',
+    rhythm: '快节奏压迫感 / CTA 高频重复',
+    accent: '红黄倒计时标题',
+    caption: '价格/时间词强高亮',
+    effects: ['倒计时条', '价格爆闪', '库存角标', 'CTA 按钮', '收口提示音']
+  },
+  {
+    key: 'local',
+    name: '本地探店',
+    scene: '位置、路线、体验感并行，适合门店、餐饮、生活服务',
+    rhythm: '环境镜头 1 秒切换 / 到店点位强调',
+    accent: '定位标签 + 路线贴纸',
+    caption: '地址/套餐词高亮',
+    effects: ['定位角标', '路线箭头', '套餐卡片', '环境快切', '到店 CTA']
+  },
+  {
+    key: 'live',
+    name: '直播切片',
+    scene: '保留临场感和互动语气，适合直播带货、课程切片、连麦高光',
+    rhythm: '口语快切 / 互动点弹幕增强',
+    accent: '直播间状态条',
+    caption: '口语字幕 + 弹幕关键词',
+    effects: ['直播状态条', '弹幕强调', '价格条', '互动音效', '关注提示']
   }
 ];
 
@@ -790,10 +855,18 @@ const viralTemplateVariantNames = [
   '轻透雅黑',
   '基础白金',
   '百搭黄·双语',
-  '清单黄白',
-  '清单科技',
-  '转化醒目',
-  '转化画中画'
+  '顶奢',
+  '商务科技',
+  '醒目科普',
+  '新闻蓝·AI画中画',
+  '双行红白',
+  '轻奢手写',
+  '通勤绿蓝',
+  '金色灵感',
+  '知识讲解',
+  '开小窗·素材',
+  '智能识别',
+  '粉色爆闪'
 ];
 
 const viralFontOptions = [
@@ -893,9 +966,12 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const previewHook = customPreviewHook.trim() || generatedPreviewHook;
   const previewSubtitle = previewVersion?.subtitleStyle || template.caption;
   const previewKeywordList = buildViralKeywordList(keywords, activeCaption?.text || '');
-  const isBilingualTemplate = /双语/.test(appliedTemplate.cardName);
+  const isBilingualTemplate = /双语/.test(template.cardName);
   const shouldShowOpeningTitle = timelineCurrentTime <= Math.min(3, Math.max(1.2, timelineDuration * 0.28));
   const previewTemplateClass = getViralTemplatePreviewClass(template);
+  const previewTemplateStyle = viralTemplateThemeStyle(template);
+  const activeTitleTextStyle = titleTextStyle;
+  const activeCaptionTextStyle = captionTextStyle;
 
   useEffect(() => {
     let canceled = false;
@@ -1213,12 +1289,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
 
   function previewTemplate(cardId: string | null) {
     setHoverTemplateCardId(cardId);
-    if (cardId) {
-      const previewCard = allViralTemplateCards.find((item) => item.cardId === cardId);
-      setNotice(`正在预览「${previewCard?.cardName || '模板'}」效果，点击应用后才会包装。`);
-      return;
-    }
-    setHoverTemplateTime(0);
+    if (!cardId) setHoverTemplateTime(0);
   }
 
   function previewTemplateCardVideo(event: MouseEvent<HTMLButtonElement>, cardId: string) {
@@ -1272,7 +1343,14 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     const nextTemplate = allViralTemplateCards.find((item) => item.cardId === cardId) || viralTemplateCards[0];
     const nextFeature = getViralTemplateFeature(nextTemplate);
     setSelectedTemplateCardId(nextTemplate.cardId);
+    setTitleTextStyle(getViralTemplateTextStyle(nextTemplate, 'title'));
+    setCaptionTextStyle(getViralTemplateTextStyle(nextTemplate, 'caption'));
     setHoverTemplateCardId(null);
+    setHoverTemplateTime(0);
+    if (templatePreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(templatePreviewFrameRef.current);
+      templatePreviewFrameRef.current = null;
+    }
     setActivePackageTab('template');
     setVersions([]);
     setSelectedVersionIds([]);
@@ -1810,7 +1888,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 }
               }}
             />
-            <div className={`viral-preview-overlay template-${template.key} ${previewTemplateClass} phase-${liveTemplatePhase}`}>
+            <div className={`viral-preview-overlay template-${template.key} ${previewTemplateClass} phase-${liveTemplatePhase}`} style={previewTemplateStyle}>
               <div className="viral-live-template-effect" aria-hidden="true">
                 <u />
                 <u />
@@ -1834,7 +1912,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                   aria-label="编辑智能标题"
                   rows={2}
                   value={previewHook}
-                  style={{ fontSize: titleTextStyle.fontSize, fontFamily: titleTextStyle.fontFamily, width: titleTextStyle.width, height: titleTextStyle.height }}
+                  style={{ fontSize: activeTitleTextStyle.fontSize, fontFamily: activeTitleTextStyle.fontFamily, width: activeTitleTextStyle.width, height: activeTitleTextStyle.height }}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => event.stopPropagation()}
                   onChange={(event) => setCustomPreviewHook(event.target.value)}
@@ -1854,7 +1932,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                   onPointerMove={(event) => moveOverlayHandleDrag(event, 'caption')}
                   onPointerUp={() => setDraggingOverlay(null)}
                 />
-                <span className="viral-caption-lines" style={{ fontSize: captionTextStyle.fontSize, fontFamily: captionTextStyle.fontFamily, width: captionTextStyle.width, minHeight: captionTextStyle.height }}>
+                <span className="viral-caption-lines" style={{ fontSize: activeCaptionTextStyle.fontSize, fontFamily: activeCaptionTextStyle.fontFamily, width: activeCaptionTextStyle.width, minHeight: activeCaptionTextStyle.height }}>
                   <span className="viral-caption-primary">
                     {renderViralHighlightedText(activeCaption?.text || previewSubtitle, previewKeywordList)}
                   </span>
@@ -1881,11 +1959,14 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                     const previewCaptionTime = mapTemplatePreviewTimeToTimeline(hoverTemplateTime, timelineDuration);
                     const cardCaptionIndex = findEditedViralCaptionIndex(editedCaptionSegments, previewCaptionTime);
                     const cardCaption = editedCaptionSegments[cardCaptionIndex] || editedCaptionSegments[0];
-                    const cardTitle = buildViralHook(item, cardCaption?.text || '网感剪辑', cardCaptionIndex);
+                    const cardCopy = getViralTemplateCardCopy(item, cardCaption?.text || '网感剪辑', cardCaptionIndex);
+                    const cardThemeStyle = viralTemplateThemeStyle(item);
+                    const cardPreviewClass = getViralTemplatePreviewClass(item);
                     return (
                       <button
                         key={item.cardId}
-                        className={`template-${item.key} phase-${item.cardId === hoverTemplateCardId ? hoverTemplateEffectPhase : 'idle'} ${item.cardId === selectedTemplateCardId ? 'active' : ''} ${item.cardId === hoverTemplateCardId ? 'previewing' : ''}`}
+                        className={`template-${item.key} ${cardPreviewClass} phase-${item.cardId === hoverTemplateCardId ? hoverTemplateEffectPhase : 'idle'} ${item.cardId === selectedTemplateCardId ? 'active' : ''} ${item.cardId === hoverTemplateCardId ? 'previewing' : ''}`}
+                        style={cardThemeStyle}
                         type="button"
                         onMouseEnter={(event) => previewTemplateCardVideo(event, item.cardId)}
                         onMouseLeave={stopTemplateCardVideo}
@@ -1896,11 +1977,25 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                         <div className="viral-template-card-visual">
                           {sourceVideo.path ? (
                             <video
+                              className="viral-template-card-video"
                               src={toMediaUrl(sourceVideo.path)}
                               muted
                               loop
                               playsInline
                               preload="auto"
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                width: '100%',
+                                height: '100%',
+                                minWidth: '100%',
+                                minHeight: '100%',
+                                maxWidth: 'none',
+                                maxHeight: 'none',
+                                objectFit: 'cover',
+                                objectPosition: 'center center',
+                                transform: 'none'
+                              }}
                               autoPlay={item.cardId === hoverTemplateCardId}
                               onLoadedMetadata={(event) => {
                                 if (item.cardId !== hoverTemplateCardId) {
@@ -1911,8 +2006,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                             />
                           ) : null}
                           <div className="viral-card-template-effect">
-                            <strong>{cardTitle}</strong>
-                            <span>{cardCaption?.text || item.caption}</span>
+                            <strong>{cardCopy.title}</strong>
+                            <span>{cardCopy.subtitle}</span>
+                            <em>{cardCopy.badge}</em>
                             <u />
                             <u />
                             <u />
@@ -2345,9 +2441,10 @@ function ViralSavedOverlay({ task, currentTime = 0 }: { task: ViralRecentTask; c
   const keywordList = buildViralKeywordList(task.keywords, activeCaption?.text || '');
   const isBilingualTemplate = /双语/.test(template.cardName || task.templateName || '');
   const previewTemplateClass = getViralTemplatePreviewClass(template);
+  const savedTemplateStyle = viralTemplateThemeStyle(template);
   const shouldShowTitle = currentTime <= Math.min(3, Math.max(1.2, readViralDuration(task.duration) * 0.28));
   return (
-    <div className={`viral-saved-overlay template-${task.templateKey} ${previewTemplateClass}`}>
+    <div className={`viral-saved-overlay template-${task.templateKey} ${previewTemplateClass}`} style={savedTemplateStyle}>
       <div className={`viral-saved-title ${shouldShowTitle ? '' : 'title-hidden'}`} style={{ left: `${titlePosition.x}%`, top: `${titlePosition.y}%` }}>
         <strong style={{ fontSize: titleStyle.fontSize, fontFamily: titleStyle.fontFamily, width: titleStyle.width, minHeight: titleStyle.height }}>{task.hook || buildViralHook(template, captions[0]?.text || '网感剪辑', 0)}</strong>
       </div>
@@ -2390,20 +2487,38 @@ function buildViralHook(template: ViralTemplate, keyword: string, index: number)
     street: [`先别划走，${keyword}真的不一样`, `90%的人忽略了${keyword}`, `用这个方法把${keyword}讲清楚`],
     seed: [`我最近反复用的${keyword}`, `${keyword}这点太适合新手了`, `如果你也在找${keyword}，看这个`],
     deal: [`还在为${keyword}浪费时间吗`, `${keyword}卡住成交，问题在这里`, `想提升${keyword}，先改这一点`],
-    story: [`一开始我也不信${keyword}`, `${keyword}背后有个反转`, `这个${keyword}案例，把我看懂了`]
+    story: [`一开始我也不信${keyword}`, `${keyword}背后有个反转`, `这个${keyword}案例，把我看懂了`],
+    list: [`关于${keyword}，先记住这 3 点`, `${keyword}清单我帮你整理好了`, `少走弯路，${keyword}看这一组`],
+    expert: [`做${keyword}，先看这个判断标准`, `${keyword}不是玄学，看这组证据`, `专业人士会这样拆${keyword}`],
+    compare: [`用了前后，${keyword}差别很明显`, `${keyword}改变前后对比给你看`, `别只听说，${keyword}直接看结果`],
+    urgency: [`${keyword}这波别等到结束才后悔`, `今天的${keyword}重点就这几个`, `${keyword}限时规则先看清楚`],
+    local: [`来这家店，${keyword}先看这一点`, `${keyword}到店怎么选，我试过了`, `本地人看${keyword}，重点在这里`],
+    live: [`刚才直播里${keyword}这段很关键`, `${keyword}现场反应太真实了`, `直播间问爆的${keyword}，答案在这`]
   };
   return hooks[template.key][index % hooks[template.key].length];
 }
 
 function analyzeViralTemplateDraft(baseKey: ViralTemplateKey, input: string): ViralTemplate & { sourceSummary: string } {
   const text = input.toLowerCase();
-  const key: ViralTemplateKey = /成交|转化|下单|私信|团购|到店|优惠|报价|痛点|cta/.test(input)
-    ? 'deal'
-    : /故事|反转|悬念|剧情|前后对比|vlog/.test(input)
-      ? 'story'
-      : /种草|清单|好物|测评|体验|开箱|卖点/.test(input)
-        ? 'seed'
-        : baseKey;
+  const key: ViralTemplateKey = /直播|连麦|主播|弹幕|切片/.test(input)
+    ? 'live'
+    : /本地|探店|门店|到店|地址|路线|套餐/.test(input)
+      ? 'local'
+      : /限时|倒计时|秒杀|库存|优惠|价格|活动/.test(input)
+        ? 'urgency'
+        : /对比|前后|改变|改造|之前|之后/.test(input)
+          ? 'compare'
+          : /专家|老师|医生|顾问|数据|案例|报告|专业/.test(input)
+            ? 'expert'
+            : /清单|盘点|合集|步骤|教程|第[一二三四五]|1\.|2\./.test(input)
+              ? 'list'
+              : /成交|转化|下单|私信|报价|痛点|cta/.test(input)
+                ? 'deal'
+                : /故事|反转|悬念|剧情|vlog/.test(input)
+                  ? 'story'
+                  : /种草|好物|测评|体验|开箱|卖点/.test(input)
+                    ? 'seed'
+                    : baseKey;
   const base = viralTemplates.find((item) => item.key === key) || viralTemplates[0];
   const bilingual = /双语|英文|english|字幕翻译/.test(input);
   const keyword = /关键词|高亮|重点|爆点|数字/.test(input);
@@ -2481,22 +2596,275 @@ function getViralTemplateFeature(template: ViralTemplate) {
       title: '悬念反转',
       caption: '情绪分句字幕',
       badge: '故事包装'
+    },
+    list: {
+      title: '清单递进',
+      caption: '序号标签字幕',
+      badge: '清单盘点'
+    },
+    expert: {
+      title: '专业背书',
+      caption: '数据结论字幕',
+      badge: '专家背书'
+    },
+    compare: {
+      title: '前后反差',
+      caption: '双色对比字幕',
+      badge: '前后对比'
+    },
+    urgency: {
+      title: '限时刺激',
+      caption: '价格时间高亮',
+      badge: '限时促单'
+    },
+    local: {
+      title: '到店路线',
+      caption: '位置套餐字幕',
+      badge: '本地探店'
+    },
+    live: {
+      title: '直播高光',
+      caption: '弹幕口语字幕',
+      badge: '直播切片'
     }
   };
   return features[template.key];
 }
 
+function getViralTemplateCardCopy(template: ViralTemplateCard, fallbackText: string, index: number) {
+  const bilingual = /双语/.test(template.cardName);
+  const subtitles = [
+    '双行排版更网感',
+    '自动识别添加字幕',
+    '关键句跳字高亮',
+    '智能翻译双语字幕',
+    '开小拍匹配素材'
+  ];
+  const badgeByKey: Record<ViralTemplateKey, string> = {
+    street: '智能翻译',
+    seed: '关键词',
+    deal: '痛点强化',
+    story: '故事悬念',
+    list: '自动识别',
+    expert: '重点信息',
+    compare: '前后对比',
+    urgency: '超满足',
+    local: '到店提示',
+    live: '直播高光'
+  };
+  return {
+    title: /手写|轻奢/.test(template.cardName) ? '沟通表达课' : '智能加标题',
+    subtitle: bilingual ? `智能翻译双语字幕\nBilingual captions` : subtitles[template.variantIndex % subtitles.length],
+    badge: badgeByKey[template.key] || fallbackText.slice(0, 6) || '自动字幕'
+  };
+}
+
+function getViralTemplateTheme(template: ViralTemplateCard | ViralTemplate): ViralTemplateTheme {
+  const name = 'cardName' in template ? template.cardName : template.name;
+  if (/轻奢白|简洁黄白|基础白金/.test(name)) {
+    return {
+      titleBackground: 'transparent',
+      titleColor: '#fff7d6',
+      captionBackground: 'transparent',
+      captionColor: '#ffffff',
+      keywordBackground: '#facc15',
+      keywordColor: '#111827',
+      effectBackground: 'rgb(250 204 21 / 28%)',
+      glowColor: 'rgb(250 204 21 / 82%)'
+    };
+  }
+  if (/经典蓝|新闻蓝|通勤绿蓝|商务科技/.test(name)) {
+    return {
+      titleBackground: 'transparent',
+      titleColor: '#dbeafe',
+      captionBackground: 'transparent',
+      captionColor: '#e0f2fe',
+      keywordBackground: '#2563eb',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(37 99 235 / 42%)',
+      glowColor: 'rgb(96 165 250 / 82%)'
+    };
+  }
+  if (/黄色|金色|顶奢/.test(name)) {
+    return {
+      titleBackground: 'transparent',
+      titleColor: '#fef3c7',
+      captionBackground: 'transparent',
+      captionColor: '#ffffff',
+      keywordBackground: '#facc15',
+      keywordColor: '#111827',
+      effectBackground: 'rgb(250 204 21 / 34%)',
+      glowColor: 'rgb(250 204 21 / 82%)'
+    };
+  }
+  if (/粉色|醒目/.test(name)) {
+    return {
+      titleBackground: 'transparent',
+      titleColor: '#fbcfe8',
+      captionBackground: 'transparent',
+      captionColor: '#ffffff',
+      keywordBackground: '#db2777',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(219 39 119 / 42%)',
+      glowColor: 'rgb(244 114 182 / 82%)'
+    };
+  }
+  if (/爆点|高级红/.test(name) || template.key === 'street') {
+    return {
+      titleBackground: '#8a1230',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(0 0 0 / 58%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#b0123c',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(138 18 48 / 52%)',
+      glowColor: 'rgb(176 18 60 / 78%)'
+    };
+  }
+  if (template.key === 'seed') {
+    return {
+      titleBackground: '#f59e0b',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(255 255 255 / 88%)',
+      captionColor: '#17202e',
+      keywordBackground: '#f9a8d4',
+      keywordColor: '#831843',
+      effectBackground: 'rgb(249 168 212 / 52%)',
+      glowColor: 'rgb(244 114 182 / 78%)'
+    };
+  }
+  if (template.key === 'deal' || /成交|转化/.test(name)) {
+    return {
+      titleBackground: '#111827',
+      titleColor: '#facc15',
+      captionBackground: 'rgb(17 24 39 / 82%)',
+      captionColor: '#facc15',
+      keywordBackground: '#dc2626',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(250 204 21 / 18%)',
+      glowColor: 'rgb(250 204 21 / 82%)'
+    };
+  }
+  if (template.key === 'story') {
+    return {
+      titleBackground: 'rgb(15 23 42 / 82%)',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(15 23 42 / 76%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#a855f7',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(255 255 255 / 16%)',
+      glowColor: 'rgb(168 85 247 / 78%)'
+    };
+  }
+  if (template.key === 'list' || template.key === 'local') {
+    return {
+      titleBackground: '#0f766e',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(13 148 136 / 62%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#14b8a6',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(13 148 136 / 54%)',
+      glowColor: 'rgb(45 212 191 / 82%)'
+    };
+  }
+  if (template.key === 'expert') {
+    return {
+      titleBackground: '#1e293b',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(30 41 59 / 78%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#64748b',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(148 163 184 / 28%)',
+      glowColor: 'rgb(148 163 184 / 72%)'
+    };
+  }
+  if (template.key === 'compare') {
+    return {
+      titleBackground: 'linear-gradient(90deg, #2563eb, #ea580c)',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(124 58 237 / 64%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#7c3aed',
+      keywordColor: '#ffffff',
+      effectBackground: 'rgb(124 58 237 / 48%)',
+      glowColor: 'rgb(167 139 250 / 82%)'
+    };
+  }
+  if (template.key === 'urgency') {
+    return {
+      titleBackground: '#dc2626',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(24 24 27 / 78%)',
+      captionColor: '#fde68a',
+      keywordBackground: '#facc15',
+      keywordColor: '#111827',
+      effectBackground: 'linear-gradient(90deg, #dc2626, #facc15)',
+      glowColor: 'rgb(250 204 21 / 82%)'
+    };
+  }
+  return {
+    titleBackground: '#db2777',
+    titleColor: '#ffffff',
+    captionBackground: 'rgb(17 24 39 / 70%)',
+    captionColor: '#ffffff',
+    keywordBackground: '#db2777',
+    keywordColor: '#ffffff',
+    effectBackground: 'rgb(219 39 119 / 48%)',
+    glowColor: 'rgb(244 114 182 / 82%)'
+  };
+}
+
+function viralTemplateThemeStyle(template: ViralTemplateCard | ViralTemplate): CSSProperties {
+  const theme = getViralTemplateTheme(template);
+  return {
+    '--viral-title-bg': theme.titleBackground,
+    '--viral-title-color': theme.titleColor,
+    '--viral-caption-bg': theme.captionBackground,
+    '--viral-caption-color': theme.captionColor,
+    '--viral-keyword-bg': theme.keywordBackground,
+    '--viral-keyword-color': theme.keywordColor,
+    '--viral-effect-bg': theme.effectBackground,
+    '--viral-glow-color': theme.glowColor,
+    '--viral-title-font': getViralDisplayFont(template, 'title'),
+    '--viral-subtitle-font': getViralDisplayFont(template, 'subtitle')
+  } as CSSProperties;
+}
+
+function getViralDisplayFont(template: ViralTemplateCard | ViralTemplate, layer: 'title' | 'subtitle') {
+  const name = 'cardName' in template ? template.cardName : template.name;
+  if (/手写|轻奢/.test(name)) return '"STXingkai", "KaiTi", "Microsoft YaHei", cursive';
+  if (/科技|经典蓝|新闻蓝|智能识别/.test(name)) return '"Arial Black", Impact, "Microsoft YaHei", sans-serif';
+  if (/黄色|金色|顶奢|基础白金/.test(name)) return '"Microsoft YaHei UI", "Arial Black", sans-serif';
+  if (/红|粉色|醒目/.test(name)) return '"Arial Black", "Microsoft YaHei", sans-serif';
+  if (layer === 'subtitle') return '"Trebuchet MS", "Microsoft YaHei", sans-serif';
+  return '"Arial Black", "Microsoft YaHei", sans-serif';
+}
+
 function getViralTemplateTextStyle(template: ViralTemplateCard | ViralTemplate, layer: 'title' | 'caption'): ViralOverlayTextStyle {
   const cardName = 'cardName' in template ? template.cardName : template.name;
+  const titleFont = getViralDisplayFont(template, 'title');
+  const subtitleFont = getViralDisplayFont(template, 'subtitle');
   if (layer === 'title') {
-    if (template.key === 'deal') return { fontSize: 25, fontFamily: '"Arial Black", "Microsoft YaHei", sans-serif', width: 320, height: 82 };
-    if (template.key === 'story') return { fontSize: 22, fontFamily: 'Georgia, "Microsoft YaHei", serif', width: 300, height: 74 };
-    return { fontSize: /简洁|轻奢|基础/.test(cardName) ? 21 : 24, fontFamily: '"Arial Black", "Microsoft YaHei", sans-serif', width: 320, height: 82 };
+    if (template.key === 'deal') return { fontSize: 25, fontFamily: titleFont, width: 320, height: 82 };
+    if (template.key === 'story') return { fontSize: 22, fontFamily: titleFont, width: 300, height: 74 };
+    if (template.key === 'expert') return { fontSize: 22, fontFamily: titleFont, width: 316, height: 76 };
+    if (template.key === 'urgency') return { fontSize: 26, fontFamily: titleFont, width: 326, height: 84 };
+    if (template.key === 'live') return { fontSize: 23, fontFamily: titleFont, width: 318, height: 78 };
+    return { fontSize: /简洁|轻奢|基础/.test(cardName) ? 21 : 24, fontFamily: titleFont, width: 320, height: 82 };
   }
-  if (template.key === 'seed') return { fontSize: 15, fontFamily: '"Trebuchet MS", "Microsoft YaHei", sans-serif', width: 300, height: /双语/.test(cardName) ? 72 : 54 };
-  if (template.key === 'deal') return { fontSize: 16, fontFamily: '"Arial Black", "Microsoft YaHei", sans-serif', width: 310, height: 58 };
-  if (template.key === 'story') return { fontSize: 15, fontFamily: 'Georgia, "Microsoft YaHei", serif', width: 320, height: 58 };
-  return { fontSize: /双语/.test(cardName) ? 14 : 16, fontFamily: 'Inter, "Microsoft YaHei", "PingFang SC", sans-serif', width: 300, height: /双语/.test(cardName) ? 72 : 54 };
+  if (template.key === 'seed') return { fontSize: 15, fontFamily: subtitleFont, width: 300, height: /双语/.test(cardName) ? 78 : 54 };
+  if (template.key === 'deal') return { fontSize: 16, fontFamily: subtitleFont, width: 310, height: /双语/.test(cardName) ? 78 : 58 };
+  if (template.key === 'story') return { fontSize: 15, fontFamily: subtitleFont, width: 320, height: /双语/.test(cardName) ? 78 : 58 };
+  if (template.key === 'list') return { fontSize: 16, fontFamily: subtitleFont, width: 306, height: /双语/.test(cardName) ? 78 : 58 };
+  if (template.key === 'expert') return { fontSize: 15, fontFamily: subtitleFont, width: 318, height: /双语/.test(cardName) ? 78 : 58 };
+  if (template.key === 'compare') return { fontSize: 16, fontFamily: subtitleFont, width: 318, height: /双语/.test(cardName) ? 78 : 58 };
+  if (template.key === 'urgency') return { fontSize: 17, fontFamily: subtitleFont, width: 312, height: /双语/.test(cardName) ? 78 : 58 };
+  if (template.key === 'local') return { fontSize: 16, fontFamily: subtitleFont, width: 308, height: /双语/.test(cardName) ? 78 : 58 };
+  if (template.key === 'live') return { fontSize: 16, fontFamily: subtitleFont, width: 318, height: /双语/.test(cardName) ? 82 : 62 };
+  return { fontSize: /双语/.test(cardName) ? 14 : 16, fontFamily: subtitleFont, width: 300, height: /双语/.test(cardName) ? 78 : 54 };
 }
 
 function mergeViralTemplateTextStyle(template: ViralTemplateCard | ViralTemplate, layer: 'title' | 'caption', override?: Partial<ViralOverlayTextStyle>): ViralOverlayTextStyle {
@@ -2510,14 +2878,22 @@ function getViralTemplatePreviewClass(template: ViralTemplateCard | ViralTemplat
     'variant-luxury-white',
     'variant-classic-blue',
     'variant-yellow-flash',
-    'variant-simple-yellow-white',
+    'variant-list-yellow-white',
     'variant-translucent-dark',
     'variant-basic-white-gold',
     'variant-versatile-yellow-bilingual',
-    'variant-list-yellow-white',
+    'variant-gold-luxury',
+    'variant-business-tech',
     'variant-list-tech',
-    'variant-conversion-bright',
-    'variant-conversion-pip'
+    'variant-news-blue',
+    'variant-red-white',
+    'variant-handwrite',
+    'variant-commute-bluegreen',
+    'variant-gold-inspire',
+    'variant-knowledge',
+    'variant-window-material',
+    'variant-smart-recognition',
+    'variant-pink-flash'
   ];
   return classes[template.variantIndex] || 'variant-default';
 }

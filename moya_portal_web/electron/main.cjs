@@ -23,6 +23,11 @@ const ffprobePath = resolveMediaToolPath('FFPROBE_BIN', [
   bundledFfprobePath,
   'ffprobe'
 ]);
+const nodePath = resolveMediaToolPath('NODE_BIN', [
+  process.env.NODE_BIN,
+  'C:\\Program Files\\nodejs\\node.exe',
+  'node'
+]);
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -73,6 +78,7 @@ function createWindow() {
     : `file://${path.join(__dirname, '../dist/index.html')}`;
 
   mainWindow.loadURL(rendererUrl);
+  attachDebugContextMenu(mainWindow);
 
   if (isDev && process.env.ELECTRON_OPEN_DEVTOOLS === '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -80,6 +86,41 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+}
+
+function attachDebugContextMenu(window) {
+  window.webContents.on('context-menu', (_event, params) => {
+    const hasSelection = Boolean(params.selectionText && params.selectionText.trim());
+    const menu = Menu.buildFromTemplate([
+      {
+        label: '检查此处元素',
+        click: () => {
+          window.webContents.inspectElement(params.x, params.y);
+          if (!window.webContents.isDevToolsOpened()) {
+            window.webContents.openDevTools({ mode: 'detach' });
+          }
+        }
+      },
+      {
+        label: window.webContents.isDevToolsOpened() ? '关闭开发者工具' : '打开开发者工具',
+        click: () => {
+          if (window.webContents.isDevToolsOpened()) {
+            window.webContents.closeDevTools();
+            return;
+          }
+          window.webContents.openDevTools({ mode: 'detach' });
+        }
+      },
+      { type: 'separator' },
+      { label: '刷新页面', role: 'reload' },
+      { label: '强制刷新', role: 'forceReload' },
+      { type: 'separator' },
+      { label: '复制', role: 'copy', enabled: hasSelection },
+      { label: '粘贴', role: 'paste', enabled: params.isEditable },
+      { label: '全选', role: 'selectAll' }
+    ]);
+    menu.popup({ window });
   });
 }
 
@@ -539,6 +580,12 @@ async function renderViralVideo(sourcePath, outputPath, overlay) {
   if (!ffmpegPath) {
     throw new Error('未找到可用的 ffmpeg，无法渲染字幕和特效');
   }
+  try {
+    await renderViralVideoWithPupCaps(sourcePath, outputPath, overlay);
+    return;
+  } catch (error) {
+    console.warn('[moya] PupCaps render failed, falling back to ASS subtitles:', error?.message || error);
+  }
   const tempDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'moya-viral-'));
   const assPath = path.join(tempDir, 'viral-overlay.ass');
   try {
@@ -563,6 +610,61 @@ async function renderViralVideo(sourcePath, outputPath, overlay) {
       '-y',
       '-i', sourcePath,
       '-vf', videoFilter,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '20',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '160k',
+      '-movflags', '+faststart',
+      outputPath
+    ]);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function renderViralVideoWithPupCaps(sourcePath, outputPath, overlay) {
+  if (!nodePath) {
+    throw new Error('未找到可用的 node，无法运行 PupCaps');
+  }
+  const pupcapsCliPath = findPupCapsCliPath();
+  if (!pupcapsCliPath) {
+    throw new Error('未找到 PupCaps CLI，请确认已安装 pupcaps 依赖');
+  }
+  const tempDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'moya-pupcaps-'));
+  const srtPath = path.join(tempDir, 'viral-captions.srt');
+  const cssPath = path.join(tempDir, 'viral-captions.css');
+  const movPath = path.join(tempDir, 'viral-captions.mov');
+  const titleAssPath = path.join(tempDir, 'viral-title.ass');
+  try {
+    const metadata = await probeVideo(sourcePath).catch(() => ({ width: 720, height: 1280, duration: 0 }));
+    const renderCanvas = buildViralRenderCanvas(metadata, overlay);
+    await fs.writeFile(srtPath, buildPupCapsSrt(overlay, renderCanvas), 'utf8');
+    await fs.writeFile(cssPath, buildPupCapsCss(overlay, renderCanvas), 'utf8');
+    await fs.writeFile(titleAssPath, buildViralTitleAss(overlay, renderCanvas), 'utf8');
+    await runProcess(nodePath, [
+      pupcapsCliPath,
+      srtPath,
+      '--output', movPath,
+      '--style', cssPath,
+      '--width', String(renderCanvas.width),
+      '--height', String(renderCanvas.height),
+      '--fps', '30'
+    ], { timeout: 120000 });
+    const movStat = await fs.stat(movPath);
+    if (!movStat.isFile() || movStat.size <= 0) {
+      throw new Error('PupCaps 未生成有效字幕层');
+    }
+    const baseFilter = buildViralVideoCanvasFilter(renderCanvas, overlay);
+    const filterComplex = `[0:v]${baseFilter}[base];[base][1:v]overlay=0:0,subtitles=filename=${quoteFfmpegFilterPath(titleAssPath)}[v]`;
+    await runProcess(ffmpegPath, [
+      '-y',
+      '-i', sourcePath,
+      '-i', movPath,
+      '-filter_complex', filterComplex,
+      '-map', '[v]',
+      '-map', '0:a?',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '20',
@@ -607,6 +709,126 @@ function probeVideo(filePath) {
       }
     });
   });
+}
+
+function findPupCapsCliPath() {
+  const candidates = [
+    process.env.PUPCAPS_BIN,
+    path.join(__dirname, 'pupcaps-runner.cjs'),
+    path.join(app.getAppPath(), 'electron', 'pupcaps-runner.cjs'),
+    path.join(process.cwd(), 'electron', 'pupcaps-runner.cjs')
+  ].filter(Boolean);
+  return candidates.find((candidate) => fsSync.existsSync(candidate)) || '';
+}
+
+function buildPupCapsSrt(overlay, metadata) {
+  const duration = Math.max(0.1, Number(metadata.duration) || readOverlayDuration(overlay));
+  const captions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
+    ? overlay.subtitleSegments
+    : [{ time: `00:00:00 - ${formatAssTime(duration)}`, text: overlay.name || '自动识别添加字幕' }];
+  return captions.map((caption, index) => {
+    const range = parseCaptionRange(caption.time, duration);
+    const keywords = buildOverlayKeywords(overlay.keywords || '', caption.text || '');
+    const captionText = markPupCapsKeywords(caption.text || '', keywords);
+    return [
+      String(index + 1),
+      `${formatSrtTime(range.start)} --> ${formatSrtTime(range.end)}`,
+      captionText
+    ].join('\n');
+  }).join('\n\n') + '\n';
+}
+
+function buildPupCapsCss(overlay, metadata) {
+  const width = Math.max(1, Number(metadata.width) || 720);
+  const height = Math.max(1, Number(metadata.height) || 1280);
+  const captionPosition = overlay.captionPosition || { x: 50, y: 64 };
+  const captionStyle = readOverlayTextStyle(overlay.captionTextStyle, { fontSize: Math.round(height * 0.024) }, width);
+  const theme = viralRenderTheme(overlay);
+  const top = Math.max(0, Math.round((Math.max(0, Math.min(100, Number(captionPosition.y) || 64)) / 100) * height - captionStyle.height / 2));
+  const fontSize = Math.max(16, captionStyle.fontSize);
+  const maxWidth = Math.max(180, Math.min(width - 48, captionStyle.width));
+  return `
+#video {
+  display: block;
+  width: ${width}px;
+  height: ${height}px;
+  font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+}
+
+.captions {
+  position: absolute;
+  left: 50%;
+  top: ${top}px;
+  width: ${maxWidth}px;
+  margin: 0;
+  transform: translateX(-50%);
+  text-align: left;
+}
+
+.caption {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: ${maxWidth}px;
+  padding: 8px 10px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 6px;
+  background: ${theme.captionBackground};
+  box-shadow: 0 12px 28px rgb(0 0 0 / 18%);
+}
+
+.word {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 1px 2px;
+  border-radius: 3px;
+  color: ${theme.captionColor};
+  font-size: ${fontSize}px;
+  font-weight: 800;
+  line-height: 1.28;
+  text-shadow: 0 2px 6px rgb(0 0 0 / 38%);
+}
+
+.word.highlighted {
+  background: ${theme.keywordBackground};
+  color: ${theme.keywordColor};
+  text-shadow: none;
+  animation: moyaKeywordJump 760ms cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+  box-shadow: 0 0 12px ${theme.glowColor};
+}
+
+@keyframes moyaKeywordJump {
+  0%, 100% { transform: translateY(0) scale(1); }
+  38% { transform: translateY(-3px) scale(1.08); }
+  58% { transform: translateY(1px) scale(0.98); }
+}
+`.trim();
+}
+
+function buildViralTitleAss(overlay, metadata) {
+  const width = Math.max(1, Number(metadata.width) || 720);
+  const height = Math.max(1, Number(metadata.height) || 1280);
+  const duration = Math.max(0.1, Number(metadata.duration) || readOverlayDuration(overlay));
+  const titlePosition = overlay.titlePosition || { x: 50, y: 18 };
+  const titleStyle = readOverlayTextStyle(overlay.titleTextStyle, { fontSize: Math.round(height * 0.038) }, width);
+  const theme = viralRenderTheme(overlay);
+  const titleText = overlay.hook || overlay.templateName || overlay.name || '网感剪辑';
+  const titleEnd = formatAssTime(Math.min(duration, Math.max(1.2, Math.min(3, duration * 0.28))));
+  const titlePoint = overlayCenterToTopLeft(titlePosition, titleStyle, width, height);
+  return [
+    '[Script Info]',
+    'ScriptType: v4.00+',
+    `PlayResX: ${width}`,
+    `PlayResY: ${height}`,
+    'ScaledBorderAndShadow: yes',
+    '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    `Style: Title,Microsoft YaHei,${titleStyle.fontSize},${assPrimaryColor(theme.titleColor)},&H00FFFFFF,${assBackColor(theme.titleBackground)},${assBackColor(theme.titleBackground)},-1,0,0,0,100,100,0,0,3,2,0,7,24,24,24,1`,
+    '',
+    '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    `Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`
+  ].join('\n');
 }
 
 function buildViralAss(overlay, metadata) {
@@ -746,11 +968,125 @@ function viralAssPalette(overlay) {
   return { title: '#2563eb', keyword: '#2563eb' };
 }
 
+function viralRenderTheme(overlay) {
+  const name = String(overlay.templateName || '');
+  const key = overlay.templateKey;
+  if (/爆点|高级红/.test(name) || key === 'street') {
+    return {
+      titleBackground: '#8a1230',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(0 0 0 / 58%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#b0123c',
+      keywordColor: '#ffffff',
+      glowColor: 'rgb(176 18 60 / 78%)'
+    };
+  }
+  if (key === 'seed') {
+    return {
+      titleBackground: '#f59e0b',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(255 255 255 / 88%)',
+      captionColor: '#17202e',
+      keywordBackground: '#f9a8d4',
+      keywordColor: '#831843',
+      glowColor: 'rgb(244 114 182 / 78%)'
+    };
+  }
+  if (key === 'deal' || /成交|转化/.test(name)) {
+    return {
+      titleBackground: '#111827',
+      titleColor: '#facc15',
+      captionBackground: 'rgb(17 24 39 / 82%)',
+      captionColor: '#facc15',
+      keywordBackground: '#dc2626',
+      keywordColor: '#ffffff',
+      glowColor: 'rgb(250 204 21 / 82%)'
+    };
+  }
+  if (key === 'story') {
+    return {
+      titleBackground: '#0f172a',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(15 23 42 / 76%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#a855f7',
+      keywordColor: '#ffffff',
+      glowColor: 'rgb(168 85 247 / 78%)'
+    };
+  }
+  if (key === 'list' || key === 'local') {
+    return {
+      titleBackground: '#0f766e',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(13 148 136 / 62%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#14b8a6',
+      keywordColor: '#ffffff',
+      glowColor: 'rgb(45 212 191 / 82%)'
+    };
+  }
+  if (key === 'expert') {
+    return {
+      titleBackground: '#1e293b',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(30 41 59 / 78%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#64748b',
+      keywordColor: '#ffffff',
+      glowColor: 'rgb(148 163 184 / 72%)'
+    };
+  }
+  if (key === 'compare') {
+    return {
+      titleBackground: '#7c3aed',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(124 58 237 / 64%)',
+      captionColor: '#ffffff',
+      keywordBackground: '#7c3aed',
+      keywordColor: '#ffffff',
+      glowColor: 'rgb(167 139 250 / 82%)'
+    };
+  }
+  if (key === 'urgency') {
+    return {
+      titleBackground: '#dc2626',
+      titleColor: '#ffffff',
+      captionBackground: 'rgb(24 24 27 / 78%)',
+      captionColor: '#fde68a',
+      keywordBackground: '#facc15',
+      keywordColor: '#111827',
+      glowColor: 'rgb(250 204 21 / 82%)'
+    };
+  }
+  return {
+    titleBackground: '#db2777',
+    titleColor: '#ffffff',
+    captionBackground: 'rgb(17 24 39 / 70%)',
+    captionColor: '#ffffff',
+    keywordBackground: '#db2777',
+    keywordColor: '#ffffff',
+    glowColor: 'rgb(244 114 182 / 82%)'
+  };
+}
+
 function buildOverlayKeywords(keywords, captionText) {
   const explicit = String(keywords || '').split(/[,，、\s]+/).map((item) => item.trim()).filter((item) => item.length >= 2);
   const inferred = String(captionText || '').match(/[\u4e00-\u9fa5]{2,}|[A-Za-z0-9]{2,}/g) || [];
   const sourceKeywords = explicit.length ? explicit : inferred;
   return [...new Set(sourceKeywords)].sort((left, right) => right.length - left.length).slice(0, 8);
+}
+
+function markPupCapsKeywords(text, keywords) {
+  const safeKeywords = Array.isArray(keywords)
+    ? keywords.map((item) => String(item || '').trim()).filter((item) => item.length >= 2)
+    : [];
+  if (safeKeywords.length === 0) return String(text || '');
+  const matcher = new RegExp(`(${safeKeywords.map(escapeRegExp).join('|')})`, 'gi');
+  return String(text || '').split(matcher).filter(Boolean).map((part) => {
+    const isKeyword = safeKeywords.some((keyword) => keyword.toLowerCase() === part.toLowerCase());
+    return isKeyword ? `[${part}]` : part;
+  }).join('');
 }
 
 function buildOverlayBilingualCaption(text, keywords = []) {
@@ -764,9 +1100,9 @@ function buildOverlayBilingualCaption(text, keywords = []) {
   return keywords.length ? 'Highlight the key message and make it memorable.' : 'Make the message clear and memorable.';
 }
 
-function runProcess(command, args) {
+function runProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { windowsHide: true }, (error, stdout, stderr) => {
+    execFile(command, args, { windowsHide: true, timeout: options.timeout || 0, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error((stderr || stdout || error.message || '视频渲染失败').toString().slice(-1200)));
         return;
@@ -840,6 +1176,15 @@ function assInlineColor(hex) {
   return `&H${bb}${gg}${rr}&`;
 }
 
+function assPrimaryColor(hex) {
+  const normalized = String(hex || '#ffffff').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return '&H00FFFFFF';
+  const rr = normalized.slice(0, 2);
+  const gg = normalized.slice(2, 4);
+  const bb = normalized.slice(4, 6);
+  return `&H00${bb}${gg}${rr}`;
+}
+
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -860,6 +1205,15 @@ function assBackColor(hex, alpha = '00') {
   const bb = normalized.slice(4, 6);
   const aa = /^[0-9a-f]{2}$/i.test(String(alpha)) ? String(alpha) : '00';
   return `&H${aa}${bb}${gg}${rr}`;
+}
+
+function formatSrtTime(value) {
+  const safeValue = Math.max(0, Number(value) || 0);
+  const hours = Math.floor(safeValue / 3600);
+  const minutes = Math.floor((safeValue % 3600) / 60);
+  const seconds = Math.floor(safeValue % 60);
+  const milliseconds = Math.floor((safeValue % 1) * 1000);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
 }
 
 function templateNameForKey(key) {
