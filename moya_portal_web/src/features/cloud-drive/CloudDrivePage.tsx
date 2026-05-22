@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import {
   ChevronDown,
-  ChevronLeft,
   Copy,
   Download,
   File,
@@ -987,7 +986,7 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
         {store.activeMenu === 'files' ? (
           <>
             <div className="cloud-drive-file-heading">
-              <DirectoryBar />
+              <DrivePathBar />
               <div className="cloud-drive-file-title-row">
                 <div className="cloud-drive-file-title-left">
                   <strong>全部文件</strong>
@@ -1115,33 +1114,45 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
   }
 }
 
-function DirectoryBar() {
+function DrivePathBar() {
   const store = useCloudDriveStore();
   const canGoParent = store.breadcrumbs.length > 1;
-  const visibleBreadcrumbs = compactBreadcrumbs(store.breadcrumbs);
   const goParentFolder = () => {
     if (!canGoParent) return;
     store.jumpToBreadcrumb(store.breadcrumbs.length - 2);
   };
 
   return (
-    <div className="cloud-directory-bar">
-      <button className="cloud-parent-button" type="button" disabled={!canGoParent} onClick={goParentFolder}>
-        <ChevronLeft size={15} />
-        <span>返回上一级</span>
-      </button>
-      <nav className="cloud-breadcrumbs" aria-label="当前目录路径">
-        {visibleBreadcrumbs.map((item) => (
-          item.ellipsis ? (
-            <span key="ellipsis">...</span>
-          ) : (
-            <button key={`${item.id || 'root'}-${item.index}`} type="button" title={item.name} onClick={() => store.jumpToBreadcrumb(item.index)}>
-              {item.name}
-            </button>
-          )
-        ))}
-      </nav>
-    </div>
+    <nav className="cloud-drive-path-bar" aria-label="当前目录路径">
+      {canGoParent ? (
+        <>
+          <button type="button" className="cloud-drive-path-link" onClick={goParentFolder}>
+            返回上一级
+          </button>
+          <span className="cloud-drive-path-separator">|</span>
+        </>
+      ) : null}
+      <ol className="cloud-drive-path-list">
+        {store.breadcrumbs.map((item, index) => {
+          const isCurrent = index === store.breadcrumbs.length - 1;
+          const label = index === 0 ? '全部文件' : item.name;
+          return (
+            <li key={`${item.id || 'root'}-${index}`}>
+              {index > 0 ? <span className="cloud-drive-path-separator">&gt;</span> : null}
+              {isCurrent ? (
+                <span className="cloud-drive-path-current" title={label}>
+                  {label}
+                </span>
+              ) : (
+                <button type="button" className="cloud-drive-path-link" title={label} onClick={() => store.jumpToBreadcrumb(index)}>
+                  {label}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
 
@@ -1803,16 +1814,6 @@ function formatPercent(value: number) {
 
 function formatExactBytes(size = 0) {
   return `${new Intl.NumberFormat('zh-CN').format(Math.max(0, Math.round(size)))} B`;
-}
-
-function compactBreadcrumbs(items: MoveBreadcrumbItem[]) {
-  const indexed = items.map((item, index) => ({ ...item, index, ellipsis: false }));
-  if (indexed.length <= 4) return indexed;
-  return [
-    indexed[0],
-    { id: null, name: '...', index: -1, ellipsis: true },
-    ...indexed.slice(-2)
-  ];
 }
 
 function isSameMoveOperation(

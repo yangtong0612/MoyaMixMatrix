@@ -244,7 +244,68 @@
   padding: 12px 16px 8px;
 }
 
-.cloud-directory-bar,
+.cloud-drive-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
+.cloud-drive-path-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.cloud-drive-path-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cloud-drive-path-link {
+  height: auto;
+  min-height: 0;
+  max-width: 220px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-drive-path-link:hover {
+  text-decoration: underline;
+}
+
+.cloud-drive-path-current {
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-drive-path-separator {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
 .cloud-drive-file-title-row,
 .cloud-drive-file-title-left {
   display: flex;
@@ -260,30 +321,6 @@
 .cloud-drive-file-title-left > strong {
   color: var(--text);
   font-size: 16px;
-}
-
-.cloud-parent-button:disabled {
-  display: none;
-}
-
-.cloud-breadcrumbs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.cloud-breadcrumbs button {
-  max-width: 220px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cloud-breadcrumbs > span {
-  color: var(--muted);
 }
 
 .cloud-drive-select-all {
@@ -477,6 +514,45 @@
   justify-self: end;
 }
 
+.cloud-file-select-control {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cloud-file-select-box {
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--muted);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.cloud-file-select-box.checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.cloud-file-select-box.checked::after {
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  content: '';
+  transform: rotate(45deg);
+}
+
 .cloud-file-list-actions button,
 .cloud-card-toolbar button,
 .transfer-upload-actions button {
@@ -533,7 +609,7 @@
   height: 30px;
 }
 
-.cloud-card-toolbar input {
+.cloud-card-toolbar .cloud-file-select-control {
   margin-right: auto;
 }
 

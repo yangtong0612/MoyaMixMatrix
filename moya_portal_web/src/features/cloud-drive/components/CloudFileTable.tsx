@@ -1,6 +1,6 @@
 import { Download, Eye, File, FileCode, FileText, Folder, Image, Info, MoreHorizontal, MoveRight, Pencil, Share2, Trash2, Video } from 'lucide-react';
-import { useState } from 'react';
-import type { DragEvent } from 'react';
+import { useEffect, useState } from 'react';
+import type { DragEvent, MouseEvent } from 'react';
 import type { DriveNodeView, UUID } from '../api/netdisk';
 
 export type CloudFileViewMode = 'list' | 'thumb' | 'large';
@@ -42,6 +42,10 @@ export function CloudFileTable({
   const [draggedNode, setDraggedNode] = useState<DriveNodeView | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<UUID | null>(null);
 
+  useEffect(() => {
+    setOpenMenuId(null);
+  }, [viewMode]);
+
   function startDrag(event: DragEvent<HTMLElement>, node: DriveNodeView) {
     setDraggedNode(node);
     event.dataTransfer.effectAllowed = 'move';
@@ -74,6 +78,15 @@ export function CloudFileTable({
     clearDrag();
   }
 
+  function handleItemClick(event: MouseEvent<HTMLElement>, id: UUID) {
+    if (isFileControlClick(event.target)) {
+      event.stopPropagation();
+      return;
+    }
+    setOpenMenuId(null);
+    stop(event, () => onSelectOnly(id));
+  }
+
   if (viewMode === 'list') {
     return (
       <div className="cloud-file-list-shell" onClick={() => setOpenMenuId(null)}>
@@ -98,11 +111,11 @@ export function CloudFileTable({
                 onDragOver={(event) => allowFolderDrop(event, item)}
                 onDragLeave={(event) => leaveFolderDrop(event, item)}
                 onDrop={(event) => dropOnFolder(event, item)}
-                onClick={(event) => stop(event, () => onSelectOnly(item.id))}
+                onClick={(event) => handleItemClick(event, item.id)}
                 onDoubleClick={() => (isFolder ? onOpenFolder(item) : onPreview(item))}
               >
                 <div className="cloud-file-list-name">
-                  <input aria-label={`选择 ${item.name}`} type="checkbox" checked={isSelected} onChange={(event) => stop(event, () => onToggleSelect(item.id))} />
+                  <SelectionToggle name={item.name} selected={isSelected} onToggle={() => onToggleSelect(item.id)} />
                   <span className="cloud-file-list-icon">
                     <FileVisual node={item} />
                   </span>
@@ -142,6 +155,7 @@ export function CloudFileTable({
                       onRename={onRename}
                       onMove={onMove}
                       onRecycle={onRecycle}
+                      onClose={() => setOpenMenuId(null)}
                     />
                   ) : null}
                 </div>
@@ -170,11 +184,11 @@ export function CloudFileTable({
               onDragOver={(event) => allowFolderDrop(event, item)}
               onDragLeave={(event) => leaveFolderDrop(event, item)}
               onDrop={(event) => dropOnFolder(event, item)}
-              onClick={(event) => stop(event, () => onSelectOnly(item.id))}
+              onClick={(event) => handleItemClick(event, item.id)}
               onDoubleClick={() => (isFolder ? onOpenFolder(item) : onPreview(item))}
             >
               <div className="cloud-card-toolbar">
-                <input aria-label={`选择 ${item.name}`} type="checkbox" checked={isSelected} onChange={(event) => stop(event, () => onToggleSelect(item.id))} />
+                <SelectionToggle name={item.name} selected={isSelected} onToggle={() => onToggleSelect(item.id)} />
                 {!isFolder ? (
                   <>
                     <button type="button" title="分享" onClick={(event) => stop(event, () => onShare(item))}>
@@ -213,6 +227,7 @@ export function CloudFileTable({
                   onRename={onRename}
                   onMove={onMove}
                   onRecycle={onRecycle}
+                  onClose={() => setOpenMenuId(null)}
                 />
               ) : null}
             </article>
@@ -230,7 +245,8 @@ function FileActionMenu({
   onDetails,
   onRename,
   onMove,
-  onRecycle
+  onRecycle,
+  onClose
 }: {
   node: DriveNodeView;
   onPreview: (node: DriveNodeView) => void;
@@ -238,33 +254,55 @@ function FileActionMenu({
   onRename: (node: DriveNodeView) => void;
   onMove: (node: DriveNodeView) => void;
   onRecycle: (node: DriveNodeView) => void;
+  onClose: () => void;
 }) {
   const isFolder = node.nodeType === 'FOLDER';
+  const runAction = (action: (node: DriveNodeView) => void) => {
+    onClose();
+    action(node);
+  };
   return (
     <div className="cloud-file-menu" onClick={(event) => event.stopPropagation()}>
       {!isFolder ? (
-        <button type="button" onClick={() => onPreview(node)}>
+        <button type="button" onClick={() => runAction(onPreview)}>
           <Eye size={15} />
           <span>预览</span>
         </button>
       ) : null}
-      <button type="button" onClick={() => onDetails(node)}>
+      <button type="button" onClick={() => runAction(onDetails)}>
         <Info size={15} />
         <span>详情</span>
       </button>
-      <button type="button" onClick={() => onRename(node)}>
+      <button type="button" onClick={() => runAction(onRename)}>
         <Pencil size={15} />
         <span>重命名</span>
       </button>
-      <button type="button" onClick={() => onMove(node)}>
+      <button type="button" onClick={() => runAction(onMove)}>
         <MoveRight size={15} />
         <span>移动</span>
       </button>
-      <button className="danger" type="button" onClick={() => onRecycle(node)}>
+      <button className="danger" type="button" onClick={() => runAction(onRecycle)}>
         <Trash2 size={15} />
         <span>删除</span>
       </button>
     </div>
+  );
+}
+
+function SelectionToggle({ name, selected, onToggle }: { name: string; selected: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className="cloud-file-select-control"
+      aria-label={`${selected ? '取消选择' : '选择'} ${name}`}
+      aria-pressed={selected}
+      title={`${selected ? '取消选择' : '选择'} ${name}`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => stop(event, onToggle)}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <span className={selected ? 'cloud-file-select-box checked' : 'cloud-file-select-box'} aria-hidden="true" />
+    </button>
   );
 }
 
@@ -363,6 +401,11 @@ function pad(value: number) {
 function stop(event: { stopPropagation: () => void }, action: () => void) {
   event.stopPropagation();
   action();
+}
+
+function isFileControlClick(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest('input, button, label, .cloud-file-select-control, .cloud-file-menu'));
 }
 
 function canDropOnFolder(source: DriveNodeView | null, target: DriveNodeView, items: DriveNodeView[]) {
