@@ -1543,27 +1543,34 @@ progress::-webkit-progress-value {
   align-items: start;
   width: 100%;
   height: 100%;
-  min-height: min(680px, calc(100vh - 56px));
-  overflow: auto;
-  padding: 26px 32px 64px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 22px 24px 28px;
 }
 
 .product-task-history {
-  width: min(1040px, 100%);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1080px, 100%);
+  height: 100%;
+  min-height: 0;
+}
+
+.product-task-history-title {
+  display: grid;
+  gap: 4px;
 }
 
 .product-task-history-head {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 18px;
-  min-height: 58px;
-  margin-bottom: 22px;
-  padding: 0 0 10px;
-  background: linear-gradient(180deg, #0d0f12 0 82%, rgb(13 15 18 / 0%));
+  min-height: 64px;
+  margin-bottom: 0;
+  padding: 0 8px 16px;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  background: transparent;
 }
 
 .product-task-history-head h2 {
@@ -1571,6 +1578,13 @@ progress::-webkit-progress-value {
   color: #f7fbff;
   font-size: 24px;
   letter-spacing: 0;
+}
+
+.product-task-history-title p {
+  margin: 0;
+  color: #96a5bd;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .product-task-filters {
@@ -1612,7 +1626,38 @@ progress::-webkit-progress-value {
 
 .product-task-feed {
   display: grid;
-  gap: 46px;
+  gap: 30px;
+  align-content: start;
+  justify-items: center;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 12px 40px 8px;
+  scroll-behavior: smooth;
+  scroll-snap-type: y proximity;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(125 137 163 / 80%) transparent;
+}
+
+.product-task-feed::-webkit-scrollbar {
+  width: 12px;
+}
+
+.product-task-feed::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.product-task-feed::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  background: rgb(125 137 163 / 70%);
+  background-clip: padding-box;
+}
+
+.product-task-feed::-webkit-scrollbar-thumb:hover {
+  background: rgb(103 115 142 / 88%);
+  background-clip: padding-box;
 }
 
 .product-task-message {
@@ -1620,7 +1665,8 @@ progress::-webkit-progress-value {
   grid-template-columns: 42px minmax(0, 1fr);
   align-items: start;
   gap: 14px;
-  max-width: 880px;
+  width: min(880px, 100%);
+  scroll-snap-align: start;
 }
 
 .product-task-avatar {
@@ -1717,12 +1763,22 @@ progress::-webkit-progress-value {
   overflow: hidden;
   border: 0;
   border-radius: 0;
+  cursor: pointer;
   background:
     radial-gradient(circle at 42% 20%, rgb(229 255 255 / 80%), transparent 24%),
     radial-gradient(circle at 82% 24%, rgb(65 190 255 / 50%), transparent 26%),
     radial-gradient(circle at 44% 86%, rgb(255 189 242 / 40%), transparent 20%),
     linear-gradient(135deg, #c5daf4 0%, #e4fbff 48%, #93dfff 100%);
   box-shadow: none;
+}
+
+.product-task-preview-card:focus-visible {
+  outline: 2px solid rgb(91 126 255 / 52%);
+  outline-offset: 3px;
+}
+
+.product-task-preview-card.inline-playing {
+  cursor: default;
 }
 
 .product-task-preview-card img,
@@ -1741,9 +1797,16 @@ progress::-webkit-progress-value {
 }
 
 .product-task-preview-card > span {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: 100%;
+  padding: 0 18px;
+  color: rgb(49 70 94 / 88%);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-align: center;
 }
 
 .product-task-preview-card em {
@@ -2092,7 +2155,7 @@ progress::-webkit-progress-value {
   }
 
   .product-generation-page {
-    padding: 14px 12px 46px;
+    padding: 12px 10px 18px;
   }
 
   .product-task-history-head {
@@ -2100,12 +2163,23 @@ progress::-webkit-progress-value {
     display: grid;
     grid-template-columns: 1fr;
     align-items: flex-start;
+    gap: 12px;
+    padding: 0 2px 12px;
   }
 
   .product-task-filters {
     justify-content: flex-start;
     flex-wrap: wrap;
     width: 100%;
+  }
+
+  .product-task-history {
+    width: 100%;
+  }
+
+  .product-task-feed {
+    gap: 22px;
+    padding: 10px 2px 26px 0;
   }
 
   .product-task-message {
@@ -3964,13 +4038,17 @@ progress::-webkit-progress-value {
 
 .product-preview-copy {
   display: grid;
-  grid-template-rows: minmax(58px, auto) 34px;
   align-content: start;
-  gap: 14px;
+  gap: 16px;
   justify-items: center;
   min-height: 142px;
   padding-top: 18px;
   text-align: center;
+}
+
+.product-preview-copy > div {
+  display: grid;
+  justify-items: center;
 }
 
 .product-preview-copy h1 {
@@ -3988,26 +4066,46 @@ progress::-webkit-progress-value {
   line-height: 1.45;
 }
 
+.product-history-entry {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  margin-top: 14px;
+}
+
 .product-history-return {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  width: fit-content;
+  width: auto;
   min-height: 34px;
-  margin-top: 12px;
-  padding: 0 13px;
+  padding: 0 14px;
   border: 1px solid rgb(142 162 255 / 24%);
-  border-radius: 8px;
+  border-radius: 999px;
   background: rgb(142 162 255 / 10%);
   color: #dbe5ff;
   font-size: 13px;
   font-weight: 800;
+  box-shadow: 0 8px 24px rgb(22 32 58 / 14%);
 }
 
 .product-history-return:hover {
   border-color: rgb(142 162 255 / 44%);
   background: rgb(142 162 255 / 16%);
+}
+
+.product-history-caption {
+  display: block;
+  margin: 0;
+  max-width: min(420px, 90%);
+  color: #9eabc1;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.history-entry-metrics {
+  justify-content: center;
 }
 
 .product-preview-metrics {
@@ -4913,12 +5011,17 @@ progress::-webkit-progress-value {
 }
 
 .theme-light .product-task-history-head {
-  background: linear-gradient(180deg, #eef3f9 0 72%, rgb(238 243 249 / 0%));
+  border-bottom-color: #dbe4f0;
 }
 
 .theme-light .product-task-history-head h2,
 .theme-light .product-task-line strong {
   color: #151d2a;
+}
+
+.theme-light .product-task-history-title p,
+.theme-light .product-history-caption {
+  color: #637083;
 }
 
 .theme-light .product-task-filters button {
@@ -4930,6 +5033,20 @@ progress::-webkit-progress-value {
 .theme-light .product-task-filters {
   border-color: #d7e0ec;
   background: rgb(255 255 255 / 58%);
+}
+
+.theme-light .product-task-feed {
+  scrollbar-color: rgb(173 185 203 / 92%) transparent;
+}
+
+.theme-light .product-task-feed::-webkit-scrollbar-thumb {
+  background: rgb(173 185 203 / 92%);
+  background-clip: padding-box;
+}
+
+.theme-light .product-task-feed::-webkit-scrollbar-thumb:hover {
+  background: rgb(143 156 177 / 96%);
+  background-clip: padding-box;
 }
 
 .theme-light .product-task-meta span,
@@ -5126,6 +5243,12 @@ progress::-webkit-progress-value {
   border-color: #cbd7e8;
   background: #ffffff;
   color: #3153d9;
+  box-shadow: 0 8px 18px rgb(148 163 184 / 16%);
+}
+
+.theme-light .product-history-return:hover {
+  border-color: #b8cae7;
+  background: #f8fbff;
 }
 
 .theme-light .store-upload-zone > span strong {
@@ -6069,7 +6192,7 @@ progress::-webkit-progress-value {
   font-size: 22px;
   font-weight: 900;
   line-height: 1.25;
-  text-align: left;
+  text-align: center;
   text-shadow:
     -1px -1px 0 rgb(0 0 0 / 76%),
     1px -1px 0 rgb(0 0 0 / 76%),
@@ -6170,7 +6293,7 @@ progress::-webkit-progress-value {
 }
 
 .viral-overlay-layer.caption-layer {
-  justify-items: start;
+  justify-items: center;
 }
 
 .viral-preview-overlay::before {
@@ -6292,7 +6415,7 @@ progress::-webkit-progress-value {
   color: var(--viral-caption-color, #ffffff);
   box-shadow: none;
   line-height: 1.28;
-  text-align: left;
+  text-align: center;
   resize: both;
   overflow: auto;
 }
@@ -6309,7 +6432,7 @@ progress::-webkit-progress-value {
   background: rgb(0 0 0 / 58%);
   color: #ffffff;
   line-height: 1.28;
-  text-align: left;
+  text-align: center;
 }
 
 .viral-preview-overlay .caption-layer .viral-caption-primary,
@@ -7158,6 +7281,7 @@ progress::-webkit-progress-value {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(238px, 278px));
   align-content: start;
+  align-items: start;
   justify-content: start;
   gap: 12px;
   min-height: 0;
@@ -7186,10 +7310,10 @@ progress::-webkit-progress-value {
 .viral-recent-grid article {
   position: relative;
   display: grid;
-  grid-template-rows: 134px minmax(36px, auto) 28px;
+  grid-template-rows: 176px minmax(36px, auto) 28px;
   gap: 8px;
   min-width: 0;
-  min-height: 218px;
+  min-height: 260px;
   padding: 10px;
   border: 1px solid #2a313c;
   border-radius: 12px;
@@ -7213,7 +7337,9 @@ progress::-webkit-progress-value {
   display: grid;
   place-items: center;
   min-width: 0;
-  height: 134px;
+  width: 100%;
+  height: 176px;
+  aspect-ratio: auto;
   overflow: hidden;
   border-radius: 9px;
   background:
@@ -7228,7 +7354,9 @@ progress::-webkit-progress-value {
 .viral-recent-grid video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  aspect-ratio: var(--viral-recent-media-ratio, 16 / 9);
+  object-fit: contain;
+  background: #050609;
 }
 
 .viral-recent-thumb small {
@@ -7370,7 +7498,46 @@ progress::-webkit-progress-value {
 .finished-thumb .viral-saved-title strong,
 .finished-thumb .viral-saved-title em,
 .finished-thumb .viral-saved-caption > span {
-  font-size: 10px;
+  font-size: 10px !important;
+  line-height: 1.16;
+}
+
+.viral-recent-grid .viral-saved-title,
+.viral-recent-grid .viral-saved-caption {
+  max-width: 68%;
+}
+
+.viral-recent-grid .viral-saved-title strong,
+.viral-recent-grid .viral-saved-caption > span {
+  width: min(100%, 168px) !important;
+  min-height: 0 !important;
+  max-height: 52px;
+  padding: 0 !important;
+  overflow: hidden;
+  text-align: center;
+}
+
+.viral-recent-grid .viral-saved-title strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.viral-recent-grid .viral-saved-caption > span {
+  gap: 1px;
+  max-height: 38px;
+}
+
+.viral-recent-grid .viral-saved-caption .viral-caption-primary,
+.viral-recent-grid .viral-saved-caption .viral-caption-translation {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.viral-recent-grid .viral-saved-caption .viral-caption-translation {
+  display: none;
 }
 
 .viral-saved-title strong {

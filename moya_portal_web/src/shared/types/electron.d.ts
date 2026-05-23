@@ -63,6 +63,13 @@ export interface MediaDownloadResult {
   size?: number;
 }
 
+export interface MediaCacheResult {
+  cached: boolean;
+  localPath: string;
+  name: string;
+  size: number;
+}
+
 export interface DriveFileInfo {
   name: string;
   size: number;
@@ -169,6 +176,7 @@ declare global {
       media: {
         uploadToOss(filePath: string, options?: { folder?: string; contentType?: string; taskId?: string }): Promise<OssUploadResult>;
         downloadToLocal(source: string, options?: { fileName?: string; viralOverlay?: unknown }): Promise<MediaDownloadResult>;
+        cacheRemoteFile(source: string, options?: { folder?: string; cacheKey?: string; fileName?: string }): Promise<MediaCacheResult>;
         readAsDataUrl(filePath: string, options?: MediaDataUrlOptions): Promise<MediaDataUrlResult>;
         onUploadToOssProgress(callback: (progress: OssUploadProgress) => void): () => void;
       };

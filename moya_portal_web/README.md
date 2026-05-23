@@ -38,7 +38,7 @@ npm install
 npm run dev
 ```
 
-开发端口是 `5174`，Electron 会加载 `http://localhost:5174`。
+开发端口是 `5174`，Electron 会加载 `http://127.0.0.1:5174`。
 
 ## 已生成内容
 

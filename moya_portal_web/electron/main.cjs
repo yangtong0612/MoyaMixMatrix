@@ -44,12 +44,17 @@ protocol.registerSchemesAsPrivileged([
 
 const store = new Store({ name: 'moya-matrix' });
 const isDev = !app.isPackaged;
-const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://localhost:8081/api').replace(/\/+$/, '');
+const devRendererUrl = process.env.MOYA_RENDERER_URL || 'http://127.0.0.1:5174';
+const prodRendererPath = path.join(__dirname, '../dist/index.html');
+const prodRendererUrl = pathToFileURL(prodRendererPath).toString();
+const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://127.0.0.1:8081/api').replace(/\/+$/, '');
 const ossUploadTimeoutMs = Number(process.env.MOYA_OSS_UPLOAD_TIMEOUT_MS || 10 * 60 * 1000);
 let mainWindow = null;
+let rendererRetryTimer = null;
 const appIconPath = path.join(__dirname, 'assets', process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png');
 
 function createWindow() {
+  let activeRendererUrl = isDev ? devRendererUrl : prodRendererUrl;
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -58,6 +63,7 @@ function createWindow() {
     title: 'moya矩阵',
     icon: appIconPath,
     backgroundColor: '#0b0b0c',
+    show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -73,11 +79,67 @@ function createWindow() {
     }
   });
 
-  const rendererUrl = isDev
-    ? 'http://localhost:5174'
-    : `file://${path.join(__dirname, '../dist/index.html')}`;
+  const loadRendererUrl = (nextUrl) => {
+    activeRendererUrl = nextUrl;
+    return mainWindow.loadURL(nextUrl);
+  };
 
-  mainWindow.loadURL(rendererUrl);
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow?.isDestroyed()) {
+      mainWindow.show();
+    }
+  });
+  mainWindow.webContents.on('did-finish-load', () => {
+    const currentUrl = mainWindow?.webContents.getURL() || '';
+    if (!isFallbackPageUrl(currentUrl)) {
+      clearRendererRetry();
+    }
+    if (!mainWindow?.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || isFallbackPageUrl(validatedURL)) return;
+    const detail = `${errorDescription || 'Unknown renderer error'} (${errorCode})`;
+    console.error('Renderer failed to load:', detail, validatedURL || activeRendererUrl);
+    if (maybeLoadBundledRendererFallback(mainWindow, activeRendererUrl, detail, loadRendererUrl)) {
+      return;
+    }
+    if (isDev) {
+      scheduleRendererRetry(mainWindow, activeRendererUrl, detail, loadRendererUrl);
+      return;
+    }
+    showRendererFailurePage(mainWindow, {
+      heading: '界面加载失败',
+      body: '打包后的前端资源没有成功打开，请重新执行 npm run build 后再启动 Electron。',
+      detail
+    });
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    const detail = `${details.reason}${details.exitCode ? ` (${details.exitCode})` : ''}`;
+    console.error('Renderer process exited:', detail);
+    showRendererFailurePage(mainWindow, {
+      heading: '界面进程已退出',
+      body: '渲染进程意外退出，建议重新启动应用。如果问题重复出现，请检查最近的前端改动。',
+      detail
+    });
+  });
+  void loadRendererUrl(activeRendererUrl).catch((error) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error('Renderer load threw before navigation completed:', detail);
+    if (maybeLoadBundledRendererFallback(mainWindow, activeRendererUrl, detail, loadRendererUrl)) {
+      return;
+    }
+    if (isDev) {
+      scheduleRendererRetry(mainWindow, activeRendererUrl, detail, loadRendererUrl);
+      return;
+    }
+    showRendererFailurePage(mainWindow, {
+      heading: '界面加载失败',
+      body: 'Electron 未能打开前端资源，请确认 dist 已构建完成。',
+      detail
+    });
+  });
   attachDebugContextMenu(mainWindow);
 
   if (isDev && process.env.ELECTRON_OPEN_DEVTOOLS === '1') {
@@ -85,8 +147,138 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => {
+    clearRendererRetry();
     mainWindow = null;
   });
+}
+
+function clearRendererRetry() {
+  if (rendererRetryTimer) {
+    clearTimeout(rendererRetryTimer);
+    rendererRetryTimer = null;
+  }
+}
+
+function scheduleRendererRetry(window, rendererUrl, detail, loadRendererUrl = (nextUrl) => window.loadURL(nextUrl)) {
+  clearRendererRetry();
+  showRendererFailurePage(window, {
+    heading: '正在连接开发界面',
+    body: 'Electron 已启动，但前端开发服务器暂时不可用。通常是 Vite 还没启动完成，或当前渲染代码编译失败。',
+    detail: `目标地址：${rendererUrl}\n原因：${detail}\nElectron 会自动重试，请稍候片刻。`
+  });
+  rendererRetryTimer = setTimeout(() => {
+    rendererRetryTimer = null;
+    if (!window || window.isDestroyed()) return;
+    void loadRendererUrl(rendererUrl).catch((error) => {
+      console.error('Renderer retry failed:', error);
+    });
+  }, 1500);
+}
+
+function maybeLoadBundledRendererFallback(window, rendererUrl, detail, loadRendererUrl) {
+  if (!isDev || rendererUrl === prodRendererUrl) return false;
+  if (process.env.MOYA_REQUIRE_DEV_SERVER === '1') return false;
+  if (!fsSync.existsSync(prodRendererPath)) return false;
+  if (!/(ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_CONNECTION_ABORTED|ERR_TIMED_OUT|ERR_CONNECTION_TIMED_OUT|ERR_ADDRESS_UNREACHABLE|ERR_INTERNET_DISCONNECTED)/i.test(detail)) {
+    return false;
+  }
+  clearRendererRetry();
+  showRendererFailurePage(window, {
+    heading: '开发服务不可用，正在切换内置界面',
+    body: '127.0.0.1:5174 当前没有响应，Electron 将先打开最近一次构建的界面，避免停留在连接页。',
+    detail: `开发地址：${rendererUrl}\n原因：${detail}\n回退地址：${prodRendererUrl}`
+  });
+  setTimeout(() => {
+    if (!window || window.isDestroyed()) return;
+    void loadRendererUrl(prodRendererUrl).catch((error) => {
+      console.error('Bundled renderer fallback failed:', error);
+    });
+  }, 180);
+  return true;
+}
+
+function showRendererFailurePage(window, { heading, body, detail }) {
+  if (!window || window.isDestroyed()) return;
+  const html = `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>moya矩阵</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top, rgba(100, 140, 255, 0.18), transparent 34%),
+          linear-gradient(180deg, #101116 0%, #0b0c10 100%);
+        color: #eef3ff;
+      }
+      main {
+        width: min(680px, calc(100vw - 48px));
+        padding: 28px 30px;
+        border-radius: 24px;
+        background: rgba(17, 18, 24, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 30px;
+      }
+      p {
+        margin: 0;
+        color: #c6cee0;
+        line-height: 1.7;
+        font-size: 15px;
+      }
+      pre {
+        margin: 18px 0 0;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: #9fb2d8;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeHtml(heading)}</h1>
+      <p>${escapeHtml(body)}</p>
+      <pre>${escapeHtml(detail)}</pre>
+    </main>
+  </body>
+</html>`;
+  void window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch((error) => {
+    console.error('Failed to show renderer fallback page:', error);
+  });
+  if (!window.isVisible()) {
+    window.show();
+  }
+}
+
+function isFallbackPageUrl(url = '') {
+  return typeof url === 'string' && url.startsWith('data:text/html');
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function attachDebugContextMenu(window) {
@@ -140,7 +332,17 @@ function registerMediaProtocol() {
     const url = new URL(request.url);
     const filePath = url.searchParams.get('path');
     if (!filePath) return new Response('Missing media path', { status: 400 });
-    if (/^https?:\/\//i.test(filePath)) return net.fetch(filePath);
+    if (/^https?:\/\//i.test(filePath)) {
+      const headers = new Headers();
+      const range = request.headers.get('range');
+      const accept = request.headers.get('accept');
+      if (range) headers.set('range', range);
+      if (accept) headers.set('accept', accept);
+      return net.fetch(filePath, {
+        method: request.method || 'GET',
+        headers
+      });
+    }
     if (/^file:\/\//i.test(filePath)) return net.fetch(filePath);
     if (!fsSync.existsSync(filePath)) return new Response('Media file not found', { status: 404 });
 
@@ -480,6 +682,11 @@ function registerIpc() {
     };
   });
 
+  ipcMain.handle('media:cache-remote-file', async (_event, source, options = {}) => {
+    if (!source || typeof source !== 'string') throw new Error('缺少可缓存的视频地址');
+    return cacheMediaSourceLocally(source, options);
+  });
+
   ipcMain.handle('media:read-as-data-url', async (_event, filePath, options = {}) => {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) throw new Error('Only files can be read');
@@ -557,6 +764,72 @@ function downloadUrlToFile(sourceUrl, destinationPath, redirectCount = 0) {
     });
     request.on('error', reject);
   });
+}
+
+async function cacheMediaSourceLocally(source, options = {}) {
+  const cacheDir = path.join(app.getPath('userData'), 'media-cache', options.folder || 'general');
+  await fs.mkdir(cacheDir, { recursive: true });
+  const fileName = buildMediaCacheFileName(source, options);
+  const destinationPath = path.join(cacheDir, fileName);
+  if (fsSync.existsSync(destinationPath)) {
+    const existingStat = await fs.stat(destinationPath).catch(() => null);
+    if (existingStat?.isFile() && existingStat.size > 0) {
+      return {
+        cached: true,
+        localPath: destinationPath,
+        name: fileName,
+        size: existingStat.size
+      };
+    }
+  }
+  if (/^https?:\/\//i.test(source)) {
+    const tempPath = `${destinationPath}.part`;
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    await downloadUrlToFile(source, tempPath);
+    await fs.rename(tempPath, destinationPath).catch(async () => {
+      await fs.copyFile(tempPath, destinationPath);
+      await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    });
+  } else if (/^file:\/\//i.test(source)) {
+    await fs.copyFile(fileURLToPath(source), destinationPath);
+  } else {
+    await fs.copyFile(source, destinationPath);
+  }
+  const stat = await fs.stat(destinationPath);
+  return {
+    cached: true,
+    localPath: destinationPath,
+    name: fileName,
+    size: stat.size
+  };
+}
+
+function buildMediaCacheFileName(source, options = {}) {
+  const fallbackName = safeDownloadFileName(options.fileName || inferDownloadFileName(source));
+  const ext = path.extname(fallbackName) || '.mp4';
+  const baseName = path.basename(fallbackName, ext)
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48) || 'moya-media';
+  const cacheKey = String(options.cacheKey || inferMediaCacheKey(source))
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, '-')
+    .trim()
+    .slice(0, 32) || randomUUID().slice(0, 8);
+  return `${baseName}-${cacheKey}${ext}`;
+}
+
+function inferMediaCacheKey(source) {
+  if (!/^https?:\/\//i.test(source)) {
+    return createHash('sha1').update(source).digest('hex').slice(0, 12);
+  }
+  try {
+    const targetUrl = new URL(source);
+    return createHash('sha1').update(`${targetUrl.origin}${targetUrl.pathname}`).digest('hex').slice(0, 12);
+  } catch {
+    return createHash('sha1').update(source).digest('hex').slice(0, 12);
+  }
 }
 
 async function prepareRenderableSource(source) {

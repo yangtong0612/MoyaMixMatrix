@@ -42,7 +42,7 @@ function statusMessage(status?: number, error?: unknown) {
   if (status === 401) return '登录已过期，请重新登录';
   if (status === 403) return '登录已过期或没有权限，请重新登录';
   if (isApiProxyFailure(status, error)) {
-    return '无法连接后端服务，请先启动 moya_portal_banked，并确认前端代理目标为 http://localhost:8081。';
+    return '无法连接后端服务，请先启动 moya_portal_banked，并确认前端代理目标为 http://127.0.0.1:8081。';
   }
   return '';
 }

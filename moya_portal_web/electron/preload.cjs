@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('surgicol', {
   media: {
     uploadToOss: (filePath, options) => invoke('media:upload-to-oss', filePath, options),
     downloadToLocal: (source, options) => invoke('media:download-to-local', source, options),
+    cacheRemoteFile: (source, options) => invoke('media:cache-remote-file', source, options),
     readAsDataUrl: (filePath, options) => invoke('media:read-as-data-url', filePath, options),
     onUploadToOssProgress: (callback) => {
       const listener = (_event, progress) => callback(progress);

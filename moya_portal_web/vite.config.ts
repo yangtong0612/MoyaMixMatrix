@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
-const apiProxyTarget = process.env.MOYA_API_PROXY_TARGET || 'http://localhost:8081';
+const apiProxyTarget = process.env.MOYA_API_PROXY_TARGET || 'http://127.0.0.1:8081';
 const stripApiPrefix = process.env.MOYA_API_PROXY_STRIP_PREFIX === 'true';
 
 export default defineConfig({

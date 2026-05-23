@@ -696,6 +696,11 @@ interface ViralOverlayTextStyle {
   height: number;
 }
 
+interface ViralVideoSize {
+  width: number;
+  height: number;
+}
+
 type ViralPreviewVideoFit = 'contain' | 'cover' | 'fill';
 type ViralTemplateMakerMode = 'manual' | 'analyze';
 type ViralTemplateMarkerZone = 'opening' | 'body' | 'ending' | 'global';
@@ -740,6 +745,8 @@ interface ViralRecentTask {
   subtitleSegments?: ViralCaptionSegment[];
   mediaUrl?: string;
   subtitleJobId?: string;
+  videoWidth?: number;
+  videoHeight?: number;
 }
 
 interface ViralCaptionSegment {
@@ -893,6 +900,7 @@ function createViralDefaultClips(duration = VIRAL_TIMELINE_DURATION): ViralTimel
 function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinishedLibrary: (savedCount: number) => void }) {
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const filmstripRef = useRef<HTMLDivElement>(null);
+  const sourceVideoSizeRef = useRef<ViralVideoSize | null>(null);
   const playbackFrameRef = useRef<number | null>(null);
   const playbackStartedAtRef = useRef(0);
   const playbackTimelineStartedAtRef = useRef(0);
@@ -900,6 +908,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const templatePreviewStartedAtRef = useRef(0);
   const [sourceVideo, setSourceVideo] = useState<MaterialItem | null>(null);
   const [recentTasks, setRecentTasks] = useState<ViralRecentTask[]>([]);
+  const [recentTaskVideoSizes, setRecentTaskVideoSizes] = useState<Record<string, ViralVideoSize>>({});
   const [customTemplateCards, setCustomTemplateCards] = useState<ViralTemplateCard[]>([]);
   const [templateMakerOpen, setTemplateMakerOpen] = useState(false);
   const [templateMakerMode, setTemplateMakerMode] = useState<ViralTemplateMakerMode>('manual');
@@ -981,12 +990,15 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     ])
       .then(([tasks, templates]) => {
         if (canceled) return;
-        setRecentTasks(Array.isArray(tasks) ? tasks : []);
+        const nextTasks = Array.isArray(tasks) ? tasks : [];
+        setRecentTasks(nextTasks);
+        setRecentTaskVideoSizes(buildViralRecentTaskVideoSizeMap(nextTasks));
         setCustomTemplateCards(Array.isArray(templates) ? templates : []);
       })
       .catch(() => {
         if (!canceled) {
           setRecentTasks([]);
+          setRecentTaskVideoSizes({});
           setCustomTemplateCards([]);
         }
       });
@@ -1056,6 +1068,25 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     }
   }, []);
 
+  function rememberViralSourceVideoSize(video: HTMLVideoElement) {
+    const videoSize = readViralVideoElementSize(video);
+    if (videoSize) sourceVideoSizeRef.current = videoSize;
+  }
+
+  function getCurrentViralSourceVideoSize() {
+    return readViralVideoElementSize(previewVideoRef.current) || sourceVideoSizeRef.current;
+  }
+
+  function rememberRecentTaskVideoSize(taskId: string, event: SyntheticEvent<HTMLVideoElement>) {
+    const videoSize = readViralVideoElementSize(event.currentTarget);
+    if (!videoSize) return;
+    setRecentTaskVideoSizes((sizes) => {
+      const currentSize = sizes[taskId];
+      if (currentSize?.width === videoSize.width && currentSize.height === videoSize.height) return sizes;
+      return { ...sizes, [taskId]: videoSize };
+    });
+  }
+
   async function importSourceVideo() {
     const files = await window.surgicol.dialog.openFiles({
       filters: [{ name: '视频文件', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }]
@@ -1070,6 +1101,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       path: filePath,
       duration: 18
     };
+    sourceVideoSizeRef.current = null;
     setSourceVideo(nextVideo);
     setVersions([]);
     setSelectedVersionIds([]);
@@ -1125,6 +1157,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       const recognizedKeywords = extractViralKeywordsFromText(nextCaptions.map((caption) => caption.text).join(' '));
       if (recognizedKeywords.length) setKeywords(recognizedKeywords.join(', '));
       setNotice(`已通过阿里云智能字幕断句识别 ${nextCaptions.length} 段字幕${recognizedKeywords.length ? `，并识别 ${recognizedKeywords.length} 个关键词` : ''}，已同步到文字快剪、左侧预览和保存渲染。`);
+      const taskVideoSize = getCurrentViralSourceVideoSize();
       void persistViralRecentTask({
         id: nextVideo.id,
         name: nextVideo.name,
@@ -1136,7 +1169,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         keywords: recognizedKeywords.length ? recognizedKeywords.join(', ') : keywords,
         subtitleSegments: nextCaptions,
         savedAt: new Date().toISOString(),
-        duration: formatViralDuration(nextDuration)
+        duration: formatViralDuration(nextDuration),
+        ...(taskVideoSize ? { videoWidth: taskVideoSize.width, videoHeight: taskVideoSize.height } : {})
       });
     } catch (error) {
       unsubscribe?.();
@@ -1151,6 +1185,10 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     const storedTasks = await window.surgicol.store.get<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY).catch(() => []);
     const nextTasks = [task, ...(Array.isArray(storedTasks) ? storedTasks.filter((item) => item.id !== task.id) : [])].slice(0, 12);
     setRecentTasks(nextTasks);
+    const taskVideoSize = getViralRecentTaskVideoSize(task);
+    if (taskVideoSize) {
+      setRecentTaskVideoSizes((sizes) => ({ ...sizes, [task.id]: taskVideoSize }));
+    }
     await window.surgicol.store.set(VIRAL_RECENT_TASKS_KEY, nextTasks);
   }
 
@@ -1234,6 +1272,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
 
   function restoreRecentTask(task: ViralRecentTask) {
     setPreviewRecentTask(null);
+    sourceVideoSizeRef.current = getViralRecentTaskVideoSize(task);
     setSourceVideo({
       id: task.id,
       name: task.name,
@@ -1268,6 +1307,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   }
 
   function handleViralMetadataLoaded(event: SyntheticEvent<HTMLVideoElement>) {
+    rememberViralSourceVideoSize(event.currentTarget);
     const duration = event.currentTarget.duration;
     if (!Number.isFinite(duration) || duration <= 0.1) return;
     const nextDuration = Math.max(0.1, duration);
@@ -1686,6 +1726,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       text: caption.text,
       translation: caption.translation
     }));
+    const savedVideoSize = getCurrentViralSourceVideoSize();
     const savedOverlayBase: ViralRecentTask = {
       id: sourceVideo.id,
       name: sourceVideo.name,
@@ -1702,7 +1743,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       titleTextStyle,
       captionTextStyle,
       previewVideoFit,
-      subtitleSegments: savedSubtitleSegments
+      subtitleSegments: savedSubtitleSegments,
+      ...(savedVideoSize ? { videoWidth: savedVideoSize.width, videoHeight: savedVideoSize.height } : {})
     };
     const nextGroup: FinishedVideoGroup = {
       id: groupId,
@@ -1796,8 +1838,16 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
             <div className="viral-recent-grid">
               {recentTasks.length ? recentTasks.map((task) => (
                 <article key={task.id} onClick={() => setPreviewRecentTask(task)} title={task.name}>
-                  <div className="viral-recent-thumb">
-                    {task.path ? <video src={toMediaUrl(task.path)} muted playsInline preload="metadata" /> : <Film size={24} />}
+                  <div className="viral-recent-thumb" style={viralRecentTaskThumbStyle(task, recentTaskVideoSizes[task.id])}>
+                    {task.path ? (
+                      <video
+                        src={toMediaUrl(task.path)}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        onLoadedMetadata={(event) => rememberRecentTaskVideoSize(task.id, event)}
+                      />
+                    ) : <Film size={24} />}
                     {task.finishedCount ? <ViralSavedOverlay task={task} /> : null}
                     <small>{task.duration}</small>
                     <em>{task.templateName || '网感模板'}</em>
@@ -1851,7 +1901,13 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       ) : uploadPhase !== 'ready' ? (
         <div className="viral-processing-screen">
           <section className="viral-phone-preview">
-            <video src={toMediaUrl(sourceVideo.path || '')} muted autoPlay loop />
+            <video
+              src={toMediaUrl(sourceVideo.path || '')}
+              muted
+              autoPlay
+              loop
+              onLoadedMetadata={(event) => rememberViralSourceVideoSize(event.currentTarget)}
+            />
           </section>
           <section className="viral-processing-card">
             <Upload size={76} />
@@ -2480,6 +2536,38 @@ function buildRecentTaskDownloadOverlay(task: ViralRecentTask): ViralRecentTask 
     previewVideoFit: task.previewVideoFit || 'cover',
     subtitleSegments: captions
   };
+}
+
+function readViralVideoElementSize(video?: HTMLVideoElement | null): ViralVideoSize | null {
+  if (!video) return null;
+  return normalizeViralVideoSize(video.videoWidth, video.videoHeight);
+}
+
+function normalizeViralVideoSize(width?: number, height?: number): ViralVideoSize | null {
+  if (typeof width !== 'number' || typeof height !== 'number' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return {
+    width: Math.max(1, Math.round(width)),
+    height: Math.max(1, Math.round(height))
+  };
+}
+
+function getViralRecentTaskVideoSize(task: ViralRecentTask, measuredSize?: ViralVideoSize): ViralVideoSize | null {
+  return measuredSize || normalizeViralVideoSize(task.videoWidth, task.videoHeight);
+}
+
+function buildViralRecentTaskVideoSizeMap(tasks: ViralRecentTask[]) {
+  return tasks.reduce<Record<string, ViralVideoSize>>((sizes, task) => {
+    const videoSize = getViralRecentTaskVideoSize(task);
+    if (videoSize) sizes[task.id] = videoSize;
+    return sizes;
+  }, {});
+}
+
+function viralRecentTaskThumbStyle(task: ViralRecentTask, measuredSize?: ViralVideoSize): CSSProperties {
+  const videoSize = getViralRecentTaskVideoSize(task, measuredSize);
+  return {
+    '--viral-recent-media-ratio': videoSize ? `${videoSize.width} / ${videoSize.height}` : '16 / 9'
+  } as CSSProperties;
 }
 
 function buildViralHook(template: ViralTemplate, keyword: string, index: number) {

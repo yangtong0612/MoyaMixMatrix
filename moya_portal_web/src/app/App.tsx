@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { flushSync } from 'react-dom';
 import {
   ArrowRight,
   CheckCircle2,
@@ -39,6 +40,7 @@ import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
 import { useCloudDriveStore } from '@/features/cloud-drive/cloudDriveStore';
 import { EditorPage } from '@/features/editor/EditorPage';
 import {
+  cacheProductVideoAssetLocally,
   createProductVideoTask,
   getProductVideoAssetAccessUrl,
   getProductVideoConfigStatus,
@@ -75,6 +77,7 @@ type ProductVideoTaskThread = {
   successful?: boolean;
   finished?: boolean;
   videoUrl?: string;
+  cachedVideoPath?: string;
   message?: string;
   model?: string;
   quality?: string;
@@ -83,6 +86,13 @@ type ProductVideoTaskThread = {
   createdAt?: string;
   updatedAt?: string;
 };
+
+type ProductVideoTaskThreadStore = Record<ProductVideoScenarioKey, ProductVideoTaskThread[]>;
+
+const productVideoScenarioKeys: ProductVideoScenarioKey[] = ['product-spokesperson', 'product-showcase', 'store-traffic', 'hot-replica'];
+const PRODUCT_VIDEO_TASKS_STORE_KEY = 'moya-product-video-tasks-by-scenario';
+const LEGACY_PRODUCT_VIDEO_TASKS_STORAGE_KEY = 'moya-product-video-tasks';
+const MAX_PRODUCT_VIDEO_TASKS_PER_SCENARIO = 12;
 
 const productVideoScenarios: Array<{
   key: ProductVideoScenarioKey;
@@ -308,7 +318,48 @@ function localFileUrl(filePath: string) {
 
 function mediaPreviewUrl(path?: string | null) {
   if (!path) return '';
-  return /^(https?:|data:|blob:|moya-media:)/i.test(path) ? path : localFileUrl(path);
+  if (/^(https?:|data:|blob:|moya-media:)/i.test(path)) return path;
+  return localFileUrl(path);
+}
+
+function shouldRequestProtectedPreview(path?: string | null) {
+  return Boolean(path && (/^oss:\/\//i.test(path) || /aliyuncs\.com/i.test(path)));
+}
+
+function signedMediaUrlExpiresAt(path?: string | null) {
+  if (!path || !/^https?:/i.test(path)) return 0;
+  try {
+    const url = new URL(path);
+    const tosDate = url.searchParams.get('X-Tos-Date');
+    const tosExpires = Number(url.searchParams.get('X-Tos-Expires') ?? '');
+    if (tosDate && Number.isFinite(tosExpires)) {
+      const parsed = parseCompactUtcTimestamp(tosDate);
+      if (parsed) return parsed + tosExpires * 1000;
+    }
+    const ossExpires = Number(url.searchParams.get('Expires') ?? '');
+    if (Number.isFinite(ossExpires) && (url.searchParams.has('OSSAccessKeyId') || url.searchParams.has('Signature'))) {
+      return ossExpires * 1000;
+    }
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
+function parseCompactUtcTimestamp(value: string) {
+  if (!/^\d{8}T\d{6}Z$/.test(value)) return 0;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(4, 6));
+  const day = Number(value.slice(6, 8));
+  const hour = Number(value.slice(9, 11));
+  const minute = Number(value.slice(11, 13));
+  const second = Number(value.slice(13, 15));
+  return Date.UTC(year, month - 1, day, hour, minute, second);
+}
+
+function shouldRefreshExpiringVideoUrl(path?: string | null, thresholdMs = 60_000) {
+  const expiresAt = signedMediaUrlExpiresAt(path);
+  return Boolean(expiresAt && expiresAt - Date.now() <= thresholdMs);
 }
 
 function delay(ms: number) {
@@ -332,21 +383,175 @@ function productVideoStatusText(task: ProductVideoTaskStatus) {
   return task.status ? `云端状态：${task.status}` : '云端生成中，请稍等...';
 }
 
-function updateProductVideoRecentTask(taskId: string, nextTask: Record<string, unknown>) {
-  const existing = JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as Array<Record<string, unknown>>;
-  const next = existing.map((task) => (task.taskId === taskId ? { ...task, ...nextTask } : task));
-  if (!next.some((task) => task.taskId === taskId)) {
-    next.unshift(nextTask);
-  }
-  localStorage.setItem('moya-product-video-tasks', JSON.stringify(next.slice(0, 12)));
+function createEmptyProductVideoTaskThreadStore(): ProductVideoTaskThreadStore {
+  return {
+    'product-spokesperson': [],
+    'product-showcase': [],
+    'store-traffic': [],
+    'hot-replica': []
+  };
 }
 
-function readProductVideoRecentTasks() {
+function isProductVideoScenarioKey(value: unknown): value is ProductVideoScenarioKey {
+  return typeof value === 'string' && productVideoScenarioKeys.includes(value as ProductVideoScenarioKey);
+}
+
+function optionalText(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  const next = value.trim();
+  return next || undefined;
+}
+
+function nullableText(value: unknown) {
+  if (value === null) return null;
+  return optionalText(value);
+}
+
+function optionalBoolean(value: unknown) {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function optionalStringArray(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const next = value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+  return next.length ? next : undefined;
+}
+
+function taskThreadTimestamp(task: Pick<ProductVideoTaskThread, 'updatedAt' | 'createdAt'>) {
+  const source = task.updatedAt || task.createdAt;
+  if (!source) return 0;
+  const timestamp = Date.parse(source);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function inferProductVideoTaskScenario(task: Record<string, unknown>) {
+  if (isProductVideoScenarioKey(task.scenario)) return task.scenario;
+  if (optionalStringArray(task.storeImages)?.length || optionalText(task.storeSample)) return 'store-traffic';
+  if (optionalText(task.referenceVideo) || optionalText(task.referenceVideoUrl)) return 'hot-replica';
+  const scenarioText = [optionalText(task.title), optionalText(task.prompt), optionalText(task.message), optionalText(task.description)]
+    .filter(Boolean)
+    .join(' ');
+  if (/门店|探店|同城|引流|到店/.test(scenarioText)) return 'store-traffic';
+  if (/复刻|爆款|参考视频/.test(scenarioText)) return 'hot-replica';
+  if (/展示|大片|运镜|质感/.test(scenarioText)) return 'product-showcase';
+  return 'product-spokesperson';
+}
+
+function normalizeProductVideoTaskThread(task: unknown) {
+  if (!task || typeof task !== 'object') return null;
+  const source = task as Record<string, unknown>;
+  const taskId = optionalText(source.taskId);
+  if (!taskId) return null;
+  const scenario = inferProductVideoTaskScenario(source);
+  return {
+    ...source,
+    id: optionalText(source.id) || `product-video-${taskId}`,
+    taskId,
+    scenario,
+    title: optionalText(source.title),
+    description: optionalText(source.description),
+    productImage: optionalText(source.productImage),
+    productImages: optionalStringArray(source.productImages),
+    storeImages: optionalStringArray(source.storeImages),
+    referenceVideo: nullableText(source.referenceVideo),
+    status: optionalText(source.status),
+    successful: optionalBoolean(source.successful),
+    finished: optionalBoolean(source.finished),
+    videoUrl: optionalText(source.videoUrl),
+    cachedVideoPath: optionalText(source.cachedVideoPath),
+    message: optionalText(source.message),
+    model: optionalText(source.model),
+    quality: optionalText(source.quality),
+    ratio: optionalText(source.ratio),
+    duration: optionalText(source.duration),
+    createdAt: optionalText(source.createdAt),
+    updatedAt: optionalText(source.updatedAt)
+  } as ProductVideoTaskThread;
+}
+
+function buildProductVideoTaskThreadStore(tasks: unknown[]) {
+  const byScenarioTaskId = new Map<string, ProductVideoTaskThread>();
+  tasks.forEach((task) => {
+    const normalized = normalizeProductVideoTaskThread(task);
+    if (!normalized) return;
+    const key = `${normalized.scenario}:${normalized.taskId}`;
+    const existing = byScenarioTaskId.get(key);
+    if (!existing || taskThreadTimestamp(normalized) >= taskThreadTimestamp(existing)) {
+      byScenarioTaskId.set(key, normalized);
+    }
+  });
+  const store = createEmptyProductVideoTaskThreadStore();
+  Array.from(byScenarioTaskId.values())
+    .sort((left, right) => taskThreadTimestamp(right) - taskThreadTimestamp(left))
+    .forEach((task) => {
+      const bucket = store[task.scenario || 'product-spokesperson'];
+      if (bucket.length < MAX_PRODUCT_VIDEO_TASKS_PER_SCENARIO) bucket.push(task);
+    });
+  return store;
+}
+
+function flattenProductVideoTaskThreadStore(store: ProductVideoTaskThreadStore) {
+  return productVideoScenarioKeys
+    .flatMap((scenario) => store[scenario])
+    .sort((left, right) => taskThreadTimestamp(right) - taskThreadTimestamp(left));
+}
+
+function normalizeProductVideoTaskThreadStore(value: unknown) {
+  if (Array.isArray(value)) return buildProductVideoTaskThreadStore(value);
+  if (!value || typeof value !== 'object') return createEmptyProductVideoTaskThreadStore();
+  const source = value as Record<string, unknown>;
+  const tasks = productVideoScenarioKeys.flatMap((scenario) => (Array.isArray(source[scenario]) ? source[scenario] : []));
+  return buildProductVideoTaskThreadStore(tasks);
+}
+
+function readLegacyProductVideoRecentTasks() {
   try {
-    return JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as ProductVideoTaskThread[];
+    const stored = JSON.parse(localStorage.getItem(LEGACY_PRODUCT_VIDEO_TASKS_STORAGE_KEY) ?? '[]') as unknown;
+    return Array.isArray(stored) ? stored : [];
   } catch {
     return [];
   }
+}
+
+async function persistProductVideoTaskThreadStore(store: ProductVideoTaskThreadStore) {
+  const normalizedStore = normalizeProductVideoTaskThreadStore(store);
+  const flattenedTasks = flattenProductVideoTaskThreadStore(normalizedStore);
+  if (window.surgicol?.store?.set) {
+    await window.surgicol.store.set(PRODUCT_VIDEO_TASKS_STORE_KEY, normalizedStore).catch(() => false);
+  }
+  try {
+    localStorage.setItem(LEGACY_PRODUCT_VIDEO_TASKS_STORAGE_KEY, JSON.stringify(flattenedTasks));
+  } catch {
+    // Ignore browser storage write failures and keep Electron store as source of truth.
+  }
+  return normalizedStore;
+}
+
+async function readProductVideoRecentTaskThreadStore() {
+  const persistedStore = window.surgicol?.store?.get
+    ? normalizeProductVideoTaskThreadStore(await window.surgicol.store.get<unknown>(PRODUCT_VIDEO_TASKS_STORE_KEY).catch(() => null))
+    : createEmptyProductVideoTaskThreadStore();
+  const legacyTasks = readLegacyProductVideoRecentTasks();
+  if (!legacyTasks.length) return persistedStore;
+  const mergedStore = buildProductVideoTaskThreadStore([...flattenProductVideoTaskThreadStore(persistedStore), ...legacyTasks]);
+  if (JSON.stringify(mergedStore) !== JSON.stringify(persistedStore)) {
+    await persistProductVideoTaskThreadStore(mergedStore);
+  }
+  return mergedStore;
+}
+
+async function updateProductVideoRecentTask(taskId: string, nextTask: Record<string, unknown>) {
+  const currentStore = await readProductVideoRecentTaskThreadStore();
+  const currentTasks = flattenProductVideoTaskThreadStore(currentStore);
+  const nextTasks: Array<ProductVideoTaskThread | Record<string, unknown>> = currentTasks.map((task) =>
+    task.taskId === taskId ? { ...task, ...nextTask } : task
+  );
+  if (!nextTasks.some((task) => task.taskId === taskId)) {
+    nextTasks.unshift(nextTask);
+  }
+  return persistProductVideoTaskThreadStore(buildProductVideoTaskThreadStore(nextTasks));
 }
 
 function formatTaskTime(value?: string) {
@@ -961,22 +1166,208 @@ function ProductTaskThreads({
   activeTaskId,
   progress,
   currentTask,
+  title,
+  description,
+  emptyText,
   onBackToPreview,
-  onOpenVideo
+  onResolveTaskVideo
 }: {
   tasks: ProductVideoTaskThread[];
   activeTaskId?: string;
   progress: { stage: ProductVideoProgressStage; percent: number; label: string; detail: string };
   currentTask?: ProductVideoTaskThread | null;
+  title: string;
+  description: string;
+  emptyText: string;
   onBackToPreview: () => void;
-  onOpenVideo: (url: string) => void;
+  onResolveTaskVideo?: (taskId: string, nextTask: Record<string, unknown>) => Promise<void> | void;
 }) {
   const mergedTasks = currentTask && !tasks.some((task) => task.taskId === currentTask.taskId) ? [currentTask, ...tasks] : tasks;
   const visibleTasks = mergedTasks.slice(0, 10);
+  const [resolvedVideoUrls, setResolvedVideoUrls] = useState<Record<string, string>>({});
+  const [protectedVideoFallbacks, setProtectedVideoFallbacks] = useState<Record<string, boolean>>({});
+  const [videoPreviewErrors, setVideoPreviewErrors] = useState<Record<string, boolean>>({});
+  const [openingPreviewTaskId, setOpeningPreviewTaskId] = useState<string | null>(null);
+  const [inlinePreviewTaskId, setInlinePreviewTaskId] = useState<string | null>(null);
+  const inlineVideoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const visibleVideoSignature = visibleTasks.map((task) => `${task.taskId}:${task.videoUrl || ''}:${task.cachedVideoPath || ''}`).join('|');
+
+  function clearVideoPreviewError(taskId: string) {
+    setVideoPreviewErrors((current) => {
+      if (!current[taskId]) return current;
+      const next = { ...current };
+      delete next[taskId];
+      return next;
+    });
+  }
+
+  function tryPlayInlineVideo(taskId: string) {
+    const video = inlineVideoRefs.current[taskId];
+    if (!video || videoPreviewErrors[taskId]) return;
+    const result = video.play();
+    if (result && typeof result.catch === 'function') result.catch(() => undefined);
+  }
+
+  function startInlinePreview(taskId: string) {
+    clearVideoPreviewError(taskId);
+    flushSync(() => {
+      setInlinePreviewTaskId(taskId);
+    });
+    tryPlayInlineVideo(taskId);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const tasksNeedingResolvedPreview = visibleTasks.filter((task) => {
+      const source = task.videoUrl?.trim();
+      return Boolean(source && shouldRequestProtectedPreview(source) && !resolvedVideoUrls[task.taskId] && !protectedVideoFallbacks[task.taskId]);
+    });
+    if (!tasksNeedingResolvedPreview.length) return () => {
+      cancelled = true;
+    };
+    // 历史任务里的 OSS 成片可能是私有地址，预览前先换成短时可访问链接。
+    void (async () => {
+      for (const task of tasksNeedingResolvedPreview) {
+        const source = task.videoUrl?.trim();
+        if (!source) continue;
+        try {
+          const accessUrl = await getProductVideoAssetAccessUrl(source);
+          if (cancelled) return;
+          if (!accessUrl) continue;
+          setResolvedVideoUrls((current) => (current[task.taskId] === accessUrl ? current : { ...current, [task.taskId]: accessUrl }));
+          setProtectedVideoFallbacks((current) => {
+            if (!current[task.taskId]) return current;
+            const next = { ...current };
+            delete next[task.taskId];
+            return next;
+          });
+        } catch {
+          if (cancelled) return;
+          if (shouldRequestProtectedPreview(source)) {
+            setResolvedVideoUrls((current) => (current[task.taskId] === source ? current : { ...current, [task.taskId]: source }));
+            setProtectedVideoFallbacks((current) => (current[task.taskId] ? current : { ...current, [task.taskId]: true }));
+          }
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [protectedVideoFallbacks, resolvedVideoUrls, visibleVideoSignature]);
+
+  useEffect(() => {
+    if (!onResolveTaskVideo || typeof window.surgicol?.media?.cacheRemoteFile !== 'function') return;
+    let cancelled = false;
+    const tasksNeedingCache = visibleTasks.filter((task) => {
+      const source = task.videoUrl?.trim();
+      return Boolean(source && !task.cachedVideoPath && /^https?:\/\//i.test(source) && !shouldRefreshExpiringVideoUrl(source, 0));
+    });
+    if (!tasksNeedingCache.length) return () => {
+      cancelled = true;
+    };
+    void (async () => {
+      for (const task of tasksNeedingCache) {
+        const source = task.videoUrl?.trim();
+        if (!source) continue;
+        try {
+          const cached = await cacheProductVideoAssetLocally(source, {
+            folder: 'product-video',
+            cacheKey: task.taskId,
+            fileName: `${task.taskId}.mp4`
+          });
+          if (cancelled || !cached.localPath) return;
+          await onResolveTaskVideo(task.taskId, {
+            ...task,
+            cachedVideoPath: cached.localPath,
+            updatedAt: new Date().toISOString()
+          });
+        } catch {
+          if (cancelled) return;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [onResolveTaskVideo, visibleTasks, visibleVideoSignature]);
+
+  useEffect(() => {
+    if (!inlinePreviewTaskId) return;
+    if (visibleTasks.some((task) => task.taskId === inlinePreviewTaskId)) return;
+    setInlinePreviewTaskId(null);
+  }, [inlinePreviewTaskId, visibleTasks]);
+
+  useEffect(() => {
+    if (!inlinePreviewTaskId) return;
+    const video = inlineVideoRefs.current[inlinePreviewTaskId];
+    if (!video || videoPreviewErrors[inlinePreviewTaskId]) return;
+    if (video.readyState >= 2) {
+      tryPlayInlineVideo(inlinePreviewTaskId);
+      return;
+    }
+    const handleLoadedData = () => tryPlayInlineVideo(inlinePreviewTaskId);
+    video.addEventListener('loadeddata', handleLoadedData);
+    return () => video.removeEventListener('loadeddata', handleLoadedData);
+  }, [inlinePreviewTaskId, resolvedVideoUrls, videoPreviewErrors]);
+
+  async function handleOpenTaskVideo(task: ProductVideoTaskThread, rawVideoUrl?: string, previewVideoUrl?: string) {
+    if (inlinePreviewTaskId === task.taskId && previewVideoUrl && !videoPreviewErrors[task.taskId]) {
+      const currentVideo = inlineVideoRefs.current[task.taskId];
+      if (currentVideo?.paused) {
+        tryPlayInlineVideo(task.taskId);
+      }
+      return;
+    }
+    if (previewVideoUrl) {
+      startInlinePreview(task.taskId);
+      return;
+    }
+    if (!rawVideoUrl) return;
+    const needsProtectedPreview = shouldRequestProtectedPreview(rawVideoUrl);
+    if (!needsProtectedPreview) {
+      startInlinePreview(task.taskId);
+      return;
+    }
+    setOpeningPreviewTaskId(task.taskId);
+    try {
+      let accessUrl = await getProductVideoAssetAccessUrl(rawVideoUrl);
+      if (!accessUrl && needsProtectedPreview) accessUrl = rawVideoUrl;
+      if (!accessUrl) return;
+      setResolvedVideoUrls((current) => (current[task.taskId] === accessUrl ? current : { ...current, [task.taskId]: accessUrl }));
+      setProtectedVideoFallbacks((current) => {
+        if (!current[task.taskId]) return current;
+        const next = { ...current };
+        delete next[task.taskId];
+        return next;
+      });
+      setVideoPreviewErrors((current) => {
+        if (!current[task.taskId]) return current;
+        const next = { ...current };
+        delete next[task.taskId];
+        return next;
+      });
+      flushSync(() => {
+        setInlinePreviewTaskId(task.taskId);
+      });
+      tryPlayInlineVideo(task.taskId);
+    } catch {
+      if (needsProtectedPreview) {
+        setResolvedVideoUrls((current) => (current[task.taskId] === rawVideoUrl ? current : { ...current, [task.taskId]: rawVideoUrl }));
+        setProtectedVideoFallbacks((current) => ({ ...current, [task.taskId]: true }));
+        startInlinePreview(task.taskId);
+      }
+    } finally {
+      setOpeningPreviewTaskId((current) => (current === task.taskId ? null : current));
+    }
+  }
+
   return (
     <section className="product-task-history" aria-label="生成任务历史">
       <header className="product-task-history-head">
-        <h2>今天</h2>
+        <div className="product-task-history-title">
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
         <div className="product-task-filters">
           <button type="button" onClick={onBackToPreview}>
             <X size={14} />
@@ -1006,6 +1397,24 @@ function ProductTaskThreads({
           const stateText = taskStateText(task, activeTaskId, progress.percent);
           const thumb = taskThumbnail(task);
           const isFailed = task.finished && !task.successful;
+          const sourceVideoUrl = task.videoUrl?.trim();
+          const rawVideoUrl = task.cachedVideoPath?.trim() || sourceVideoUrl;
+          const needsProtectedPreview = shouldRequestProtectedPreview(rawVideoUrl);
+          const hasExpiredRemoteSource = !task.cachedVideoPath && shouldRefreshExpiringVideoUrl(sourceVideoUrl, 0);
+          const previewVideoUrl = rawVideoUrl
+            ? needsProtectedPreview
+              ? resolvedVideoUrls[task.taskId] || (protectedVideoFallbacks[task.taskId] ? rawVideoUrl : undefined)
+              : rawVideoUrl
+            : undefined;
+          const playbackVideoUrl = previewVideoUrl ? mediaPreviewUrl(previewVideoUrl) : undefined;
+          const posterUrl = thumb ? mediaPreviewUrl(thumb) : undefined;
+          const isInlinePreview = inlinePreviewTaskId === task.taskId && Boolean(previewVideoUrl) && !videoPreviewErrors[task.taskId];
+          const shouldShowPosterFallback = Boolean(rawVideoUrl && !isInlinePreview);
+          const placeholderText = rawVideoUrl
+            ? openingPreviewTaskId === task.taskId
+              ? '正在载入视频...'
+              : '点击播放预览'
+            : '预览生成中';
           return (
             <article className={`product-task-message${isActive ? ' active' : ''}${isFailed ? ' failed' : ''}`} key={task.id || task.taskId || index}>
               <div className="product-task-avatar">
@@ -1023,31 +1432,80 @@ function ProductTaskThreads({
                     <Info size={13} />
                   </button>
                 </div>
-                <button
-                  className="product-task-preview-card"
-                  type="button"
+                <div
+                  className={`product-task-preview-card${isInlinePreview ? ' inline-playing' : ''}`}
+                  role="button"
+                  tabIndex={0}
                   style={outputRatioStyle(task.ratio)}
-                  onClick={() => task.videoUrl && onOpenVideo(task.videoUrl)}
+                  onClick={() => {
+                    void handleOpenTaskVideo(task, rawVideoUrl, previewVideoUrl);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      void handleOpenTaskVideo(task, rawVideoUrl, previewVideoUrl);
+                    }
+                  }}
                 >
                   <em className={task.videoUrl ? 'done' : isFailed ? 'failed' : ''}>{stateText}</em>
-                  {task.videoUrl ? (
-                    <video src={task.videoUrl} controls playsInline />
+                  {rawVideoUrl ? (
+                    shouldShowPosterFallback ? (
+                      posterUrl ? <img src={posterUrl} alt="" /> : <span>{placeholderText}</span>
+                    ) : (
+                      <video
+                        key={playbackVideoUrl}
+                        ref={(node) => {
+                          inlineVideoRefs.current[task.taskId] = node;
+                        }}
+                        src={playbackVideoUrl}
+                        controls
+                        autoPlay
+                        playsInline
+                        preload="metadata"
+                        poster={posterUrl}
+                        onClick={(event) => event.stopPropagation()}
+                        onLoadedData={() => {
+                          clearVideoPreviewError(task.taskId);
+                        }}
+                        onError={() => {
+                          setVideoPreviewErrors((current) => ({ ...current, [task.taskId]: true }));
+                          if (needsProtectedPreview) {
+                            setResolvedVideoUrls((current) => {
+                              if (!current[task.taskId]) return current;
+                              const next = { ...current };
+                              delete next[task.taskId];
+                              return next;
+                            });
+                          }
+                        }}
+                      />
+                    )
                   ) : thumb ? (
                     <img src={mediaPreviewUrl(thumb)} alt="" />
                   ) : (
                     <span />
                   )}
                   {isActive ? <i style={{ width: `${Math.max(4, Math.min(progress.percent || 1, 100))}%` }} /> : null}
-                </button>
+                </div>
                 <p>
                   <CheckCircle2 size={14} />
-                  {task.videoUrl ? '视频已生成，可点击预览' : isFailed ? task.message || '生成失败，请稍后重试' : progress.detail || '会员加速已生效，正在为你生成视频'}
+                  {openingPreviewTaskId === task.taskId
+                    ? '正在打开预览...'
+                    : videoPreviewErrors[task.taskId] && hasExpiredRemoteSource
+                    ? '该历史视频已过期，火山源文件仅保留 24 小时，请重新生成。'
+                    : isInlinePreview
+                    ? '正在播放预览，点击控件可暂停或拖动进度'
+                    : task.videoUrl
+                    ? '视频已生成，可点击预览'
+                    : isFailed
+                    ? task.message || '生成失败，请稍后重试'
+                    : progress.detail || '会员加速已生效，正在为你生成视频'}
                 </p>
               </div>
             </article>
           );
         })}
-        {!visibleTasks.length ? <p className="product-task-empty">每次点击生成都会在这里新建一条任务记录。</p> : null}
+        {!visibleTasks.length ? <p className="product-task-empty">{emptyText}</p> : null}
       </div>
     </section>
   );
@@ -1090,7 +1548,7 @@ function ProductVideoCreateView() {
   const [generationScenario, setGenerationScenario] = useState<ProductVideoScenarioKey | null>(null);
   const [historyScenario, setHistoryScenario] = useState<ProductVideoScenarioKey | null>(null);
   const [previewImagePath, setPreviewImagePath] = useState<string | null>(null);
-  const [taskThreads, setTaskThreads] = useState<ProductVideoTaskThread[]>(() => readProductVideoRecentTasks());
+  const [taskThreadStore, setTaskThreadStore] = useState<ProductVideoTaskThreadStore>(() => createEmptyProductVideoTaskThreadStore());
   const [generationProgress, setGenerationProgress] = useState({
     stage: 'idle' as ProductVideoProgressStage,
     percent: 0,
@@ -1099,8 +1557,12 @@ function ProductVideoCreateView() {
   });
   const uploadProgressMap = useRef<Record<string, { base: number; span: number; label: string }>>({});
 
-  function refreshTaskThreads() {
-    setTaskThreads(readProductVideoRecentTasks());
+  async function refreshTaskThreads() {
+    setTaskThreadStore(await readProductVideoRecentTaskThreadStore());
+  }
+
+  async function handleResolveHistoryTaskVideo(taskId: string, nextTask: Record<string, unknown>) {
+    setTaskThreadStore(await updateProductVideoRecentTask(taskId, nextTask));
   }
 
   useEffect(() => {
@@ -1114,6 +1576,10 @@ function ProductVideoCreateView() {
       setDuration('5s');
     }
   }, [duration]);
+
+  useEffect(() => {
+    void refreshTaskThreads();
+  }, []);
 
   useEffect(() => {
     if (digitalHumanAvatars.some((item) => item.id === selectedAvatarId)) return;
@@ -1175,9 +1641,20 @@ function ProductVideoCreateView() {
   const isStoreTraffic = activeScenario === 'store-traffic';
   const isHotReplica = activeScenario === 'hot-replica';
   const isActiveScenarioGeneration = generationScenario === activeScenario && (generationProgress.stage !== 'idle' || Boolean(generatedVideoUrl));
-  const activeScenarioTasks = taskThreads.filter((task) => !task.scenario || task.scenario === activeScenario);
+  const activeScenarioTasks = taskThreadStore[activeScenario];
+  const hasScenarioTaskHistory = activeScenarioTasks.length > 0 || isActiveScenarioGeneration;
+  const historyTasks = activeScenarioTasks;
   const canOpenScenarioHistory = activeScenarioTasks.length > 0 || isActiveScenarioGeneration;
   const shouldShowScenarioHistory = isActiveScenarioGeneration || historyScenario === activeScenario;
+  const historyEntryLabel = hasScenarioTaskHistory ? '查看历史任务' : '打开历史记录';
+  const historyEntryHint = isActiveScenarioGeneration
+    ? '当前任务正在生成，历史页会实时同步进度。'
+    : activeScenarioTasks.length > 0
+    ? `当前场景已有 ${activeScenarioTasks.length} 条历史记录。`
+    : '当前场景还没有历史任务，首次生成后会自动保留在这里。';
+  const historyPanelTitle = `${active.title}历史记录`;
+  const historyPanelDescription = '当前场景的生成任务会持续保留在这里，方便随时回看和复用。';
+  const historyEmptyText = '当前场景还没有历史任务，点击生成后会自动记录在这里。';
   const descriptionLimit = isHotReplica ? 3000 : isStoreTraffic || activeScenario === 'product-spokesperson' ? 500 : 200;
   const previewHeadline = isHotReplica
     ? '拆解爆款元素，一键复刻专属爆款视频。'
@@ -1593,9 +2070,7 @@ function ProductVideoCreateView() {
         createdAt: new Date().toISOString()
       };
       setCurrentTaskId(created.taskId);
-      const existing = JSON.parse(localStorage.getItem('moya-product-video-tasks') ?? '[]') as unknown[];
-      localStorage.setItem('moya-product-video-tasks', JSON.stringify([savedTask, ...existing].slice(0, 12)));
-      refreshTaskThreads();
+      setTaskThreadStore(await updateProductVideoRecentTask(created.taskId, savedTask));
       setStatus(`${active.title}任务已提交，正在等待云端生成...`);
       setGenerationProgress({
         stage: 'generating',
@@ -1619,6 +2094,7 @@ function ProductVideoCreateView() {
   }
 
   async function pollProductVideoTask(taskId: string, savedTask: Record<string, unknown>) {
+    let cacheRequested = false;
     for (let index = 0; index < 90; index += 1) {
       await delay(index === 0 ? 2500 : 5000);
       const task = await getProductVideoTaskStatus(taskId);
@@ -1633,7 +2109,7 @@ function ProductVideoCreateView() {
       if (task.videoUrl) {
         setGeneratedVideoUrl(task.videoUrl);
       }
-      updateProductVideoRecentTask(taskId, {
+      const nextTask = {
         ...savedTask,
         status: task.status,
         successful: task.successful,
@@ -1641,8 +2117,29 @@ function ProductVideoCreateView() {
         videoUrl: task.videoUrl,
         message: task.message,
         updatedAt: new Date().toISOString()
-      });
-      refreshTaskThreads();
+      };
+      setTaskThreadStore(await updateProductVideoRecentTask(taskId, nextTask));
+      if (task.videoUrl && !cacheRequested && typeof window.surgicol?.media?.cacheRemoteFile === 'function') {
+        cacheRequested = true;
+        void (async () => {
+          try {
+            const cached = await cacheProductVideoAssetLocally(task.videoUrl!, {
+              folder: 'product-video',
+              cacheKey: taskId,
+              fileName: `${taskId}.mp4`
+            });
+            if (!cached.localPath) return;
+            setGeneratedVideoUrl(cached.localPath);
+            setTaskThreadStore(await updateProductVideoRecentTask(taskId, {
+              ...nextTask,
+              cachedVideoPath: cached.localPath,
+              updatedAt: new Date().toISOString()
+            }));
+          } catch {
+            // Keep the remote playback URL when local caching fails.
+          }
+        })();
+      }
       if (task.finished) return;
     }
     setStatus('任务已提交，云端仍在生成中，稍后可回到最近任务查看。');
@@ -1938,12 +2435,15 @@ function ProductVideoCreateView() {
         {shouldShowScenarioHistory ? (
           <section className="product-generation-page">
             <ProductTaskThreads
-              tasks={activeScenarioTasks}
+              tasks={historyTasks}
               activeTaskId={currentTaskId || currentGenerationTask?.taskId}
               progress={generationProgress}
               currentTask={currentGenerationTask}
+              title={historyPanelTitle}
+              description={historyPanelDescription}
+              emptyText={historyEmptyText}
               onBackToPreview={() => setHistoryScenario(null)}
-              onOpenVideo={setGeneratedVideoUrl}
+              onResolveTaskVideo={handleResolveHistoryTaskVideo}
             />
           </section>
         ) : (
@@ -1962,12 +2462,18 @@ function ProductVideoCreateView() {
               <div>
                 <h1>{previewHeadline}</h1>
                 <p>{previewSubtext}</p>
-                {canOpenScenarioHistory ? (
-                  <button className="product-history-return" type="button" onClick={() => setHistoryScenario(activeScenario)}>
+                <div className="product-history-entry">
+                  <button
+                    className="product-history-return"
+                    type="button"
+                    onClick={() => setHistoryScenario(activeScenario)}
+                    aria-label={`${historyEntryLabel}。${historyEntryHint}`}
+                  >
                     <ListVideo size={15} />
-                    查看历史任务
+                    {historyEntryLabel}
                   </button>
-                ) : null}
+                  <small className="product-history-caption">{historyEntryHint}</small>
+                </div>
               </div>
               {!isShowcase && !isStoreTraffic && !isHotReplica ? (
                 <div className="product-preview-metrics">
@@ -1982,6 +2488,13 @@ function ProductVideoCreateView() {
                   <span>
                     <CheckCircle2 size={15} />
                     {model}
+                  </span>
+                </div>
+              ) : canOpenScenarioHistory ? (
+                <div className="product-preview-metrics history-entry-metrics">
+                  <span>
+                    <ListVideo size={15} />
+                    {hasScenarioTaskHistory ? `${Math.min(historyTasks.length + (isActiveScenarioGeneration ? 1 : 0), 10)} 条当前场景记录` : '最近任务入口'}
                   </span>
                 </div>
               ) : null}

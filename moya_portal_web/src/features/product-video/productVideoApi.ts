@@ -1,5 +1,5 @@
 import { http } from '@/shared/api/http';
-import type { MediaDataUrlOptions, MediaDataUrlResult, OssUploadResult } from '@/shared/types/electron';
+import type { MediaCacheResult, MediaDataUrlOptions, MediaDataUrlResult, OssUploadResult } from '@/shared/types/electron';
 
 export interface ProductVideoGenerateRequest {
   scenario: string;
@@ -58,6 +58,14 @@ export async function readProductVideoAssetAsDataUrl(filePath: string, options: 
     throw new Error('本地图片读取能力未加载，请重启 Electron 应用后重新生成。');
   }
   return reader(filePath, options) as Promise<MediaDataUrlResult>;
+}
+
+export async function cacheProductVideoAssetLocally(source: string, options?: { folder?: string; cacheKey?: string; fileName?: string }) {
+  const cacher = window.surgicol?.media?.cacheRemoteFile;
+  if (typeof cacher !== 'function') {
+    throw new Error('本地视频缓存能力未加载，请重启 Electron 应用后重试。');
+  }
+  return cacher(source, options) as Promise<MediaCacheResult>;
 }
 
 export async function getProductVideoAssetAccessUrl(mediaUrl: string) {
