@@ -4534,7 +4534,7 @@ END：4秒，收束行动指令和品牌露出`);
           <button type="button">确定</button>
         </div>
         <div className="fission-preview-toolbar">
-          <div>
+          <div className="fission-preview-heading">
             <span>视频封面</span>
             <strong>{generatedVideos.length > 0 ? fissionResultView === 'waterfall' ? '完整混剪结果' : '智能混剪结果' : '等待阿里云生成'}</strong>
           </div>
@@ -4545,10 +4545,10 @@ END：4秒，收束行动指令和品牌露出`);
               <button type="button" onClick={() => void saveGeneratedVideosToFinishedLibrary()}>保存到成片库</button>
               <button type="button" onClick={deleteSelectedGeneratedVideos} disabled={selectedGeneratedCount === 0}>批量删除</button>
               <button className="danger-action" type="button" onClick={deleteAllGeneratedVideos}>全部删除</button>
-              <small>{selectedGeneratedCount > 0 ? `已选 ${selectedGeneratedCount} / ${selectableResultCount}` : `${generatedVideos.length} 个视频`}</small>
+              <small className="fission-result-count">{selectedGeneratedCount > 0 ? `已选 ${selectedGeneratedCount} / ${selectableResultCount}` : `${generatedVideos.length} 个视频`}</small>
             </div>
           ) : (
-            <small>调用混剪 API 后显示成片</small>
+            <small className="fission-result-hint">调用混剪 API 后显示成片</small>
           )}
         </div>
         <div
@@ -4633,9 +4633,9 @@ END：4秒，收束行动指令和品牌露出`);
             generatedVideoGroups.map(({ group, videos }) => (
               <section className="fission-result-group" key={group.id}>
                 <header className="fission-result-group-header">
-                  <div>
+                  <div className="fission-result-group-meta">
                     <strong>{group.title}</strong>
-                    <span>{videos.filter(({ video }) => isFissionDetailSelected(group.id, video.id)).length}/{videos.length} 个已选</span>
+                    <span className="fission-result-group-count">{videos.filter(({ video }) => isFissionDetailSelected(group.id, video.id)).length}/{videos.length} 个已选</span>
                   </div>
                   <div className="fission-result-group-actions">
                     <button type="button" onClick={() => selectFissionResultGroup(group.id)}>本行全选</button>
