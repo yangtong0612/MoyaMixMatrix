@@ -740,6 +740,16 @@ interface FinishedVideoItem {
   viralOverlay?: ViralRecentTask;
 }
 
+interface FissionGeneratePreflightDialog {
+  title: string;
+  message: string;
+  batchCount: number;
+  view: 'segments' | 'waterfall';
+  canContinue: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
+}
+
 interface FinishedVideoGroup {
   id: string;
   draftId?: string;
@@ -3421,6 +3431,7 @@ function FissionWorkspace(props: {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationError, setGenerationError] = useState('');
+  const [generationPreflightDialog, setGenerationPreflightDialog] = useState<FissionGeneratePreflightDialog | null>(null);
   const [lastOutputMediaUrl, setLastOutputMediaUrl] = useState('');
   const [uploadNotice, setUploadNotice] = useState('');
   const [scriptDialogOpen, setScriptDialogOpen] = useState(false);
@@ -4047,10 +4058,38 @@ END：4秒，收束行动指令和品牌露出`);
     void runFissionMixGeneration(composedCount, 'waterfall');
   }
 
-  async function runFissionMixGeneration(batchCount: number, view: 'segments' | 'waterfall') {
+  async function runFissionMixGeneration(batchCount: number, view: 'segments' | 'waterfall', skipPreflightDialog = false) {
     if (isGenerating) return;
     if (comboMode !== 'smart') {
       setComboMode('smart');
+    }
+
+    const audioPreflight = buildFissionGenerateAudioPreflight(groups, audioItems);
+    if (!skipPreflightDialog) {
+      if (audioPreflight.blockingMessage) {
+        setGenerationPreflightDialog({
+          title: audioPreflight.blockingTitle || '生成前检查',
+          message: audioPreflight.blockingMessage,
+          batchCount,
+          view,
+          canContinue: false
+        });
+        setGenerationError('');
+        setUploadNotice('');
+        return;
+      }
+      if (audioPreflight.requiresConfirmation && audioPreflight.advisoryMessage) {
+        setGenerationPreflightDialog({
+          title: audioPreflight.advisoryTitle || '音频上传检查',
+          message: `${audioPreflight.advisoryMessage} 是否继续生成？`,
+          batchCount,
+          view,
+          canContinue: true,
+          confirmLabel: '继续生成',
+          cancelLabel: '稍后再试'
+        });
+        return;
+      }
     }
 
     if (generationTimerRef.current) window.clearInterval(generationTimerRef.current);
@@ -4073,7 +4112,11 @@ END：4秒，收束行动指令和品牌露出`);
     let mixGroupsSnapshot = groups;
     let mixAudioItemsSnapshot = audioItems;
     try {
-      setUploadNotice('正在校准视频和音频的真实时长，并分析人物口播的有效说话区间...');
+      setUploadNotice(
+        audioPreflight.advisoryMessage
+          ? `${audioPreflight.advisoryMessage} 正在校准视频和音频的真实时长，并分析人物口播的有效说话区间...`
+          : '正在校准视频和音频的真实时长，并分析人物口播的有效说话区间...'
+      );
       const preparedMix = await prepareFissionMediaForMix(groups, audioItems);
       const mixGroups = preparedMix.groups;
       const mixAudioItems = preparedMix.audioItems;
@@ -4082,7 +4125,11 @@ END：4秒，收束行动指令和品牌露出`);
       if (preparedMix.changed) {
         setGroups(mixGroups);
         setAudioItems(mixAudioItems);
-        setUploadNotice(`已校准 ${preparedMix.syncedCount} 个素材的真实时长和音频用途，正在提交混剪任务...`);
+        setUploadNotice(
+          audioPreflight.advisoryMessage
+            ? `${audioPreflight.advisoryMessage} 已校准 ${preparedMix.syncedCount} 个素材的真实时长和音频用途，正在提交混剪任务...`
+            : `已校准 ${preparedMix.syncedCount} 个素材的真实时长和音频用途，正在提交混剪任务...`
+        );
       }
 
       const humanVoiceMismatch = buildHumanVoiceMixBlocker(mixGroups, mixAudioItems);
@@ -5189,6 +5236,63 @@ END：4秒，收束行动指令和品牌露出`);
           </section>
         </div>
       ) : null}
+      {generationPreflightDialog ? (
+        <div className="script-import-backdrop">
+          <section className={clsx('confirm-dialog generation-preflight-dialog', generationPreflightDialog.canContinue ? 'is-advisory' : 'is-blocking')}>
+            <header>
+              <div className="generation-preflight-header-copy">
+                <div className="generation-preflight-icon">
+                  {generationPreflightDialog.canContinue ? <Music size={18} /> : <VolumeX size={18} />}
+                </div>
+                <div>
+                  <strong>{generationPreflightDialog.title}</strong>
+                  <span>{generationPreflightDialog.canContinue ? '检测到音频状态需要确认' : '当前缺少生成所需音频'}</span>
+                </div>
+              </div>
+              <button type="button" onClick={() => setGenerationPreflightDialog(null)}>关闭</button>
+            </header>
+            <div className="generation-preflight-body">
+              <div className="generation-preflight-message-card">
+                <p>{generationPreflightDialog.message}</p>
+              </div>
+              <small className="generation-preflight-helper">
+                {generationPreflightDialog.canContinue
+                  ? '继续后会优先生成本地真实混剪结果，等音频上传完成后再补提云端任务。'
+                  : '先补组内音频或全局音频，再重新点击“生成视频”即可。'}
+              </small>
+            </div>
+            <footer>
+              {generationPreflightDialog.canContinue ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGenerationPreflightDialog(null);
+                      setUploadNotice('已取消本次生成，可先补齐音频上传状态后再试。');
+                    }}
+                  >
+                    {generationPreflightDialog.cancelLabel || '取消'}
+                  </button>
+                  <button
+                    className="primary-action"
+                    type="button"
+                    onClick={() => {
+                      const pending = generationPreflightDialog;
+                      setGenerationPreflightDialog(null);
+                      if (!pending) return;
+                      void runFissionMixGeneration(pending.batchCount, pending.view, true);
+                    }}
+                  >
+                    {generationPreflightDialog.confirmLabel || '继续'}
+                  </button>
+                </>
+              ) : (
+                <button className="primary-action" type="button" onClick={() => setGenerationPreflightDialog(null)}>我知道了</button>
+              )}
+            </footer>
+          </section>
+        </div>
+      ) : null}
       {replaceFinishedConfirm ? (
         <div className="script-import-backdrop">
           <section className="confirm-dialog replace-finished-dialog">
@@ -5546,6 +5650,9 @@ function normalizeFissionGenerateError(error: unknown) {
 }
 
 function describeFissionStatusNotice(message: string) {
+  if (/检测到.*音频|已检测到.*音频|音频已导入但尚未上传|本次会先生成本地真实混剪/i.test(message)) {
+    return { tone: 'info' as const, title: '生成前检查' };
+  }
   if (/已生成\s*\d+\s*条本地混剪预览|本地混剪预览已生成/i.test(message)) {
     return { tone: 'info' as const, title: '本地混剪预览已生成' };
   }
@@ -5614,6 +5721,53 @@ function collectMixAudioNames(groups: FissionShotGroup[], audioItems: FissionAud
     .map((audio) => audio.name)
     .filter(Boolean);
   return Array.from(new Set(names)).slice(0, 3).join(' / ');
+}
+
+function buildFissionGenerateAudioPreflight(groups: FissionShotGroup[], audioItems: FissionAudioItem[]) {
+  const allAudios = dedupeAudioItems([
+    ...audioItems,
+    ...groups.flatMap((group) => group.groupAudios || [])
+  ]);
+  const availableAudios = allAudios.filter((audio) => Boolean(previewPath(audio) || audio.path));
+  const uploadedAudios = availableAudios.filter(isUsableCloudMedia);
+  const uploadingAudios = allAudios.filter((audio) => audio.uploadStatus === 'uploading');
+  const localOnlyAudios = availableAudios.filter((audio) => !isUsableCloudMedia(audio));
+  const eligibleLocalGroups = collectLocalEligibleMixGroups(groups, audioItems);
+
+  if (availableAudios.length === 0) {
+    return {
+      blockingTitle: '缺少音频素材',
+      blockingMessage: '当前还没有可用音频，请先给分镜添加组内音频，或在底部导入全局音频后再生成。'
+    };
+  }
+
+  if (eligibleLocalGroups.length === 0) {
+    return {
+      blockingTitle: '音频与分镜未匹配',
+      blockingMessage: '当前没有同时具备“视频 + 可用音频”的分镜，请先补齐分镜视频和对应音频后再生成。'
+    };
+  }
+
+  const advisoryMessages: string[] = [];
+  let advisoryTitle = '';
+  if (uploadingAudios.length > 0) {
+    advisoryTitle = '音频仍在上传';
+    advisoryMessages.push(`检测到 ${uploadingAudios.length} 条音频仍在上传，本次会先生成本地真实混剪，云端任务暂不提交。`);
+  } else if (localOnlyAudios.length > 0 && uploadedAudios.length === 0) {
+    advisoryTitle = '音频尚未上传';
+    advisoryMessages.push('检测到音频已导入但尚未上传到云端，本次会先生成本地真实混剪，等上传完成后再提交云端。');
+  } else if (localOnlyAudios.length > 0) {
+    advisoryTitle = '部分音频未上传';
+    advisoryMessages.push(`检测到 ${localOnlyAudios.length} 条音频尚未上传到云端，这些音频本次会优先参与本地真实混剪。`);
+  }
+
+  return {
+    blockingMessage: '',
+    blockingTitle: '',
+    advisoryTitle,
+    advisoryMessage: advisoryMessages.join(' '),
+    requiresConfirmation: advisoryMessages.length > 0
+  };
 }
 
 function assertFissionCloudUploadReady(groups: FissionShotGroup[], audioItems: FissionAudioItem[]) {
