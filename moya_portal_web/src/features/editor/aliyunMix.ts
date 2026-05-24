@@ -34,6 +34,10 @@ export interface AliyunMixAudioItem {
   volume: number;
   path?: string;
   uploadStatus?: string;
+  usageType?: AliyunMixAudioUsageType;
+  speechStart?: number;
+  speechEnd?: number;
+  speechDuration?: number;
 }
 
 export type AliyunMixContentProfile = FissionMixContentProfile;
@@ -76,6 +80,9 @@ export interface AliyunMixRequest {
       mediaUrl: string;
       usageType: AliyunMixAudioUsageType;
       matchKey: string;
+      speechStart?: number;
+      speechEnd?: number;
+      speechDuration?: number;
     }>;
   }>;
   audioItems: Array<{
@@ -86,6 +93,9 @@ export interface AliyunMixRequest {
     mediaUrl: string;
     usageType: AliyunMixAudioUsageType;
     matchKey: string;
+    speechStart?: number;
+    speechEnd?: number;
+    speechDuration?: number;
   }>;
   settings: Required<Pick<AliyunMixSettings, 'followAudioSpeed' | 'retainOriginalAudio' | 'ducking' | 'fadeInOut' | 'volume'>> & {
     width: number;
@@ -163,6 +173,10 @@ interface MixAudioLike {
   name: string;
   duration: string;
   volume: number;
+  usageType?: AliyunMixAudioUsageType;
+  speechStart?: number;
+  speechEnd?: number;
+  speechDuration?: number;
 }
 
 interface MixGroupLike<TClip extends MixClipLike = MixClipLike, TAudio extends MixAudioLike = MixAudioLike> {
@@ -192,7 +206,7 @@ export function inferAliyunMixContentProfile(group: Pick<AliyunMixShotGroup, 'ti
 }
 
 export function inferAliyunMixAudioUsageType(
-  audio: Pick<AliyunMixAudioItem, 'name' | 'path'>,
+  audio: Pick<AliyunMixAudioItem, 'name' | 'path' | 'usageType'>,
   context: 'group' | 'global' = 'global'
 ): AliyunMixAudioUsageType {
   return inferFissionMixAudioUsageType(audio, context);
@@ -278,7 +292,10 @@ export function buildAliyunMixRequest(input: {
         volume: selectedAudio.volume,
         mediaUrl: selectedAudio.path || '',
         usageType: selection.audioUsageType || inferAliyunMixAudioUsageType(selectedAudio, selection.audioPoolSource === 'group' ? 'group' : 'global'),
-        matchKey: buildAliyunMixMatchKey(selectedAudio.name)
+        matchKey: buildAliyunMixMatchKey(selectedAudio.name),
+        speechStart: selectedAudio.speechStart,
+        speechEnd: selectedAudio.speechEnd,
+        speechDuration: selectedAudio.speechDuration
       }] : []
     };
   });

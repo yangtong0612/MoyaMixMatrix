@@ -1,3 +1,11 @@
+import {
+  isPresenterSelectionProfile,
+  isPresenterVoiceLikeUsage,
+  normalizePresenterSpeechWindow,
+  parsePresenterDurationSeconds,
+  presenterSpeechAlignmentPenalty
+} from './fissionPresenterMixAlgorithm';
+
 export type FissionMixContentProfile = 'standard' | 'digital_human';
 export type FissionMixSelectionProfile = 'standard' | 'human_presenter' | 'digital_human';
 export type FissionMixAudioUsageType = 'ai_voice' | 'voice' | 'music' | 'effect' | 'unknown';
@@ -16,6 +24,10 @@ interface MixAudioLike {
   duration: string;
   volume: number;
   path?: string;
+  usageType?: FissionMixAudioUsageType;
+  speechStart?: number;
+  speechEnd?: number;
+  speechDuration?: number;
 }
 
 interface MixGroupLike<TClip extends MixClipLike = MixClipLike, TAudio extends MixAudioLike = MixAudioLike> {
@@ -65,9 +77,13 @@ export function inferFissionMixContentProfile(group: Pick<MixGroupLike, 'title' 
 }
 
 export function inferFissionMixAudioUsageType(
-  audio: Pick<MixAudioLike, 'name' | 'path'>,
+  audio: Pick<MixAudioLike, 'name' | 'path' | 'usageType'>,
   context: 'group' | 'global' = 'global'
 ): FissionMixAudioUsageType {
+  const explicit = typeof audio.usageType === 'string' ? audio.usageType.trim().toLowerCase() : '';
+  if (explicit === 'ai_voice' || explicit === 'voice' || explicit === 'music' || explicit === 'effect' || explicit === 'unknown') {
+    return explicit;
+  }
   const text = [audio.name, audio.path].filter(Boolean).join(' ');
   if (AI_AUDIO_KEYWORDS.test(text)) return 'ai_voice';
   if (VOICE_AUDIO_KEYWORDS.test(text)) return 'voice';
@@ -136,7 +152,7 @@ export function selectFissionMixVariantMedia<TClip extends MixClipLike, TAudio e
     audioUsageType: audioCandidate?.usageType,
     audioSource: audioCandidate ? resolveAudioSource(audioCandidate) : undefined,
     audioPoolSource: audioCandidate?.source,
-    voiceLocked: Boolean(audioCandidate && selectionProfile !== 'standard' && isVoiceLikeUsage(audioCandidate.usageType))
+    voiceLocked: Boolean(audioCandidate && isPresenterSelectionProfile(selectionProfile) && isPresenterVoiceLikeUsage(audioCandidate.usageType))
   };
 }
 
@@ -213,7 +229,7 @@ function scoreAudioCandidate<TClip extends MixClipLike, TAudio extends MixAudioL
   group: MixGroupLike<TClip, TAudio>,
   selectionProfile: FissionMixSelectionProfile
 ) {
-  const voiceLike = isVoiceLikeUsage(candidate.usageType);
+  const voiceLike = isPresenterVoiceLikeUsage(candidate.usageType);
   let score = audioUsageBaseScore(candidate.usageType, selectionProfile);
   if (candidate.source === 'group') score += selectionProfile === 'human_presenter' ? 12 : 8;
   if (selectionProfile !== 'standard') score += voiceLike ? 22 : -28;
@@ -247,7 +263,8 @@ function scoreAudioCandidate<TClip extends MixClipLike, TAudio extends MixAudioL
   );
 
   const preferredDuration = firstPositive(parseDurationSeconds(clip?.duration), parseDurationSeconds(group.duration));
-  const audioDuration = parseDurationSeconds(candidate.audio.duration);
+  const speechWindow = normalizePresenterSpeechWindow(candidate.audio);
+  const audioDuration = speechWindow.effectiveDuration || parseDurationSeconds(candidate.audio.duration);
   if (audioDuration > 0 && preferredDuration > 0) {
     const diff = Math.abs(audioDuration - preferredDuration);
     if (diff <= 0.25) score += voiceLike && selectionProfile !== 'standard' ? 34 : 18;
@@ -255,6 +272,7 @@ function scoreAudioCandidate<TClip extends MixClipLike, TAudio extends MixAudioL
     else if (diff <= 1.6) score += voiceLike && selectionProfile !== 'standard' ? 14 : 6;
     else if (diff <= 2.8) score += 2;
     else if (voiceLike && selectionProfile !== 'standard') score -= Math.min(24, Math.round(diff * 4));
+    score += presenterSpeechAlignmentPenalty(preferredDuration, candidate.audio, selectionProfile, candidate.usageType);
   }
 
   return score;
@@ -295,10 +313,6 @@ function accentAlignmentScore(audioTokens: Set<string>, sceneTokens: Set<string>
   const matched = [...audioTokens].filter((token) => sceneTokens.has(token)).length;
   if (matched > 0) return matched * (selectionProfile === 'standard' ? 10 : 18);
   return selectionProfile === 'standard' ? -4 : -14;
-}
-
-function isVoiceLikeUsage(usageType: FissionMixAudioUsageType) {
-  return usageType === 'ai_voice' || usageType === 'voice';
 }
 
 function firstPositive(...values: number[]) {
@@ -352,18 +366,7 @@ function mediaTokens(value?: string) {
 }
 
 function parseDurationSeconds(value?: string) {
-  if (!value) return 0;
-  const trimmed = value.trim();
-  const rangeIndex = Math.max(trimmed.indexOf('-'), trimmed.indexOf('~'));
-  if (rangeIndex > 0) return parseDurationSeconds(trimmed.slice(0, rangeIndex));
-  const clock = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (clock) {
-    const hours = clock[3] ? Number(clock[1]) : 0;
-    const minutes = clock[3] ? Number(clock[2]) : Number(clock[1]);
-    const seconds = Number(clock[3] || clock[2]);
-    return hours * 3600 + minutes * 60 + seconds;
-  }
-  return Number(trimmed.replace(/[^\d.]/g, '')) || 0;
+  return parsePresenterDurationSeconds(value);
 }
 
 function resolveAudioSource<TAudio extends MixAudioLike>(candidate: MixAudioCandidate<TAudio>): FissionMixAudioSource {

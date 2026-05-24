@@ -32,6 +32,10 @@ public class FissionMixService {
 	private static final int DEFAULT_HEIGHT = 1280;
 	private static final int DEFAULT_BITRATE = 6000;
 	private static final double DEFAULT_SCENE_DURATION = 3.0;
+	private static final double PRESENTER_MIN_EFFECTIVE_SPEECH_SECONDS = 0.45;
+	private static final double PRESENTER_OVERLONG_CLIP_THRESHOLD_SECONDS = 0.55;
+	private static final double PRESENTER_OVERLONG_AUDIO_THRESHOLD_SECONDS = 1.15;
+	private static final SpeechWindow EMPTY_SPEECH_WINDOW = new SpeechWindow(0, 0, 0, 0);
 	private static final Set<String> GENERIC_MATCH_TOKENS = Set.of(
 			"scene", "clip", "audio", "video", "mix", "group", "voice", "music", "bgm",
 			"音频", "视频", "素材", "片段", "镜头", "分镜", "混剪"
@@ -139,12 +143,16 @@ public class FissionMixService {
 			}
 
 			double videoDuration = firstPositive(parseDurationSeconds(video.duration()), parseDurationSeconds(group.duration()), DEFAULT_SCENE_DURATION);
-			double audioDuration = audio == null ? 0 : firstPositive(parseDurationSeconds(audio.duration()), videoDuration);
+			SpeechWindow audioSpeechWindow = audio == null ? EMPTY_SPEECH_WINDOW : resolveSpeechWindow(audio, videoDuration);
+			double audioDuration = audio == null ? 0 : firstPositive(audioSpeechWindow.effectiveDuration(), parseDurationSeconds(audio.duration()), videoDuration);
 			boolean lockSceneToAudio = selection.voiceLocked() && audioDuration > 0;
 			double sceneDuration = (Boolean.TRUE.equals(settings(request).followAudioSpeed()) || lockSceneToAudio) && audioDuration > 0
 					? Math.min(videoDuration, audioDuration)
 					: videoDuration;
 			double audioClipDuration = audio == null ? 0 : Math.min(sceneDuration, audioDuration);
+			double presenterSourceIn = lockSceneToAudio
+					? clampDuration(audioSpeechWindow.speechStart(), 0, Math.max(0, videoDuration - sceneDuration))
+					: 0;
 			String clipId = "scene-" + (group.sceneNo() == null ? groupIndex + 1 : group.sceneNo());
 
 			Map<String, Object> videoClip = new LinkedHashMap<>();
@@ -153,8 +161,8 @@ public class FissionMixService {
 			videoClip.put("Type", "Video");
 			videoClip.put("TimelineIn", round(cursor));
 			videoClip.put("TimelineOut", round(cursor + sceneDuration));
-			videoClip.put("In", 0);
-			videoClip.put("Out", round(sceneDuration));
+			videoClip.put("In", round(presenterSourceIn));
+			videoClip.put("Out", round(clampDuration(presenterSourceIn + sceneDuration, presenterSourceIn, videoDuration)));
 			videoClip.put("AdaptMode", "Cover");
 			videoClip.put("Width", 0.9999);
 			videoClip.put("Height", 0.9999);
@@ -168,6 +176,12 @@ public class FissionMixService {
 			videoClips.add(videoClip);
 
 			if (audio != null) {
+				double audioSourceIn = lockSceneToAudio
+						? clampDuration(audioSpeechWindow.speechStart(), 0, Math.max(0, audioSpeechWindow.rawDuration() - audioClipDuration))
+						: 0;
+				double audioSourceOut = lockSceneToAudio
+						? clampDuration(audioSourceIn + audioClipDuration, audioSourceIn, audioSpeechWindow.rawDuration())
+						: audioClipDuration;
 				Map<String, Object> audioClip = new LinkedHashMap<>();
 				audioClip.put("ClipId", "audio-" + clipId);
 				audioClip.put("ReferenceClipId", clipId);
@@ -175,8 +189,8 @@ public class FissionMixService {
 				audioClip.put("Type", "Audio");
 				audioClip.put("TimelineIn", round(cursor));
 				audioClip.put("TimelineOut", round(cursor + audioClipDuration));
-				audioClip.put("In", 0);
-				audioClip.put("Out", round(audioClipDuration));
+				audioClip.put("In", round(audioSourceIn));
+				audioClip.put("Out", round(audioSourceOut));
 				List<Map<String, Object>> effects = new ArrayList<>();
 				effects.add(Map.of("Type", "Volume", "Gain", normalizedVolume(audio.volume(), settings(request).volume()) / 100.0));
 				if (Boolean.TRUE.equals(settings(request).fadeInOut())) {
@@ -226,19 +240,19 @@ public class FissionMixService {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分镜「" + group.title() + "」缺少视频素材");
 		}
 
-		String contentProfile = normalizeContentProfile(group);
+		String selectionProfile = normalizeSelectionProfile(group);
 		List<AudioCandidate> groupCandidates = buildAudioCandidates(group.groupAudios(), "group");
 		List<AudioCandidate> globalCandidates = buildAudioCandidates(globalAudios, "global");
 		int cursor = Math.max(0, variantIndex + groupIndex);
 		int anchorSize = Math.max(1, group.clips().size(), groupCandidates.size() + globalCandidates.size());
 		FissionMixRequest.VideoAsset video = group.clips().get(
-				"digital_human".equals(contentProfile)
+				isPresenterSelectionProfile(selectionProfile)
 						? alignedPoolIndex(cursor, group.clips().size(), anchorSize)
 						: positiveModulo(cursor, group.clips().size())
 		);
-		AudioCandidate audioCandidate = pickAudioCandidate(contentProfile, group, video, groupCandidates, globalCandidates, cursor);
-		boolean voiceLocked = audioCandidate != null && "digital_human".equals(contentProfile) && isVoiceLikeUsage(audioCandidate.usageType());
-		return new VariantSelection(video, audioCandidate == null ? null : audioCandidate.audio(), voiceLocked);
+		AudioCandidate audioCandidate = pickAudioCandidate(selectionProfile, group, video, groupCandidates, globalCandidates, cursor);
+		boolean voiceLocked = audioCandidate != null && isPresenterSelectionProfile(selectionProfile) && isVoiceLikeUsage(audioCandidate.usageType());
+		return new VariantSelection(video, audioCandidate == null ? null : audioCandidate.audio(), selectionProfile, voiceLocked);
 	}
 
 	private List<AudioCandidate> buildAudioCandidates(List<FissionMixRequest.AudioAsset> audios, String source) {
@@ -252,14 +266,14 @@ public class FissionMixService {
 	}
 
 	private AudioCandidate pickAudioCandidate(
-			String contentProfile,
+			String selectionProfile,
 			FissionMixRequest.ShotGroup group,
 			FissionMixRequest.VideoAsset video,
 			List<AudioCandidate> groupCandidates,
 			List<AudioCandidate> globalCandidates,
 			int cursor
 	) {
-		for (List<AudioCandidate> pool : buildAudioPriorityPools(contentProfile, groupCandidates, globalCandidates)) {
+		for (List<AudioCandidate> pool : buildAudioPriorityPools(selectionProfile, groupCandidates, globalCandidates)) {
 			if (pool.isEmpty()) continue;
 			int desiredIndex = alignedPoolIndex(cursor, pool.size(), Math.max(1, group.clips().size(), pool.size()));
 			AudioCandidate best = null;
@@ -267,7 +281,7 @@ public class FissionMixService {
 			int bestDistance = Integer.MAX_VALUE;
 			for (int poolIndex = 0; poolIndex < pool.size(); poolIndex++) {
 				AudioCandidate candidate = pool.get(poolIndex);
-				int score = scoreAudioCandidate(candidate, video, group, contentProfile);
+				int score = scoreAudioCandidate(candidate, video, group, selectionProfile);
 				int distance = circularDistance(poolIndex, desiredIndex, pool.size());
 				if (best == null
 						|| score > bestScore
@@ -284,7 +298,7 @@ public class FissionMixService {
 	}
 
 	private List<List<AudioCandidate>> buildAudioPriorityPools(
-			String contentProfile,
+			String selectionProfile,
 			List<AudioCandidate> groupCandidates,
 			List<AudioCandidate> globalCandidates
 	) {
@@ -297,10 +311,18 @@ public class FissionMixService {
 		List<AudioCandidate> groupMusicLike = filterMusicLike(groupCandidates);
 		List<AudioCandidate> globalMusicLike = filterMusicLike(globalCandidates);
 
-		if ("digital_human".equals(contentProfile)) {
+		if ("digital_human".equals(selectionProfile)) {
 			return List.of(
 					mergeCandidates(groupAi, globalAi),
 					mergeCandidates(groupVoice, globalVoice),
+					mergeCandidates(groupUnknown, globalUnknown),
+					mergeCandidates(groupMusicLike, globalMusicLike)
+			);
+		}
+
+		if ("human_presenter".equals(selectionProfile)) {
+			return List.of(
+					mergeCandidates(mergeCandidates(groupVoice, groupAi), mergeCandidates(globalVoice, globalAi)),
 					mergeCandidates(groupUnknown, globalUnknown),
 					mergeCandidates(groupMusicLike, globalMusicLike)
 			);
@@ -339,10 +361,12 @@ public class FissionMixService {
 			AudioCandidate candidate,
 			FissionMixRequest.VideoAsset video,
 			FissionMixRequest.ShotGroup group,
-			String contentProfile
+			String selectionProfile
 	) {
-		int score = usageBaseScore(candidate.usageType(), contentProfile);
-		if ("group".equals(candidate.source())) score += 8;
+		boolean voiceLike = isVoiceLikeUsage(candidate.usageType());
+		int score = usageBaseScore(candidate.usageType(), selectionProfile);
+		if ("group".equals(candidate.source())) score += "human_presenter".equals(selectionProfile) ? 12 : 8;
+		if (!"standard".equals(selectionProfile)) score += voiceLike ? 22 : -28;
 
 		String audioStem = mediaStem(candidate.audio().name());
 		String videoStem = mediaStem(video == null ? null : video.name());
@@ -368,24 +392,35 @@ public class FissionMixService {
 		String videoVersionToken = firstVersionToken(videoTokens);
 		if (!isBlank(audioVersionToken) && audioVersionToken.equals(videoVersionToken)) score += 24;
 
-		double audioDuration = parseDurationSeconds(candidate.audio().duration());
-		double videoDuration = parseDurationSeconds(video == null ? null : video.duration());
-		if (audioDuration > 0 && videoDuration > 0) {
-			double diff = Math.abs(audioDuration - videoDuration);
-			if (diff <= 0.35) score += 18;
-			else if (diff <= 1.2) score += 10;
-			else if (diff <= 2.4) score += 4;
+		double preferredDuration = firstPositive(parseDurationSeconds(video == null ? null : video.duration()), parseDurationSeconds(group.duration()));
+		SpeechWindow speechWindow = resolveSpeechWindow(candidate.audio(), preferredDuration);
+		double audioDuration = firstPositive(speechWindow.effectiveDuration(), parseDurationSeconds(candidate.audio().duration()));
+		if (audioDuration > 0 && preferredDuration > 0) {
+			double diff = Math.abs(audioDuration - preferredDuration);
+			if (diff <= 0.25) score += voiceLike && isPresenterSelectionProfile(selectionProfile) ? 34 : 18;
+			else if (diff <= 0.8) score += voiceLike && isPresenterSelectionProfile(selectionProfile) ? 24 : 12;
+			else if (diff <= 1.6) score += voiceLike && isPresenterSelectionProfile(selectionProfile) ? 14 : 6;
+			else if (diff <= 2.8) score += 2;
+			else if (voiceLike && isPresenterSelectionProfile(selectionProfile)) score -= Math.min(24, (int) Math.round(diff * 4));
+			score += presenterSpeechAlignmentPenalty(preferredDuration, candidate.audio(), selectionProfile, candidate.usageType());
 		}
 		return score;
 	}
 
-	private int usageBaseScore(String usageType, String contentProfile) {
-		if ("digital_human".equals(contentProfile)) {
+	private int usageBaseScore(String usageType, String selectionProfile) {
+		if ("digital_human".equals(selectionProfile)) {
 			if ("ai_voice".equals(usageType)) return 120;
 			if ("voice".equals(usageType)) return 96;
 			if ("unknown".equals(usageType)) return 64;
 			if ("music".equals(usageType)) return 18;
 			return 10;
+		}
+		if ("human_presenter".equals(selectionProfile)) {
+			if ("voice".equals(usageType)) return 112;
+			if ("ai_voice".equals(usageType)) return 108;
+			if ("unknown".equals(usageType)) return 60;
+			if ("music".equals(usageType)) return 22;
+			return 16;
 		}
 		if ("ai_voice".equals(usageType)) return 90;
 		if ("voice".equals(usageType)) return 82;
@@ -394,13 +429,18 @@ public class FissionMixService {
 		return 24;
 	}
 
-	private String normalizeContentProfile(FissionMixRequest.ShotGroup group) {
-		if ("digital_human".equalsIgnoreCase(firstText(group.contentProfile()))) return "digital_human";
+	private String normalizeSelectionProfile(FissionMixRequest.ShotGroup group) {
+		String explicit = firstText(group.contentProfile()).trim().toLowerCase(Locale.ROOT);
+		if ("digital_human".equals(explicit)) return "digital_human";
+		if ("human_presenter".equals(explicit) || "presenter".equals(explicit) || "human".equals(explicit)) return "human_presenter";
 		String text = String.join(" ", firstText(group.title()), firstText(group.script()), firstText(group.voiceover()),
 				group.clips() == null ? "" : group.clips().stream().map(FissionMixRequest.VideoAsset::name).reduce("", (left, right) -> left + " " + right));
 		String normalized = text.toLowerCase(Locale.ROOT);
-		return normalized.matches(".*(数字人|虚拟人|口播|主播|出镜|讲解|主持|人像|口型|嘴型|唇同步|digital\\s*human|avatar|spokesperson|presenter|host).*")
-				? "digital_human"
+		if (normalized.matches(".*(数字人|虚拟人|虚拟主播|虚拟讲解|digital\\s*human|avatar|metahuman|ai主播).*")) {
+			return "digital_human";
+		}
+		return normalized.matches(".*(真人|人物|人像|出镜|露脸|口播|讲解|解说|主持|主播|采访|试用|体验|模特|达人|博主|上脸|自拍|vlog|presenter|host|speaker|talking\\s*head|onscreen|person).*")
+				? "human_presenter"
 				: "standard";
 	}
 
@@ -419,6 +459,10 @@ public class FissionMixService {
 
 	private boolean isVoiceLikeUsage(String usageType) {
 		return "ai_voice".equals(usageType) || "voice".equals(usageType);
+	}
+
+	private boolean isPresenterSelectionProfile(String selectionProfile) {
+		return "digital_human".equals(selectionProfile) || "human_presenter".equals(selectionProfile);
 	}
 
 	private FissionMixRequest.MixSettings settings(FissionMixRequest request) {
@@ -477,6 +521,61 @@ public class FissionMixService {
 		} catch (NumberFormatException exception) {
 			return 0;
 		}
+	}
+
+	private SpeechWindow resolveSpeechWindow(FissionMixRequest.AudioAsset audio, double fallbackDuration) {
+		if (audio == null) return EMPTY_SPEECH_WINDOW;
+		double speechStart = clampDuration(audio.speechStart() == null ? 0 : audio.speechStart(), 0, Double.MAX_VALUE);
+		double rawDuration = firstPositive(
+				parseDurationSeconds(audio.duration()),
+				audio.speechEnd() == null ? 0 : audio.speechEnd(),
+				speechStart + (audio.speechDuration() == null ? 0 : audio.speechDuration()),
+				audio.speechDuration() == null ? 0 : audio.speechDuration(),
+				fallbackDuration
+		);
+		if (!(rawDuration > 0)) return EMPTY_SPEECH_WINDOW;
+		speechStart = clampDuration(speechStart, 0, rawDuration);
+		double speechDuration = audio.speechDuration() == null ? 0 : audio.speechDuration();
+		double speechEnd = audio.speechEnd() != null
+				? clampDuration(audio.speechEnd(), speechStart, rawDuration)
+				: clampDuration(speechStart + firstPositive(speechDuration, parseDurationSeconds(audio.duration()), fallbackDuration), speechStart, rawDuration);
+		double effectiveDuration = speechEnd > speechStart
+				? speechEnd - speechStart
+				: firstPositive(speechDuration, parseDurationSeconds(audio.duration()), fallbackDuration);
+		effectiveDuration = clampDuration(effectiveDuration, 0, Math.max(0, rawDuration - speechStart));
+		if (!(effectiveDuration >= PRESENTER_MIN_EFFECTIVE_SPEECH_SECONDS)) {
+			double fallback = clampDuration(firstPositive(parseDurationSeconds(audio.duration()), fallbackDuration), 0, rawDuration);
+			return new SpeechWindow(rawDuration, 0, fallback, fallback);
+		}
+		double normalizedSpeechEnd = clampDuration(speechStart + effectiveDuration, speechStart, rawDuration);
+		return new SpeechWindow(rawDuration, speechStart, normalizedSpeechEnd, Math.max(0, normalizedSpeechEnd - speechStart));
+	}
+
+	private int presenterSpeechAlignmentPenalty(
+			double clipDurationSeconds,
+			FissionMixRequest.AudioAsset audio,
+			String selectionProfile,
+			String usageType
+	) {
+		if (!isPresenterSelectionProfile(selectionProfile) || !isVoiceLikeUsage(usageType)) return 0;
+		SpeechWindow speechWindow = resolveSpeechWindow(audio, clipDurationSeconds);
+		if (!(clipDurationSeconds > 0) || !(speechWindow.effectiveDuration() > 0)) return 0;
+
+		double clipLongerThanSpeech = clipDurationSeconds - speechWindow.effectiveDuration();
+		if (clipLongerThanSpeech > PRESENTER_OVERLONG_CLIP_THRESHOLD_SECONDS) {
+			return -Math.min(54, (int) Math.round(clipLongerThanSpeech * 12));
+		}
+
+		double speechLongerThanClip = speechWindow.effectiveDuration() - clipDurationSeconds;
+		if (speechLongerThanClip > PRESENTER_OVERLONG_AUDIO_THRESHOLD_SECONDS) {
+			return -Math.min(30, (int) Math.round(speechLongerThanClip * 6));
+		}
+		return 0;
+	}
+
+	private double clampDuration(double value, double min, double max) {
+		if (!Double.isFinite(value)) return min;
+		return Math.min(max, Math.max(min, value));
 	}
 
 	private int alignedPoolIndex(int variantIndex, int size, int anchorSize) {
@@ -604,7 +703,16 @@ public class FissionMixService {
 	private record VariantSelection(
 			FissionMixRequest.VideoAsset video,
 			FissionMixRequest.AudioAsset audio,
+			String selectionProfile,
 			boolean voiceLocked
+	) {
+	}
+
+	private record SpeechWindow(
+			double rawDuration,
+			double speechStart,
+			double speechEnd,
+			double effectiveDuration
 	) {
 	}
 }

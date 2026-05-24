@@ -13129,7 +13129,7 @@ progress::-webkit-progress-value {
 
 .audio-item-list article {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-height: 48px;
@@ -13168,6 +13168,23 @@ progress::-webkit-progress-value {
   margin-top: 3px;
   color: #9ca3af;
   font-size: 11px;
+}
+
+.fission-audio-usage-select {
+  min-width: 84px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #343a42;
+  border-radius: 6px;
+  background: #111317;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.fission-audio-usage-select:focus {
+  outline: none;
+  border-color: rgb(142 162 255 / 66%);
+  box-shadow: 0 0 0 1px rgb(142 162 255 / 24%);
 }
 
 .audio-row-actions button,
@@ -13308,7 +13325,7 @@ progress::-webkit-progress-value {
 
 .group-audio-list article {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 26px;
+  grid-template-columns: 18px minmax(0, 1fr) auto 26px;
   align-items: center;
   gap: 7px;
   min-height: 38px;
@@ -18037,6 +18054,12 @@ progress::-webkit-progress-value {
   border-color: #fecdd3;
   background: #fff1f2;
   color: #dc2626;
+}
+
+.theme-light.editor-workbench .fission-board .fission-audio-usage-select {
+  border-color: #d2dce8;
+  background: linear-gradient(180deg, #ffffff, #f5f7fb);
+  color: #334155;
 }
 
 .theme-light.editor-workbench .fission-left .audio-drop-panel > button,

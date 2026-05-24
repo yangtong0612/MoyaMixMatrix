@@ -714,6 +714,9 @@ function registerIpc() {
       localPath: filePath
     };
   });
+  ipcMain.handle('media:probe-file', async (_event, filePath) => probeMedia(filePath));
+  ipcMain.handle('media:analyze-speech', async (_event, filePath) => analyzeSpeechWindow(filePath));
+  ipcMain.handle('media:render-fission-mix', async (_event, request = {}) => renderFissionMix(request));
 }
 
 function readOptimizedImageData(filePath, options = {}) {
@@ -897,6 +900,267 @@ async function renderViralVideo(sourcePath, outputPath, overlay) {
   }
 }
 
+async function renderFissionMix(request = {}) {
+  if (!ffmpegPath) {
+    throw new Error('未找到可用的 ffmpeg，无法执行本地混剪');
+  }
+  const normalizedRequest = normalizeFissionMixRenderRequest(request);
+  if (normalizedRequest.scenes.length === 0) {
+    throw new Error('没有可渲染的分镜混剪场景');
+  }
+
+  const outputDir = path.join(app.getPath('userData'), 'renders', 'fission-mix');
+  await fs.mkdir(outputDir, { recursive: true });
+  const tempDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'moya-fission-mix-'));
+  const outputPath = path.join(outputDir, buildFissionMixOutputName(normalizedRequest.name));
+  const sourceCache = new Map();
+
+  try {
+    const sceneFiles = [];
+    for (let index = 0; index < normalizedRequest.scenes.length; index += 1) {
+      const scene = normalizedRequest.scenes[index];
+      const scenePath = path.join(tempDir, `scene-${String(index + 1).padStart(3, '0')}.mp4`);
+      await renderFissionMixScene(scene, scenePath, sourceCache);
+      sceneFiles.push(scenePath);
+    }
+
+    if (sceneFiles.length === 1) {
+      await fs.copyFile(sceneFiles[0], outputPath);
+    } else {
+      const concatListPath = path.join(tempDir, 'concat.txt');
+      const concatList = sceneFiles.map((filePath) => `file '${quoteConcatDemuxerPath(filePath)}'`).join('\n');
+      await fs.writeFile(concatListPath, `${concatList}\n`, 'utf8');
+      await runProcess(ffmpegPath, [
+        '-y',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', concatListPath,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        outputPath
+      ], { timeout: 180000 });
+    }
+
+    const metadata = await probeMedia(outputPath).catch(() => null);
+    return {
+      localPath: outputPath,
+      duration: Number(metadata?.duration) || normalizedRequest.scenes.reduce((total, scene) => total + scene.sceneDuration, 0),
+      width: normalizedRequest.scenes[0]?.width || 720,
+      height: normalizedRequest.scenes[0]?.height || 1280,
+      sceneCount: normalizedRequest.scenes.length,
+      name: path.basename(outputPath)
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function renderFissionMixScene(scene, outputPath, sourceCache) {
+  const videoSource = await prepareFissionMixSource(scene.videoSource, {
+    folder: 'fission/render-inputs',
+    fileName: `${scene.clipName || scene.id}.mp4`
+  }, sourceCache);
+  if (!videoSource.localPath) {
+    throw new Error(`分镜 ${scene.groupName || scene.id} 缺少可用的视频素材`);
+  }
+
+  const fallbackVideoDuration = Math.max(scene.sceneDuration, scene.videoOut, 0.2);
+  const videoDuration = Math.max(0, Number(videoSource.metadata?.duration) || 0, fallbackVideoDuration);
+  const videoIn = clampSeconds(Number(scene.videoIn) || 0, 0, Math.max(0, videoDuration - 0.02));
+  const videoOut = clampSeconds(
+    Number(scene.videoOut) || (videoIn + scene.sceneDuration),
+    Math.min(videoDuration, videoIn + 0.02),
+    videoDuration
+  );
+  const sceneDuration = Math.max(0.12, Math.min(Number(scene.sceneDuration) || (videoOut - videoIn), videoOut - videoIn || Number(scene.sceneDuration) || 0.12));
+  const fps = positiveNumberOr(scene.fps, 30);
+  const width = positiveNumberOr(scene.width, 720);
+  const height = positiveNumberOr(scene.height, 1280);
+
+  let externalAudioSource = null;
+  if (scene.audioSource) {
+    externalAudioSource = await prepareFissionMixSource(scene.audioSource, {
+      folder: 'fission/render-audios',
+      fileName: `${scene.audioName || scene.id}.mp3`
+    }, sourceCache);
+  }
+
+  const videoHasAudio = Boolean(videoSource.metadata?.hasAudio);
+  const externalHasAudio = Boolean(externalAudioSource?.metadata?.hasAudio);
+  const externalAudioDuration = Math.max(0, Number(scene.audioOut) - Number(scene.audioIn));
+  const includeVideoAudio = videoHasAudio && Number(scene.videoAudioGain) > 0.0001;
+  const includeExternalAudio = externalHasAudio && externalAudioDuration > 0.02 && Number(scene.audioGain) > 0.0001;
+
+  const args = ['-y', '-i', videoSource.localPath];
+  let externalAudioInputIndex = -1;
+  if (includeExternalAudio && externalAudioSource?.localPath) {
+    args.push('-i', externalAudioSource.localPath);
+    externalAudioInputIndex = 1;
+  }
+  const silenceInputIndex = includeExternalAudio ? 2 : 1;
+  args.push(
+    '-f', 'lavfi',
+    '-t', formatFfmpegSeconds(sceneDuration),
+    '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'
+  );
+
+  const filters = [
+    `[0:v]trim=start=${formatFfmpegSeconds(videoIn)}:end=${formatFfmpegSeconds(videoOut)},setpts=PTS-STARTPTS,scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=${fps},format=yuv420p[v]`,
+    `[${silenceInputIndex}:a]atrim=duration=${formatFfmpegSeconds(sceneDuration)},asetpts=PTS-STARTPTS[sil]`
+  ];
+  const audioMixLabels = ['[sil]'];
+
+  if (includeVideoAudio) {
+    filters.push(
+      `[0:a]atrim=start=${formatFfmpegSeconds(videoIn)}:end=${formatFfmpegSeconds(videoOut)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(scene.videoAudioGain)}[va]`
+    );
+    audioMixLabels.push('[va]');
+  }
+
+  if (includeExternalAudio && externalAudioInputIndex >= 0) {
+    const audioIn = clampSeconds(Number(scene.audioIn) || 0, 0, Math.max(0, Number(externalAudioSource?.metadata?.duration) || Number(scene.audioOut) || 0));
+    const audioOut = clampSeconds(
+      Number(scene.audioOut) || (audioIn + externalAudioDuration),
+      Math.min(Number(externalAudioSource?.metadata?.duration) || (audioIn + 0.02), audioIn + 0.02),
+      Math.max(Number(externalAudioSource?.metadata?.duration) || 0, audioIn + externalAudioDuration)
+    );
+    const clippedExternalAudioDuration = Math.max(0.02, audioOut - audioIn);
+    let externalAudioFilter = `[${externalAudioInputIndex}:a]atrim=start=${formatFfmpegSeconds(audioIn)}:end=${formatFfmpegSeconds(audioOut)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(scene.audioGain)}`;
+    if (scene.fadeInOut) {
+      const fadeDuration = Math.min(0.3, Math.max(0.08, clippedExternalAudioDuration / 2));
+      const fadeOutStart = Math.max(0, clippedExternalAudioDuration - fadeDuration);
+      externalAudioFilter += `,afade=t=in:st=0:d=${formatFfmpegSeconds(fadeDuration)},afade=t=out:st=${formatFfmpegSeconds(fadeOutStart)}:d=${formatFfmpegSeconds(fadeDuration)}`;
+    }
+    externalAudioFilter += '[ea]';
+    filters.push(externalAudioFilter);
+    audioMixLabels.push('[ea]');
+  }
+
+  filters.push(
+    `${audioMixLabels.join('')}amix=inputs=${audioMixLabels.length}:duration=longest:dropout_transition=0,atrim=duration=${formatFfmpegSeconds(sceneDuration)},aresample=async=1:first_pts=0[a]`
+  );
+
+  args.push(
+    '-filter_complex', filters.join(';'),
+    '-map', '[v]',
+    '-map', '[a]',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '20',
+    '-pix_fmt', 'yuv420p',
+    '-r', String(fps),
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-ar', '48000',
+    '-ac', '2',
+    '-movflags', '+faststart',
+    outputPath
+  );
+
+  await runProcess(ffmpegPath, args, { timeout: 180000 });
+}
+
+async function prepareFissionMixSource(source, options = {}, sourceCache = new Map()) {
+  const cacheKey = `${options.folder || 'general'}:${source}`;
+  if (sourceCache.has(cacheKey)) {
+    return sourceCache.get(cacheKey);
+  }
+
+  let localPath = source;
+  if (/^https?:\/\//i.test(source)) {
+    const cachedMedia = await cacheMediaSourceLocally(source, {
+      folder: options.folder || 'general',
+      fileName: options.fileName || inferDownloadFileName(source)
+    });
+    localPath = cachedMedia.localPath;
+  } else if (/^file:\/\//i.test(source)) {
+    localPath = fileURLToPath(source);
+  }
+
+  if (!localPath || !fsSync.existsSync(localPath)) {
+    throw new Error(`本地混剪素材不存在：${source}`);
+  }
+
+  const prepared = {
+    localPath,
+    metadata: await probeMedia(localPath).catch(() => null)
+  };
+  sourceCache.set(cacheKey, prepared);
+  return prepared;
+}
+
+function normalizeFissionMixRenderRequest(request = {}) {
+  const rawScenes = Array.isArray(request.scenes) ? request.scenes : [];
+  const scenes = rawScenes
+    .map((scene, index) => normalizeFissionMixScene(scene, index))
+    .filter(Boolean);
+  return {
+    name: safeDownloadFileName(`${String(request.name || 'fission-mix').replace(/\.[^.]+$/, '')}-${Date.now()}.mp4`),
+    scenes
+  };
+}
+
+function normalizeFissionMixScene(scene, index) {
+  if (!scene || typeof scene !== 'object') return null;
+  if (!scene.videoSource || typeof scene.videoSource !== 'string') return null;
+  const sceneDuration = Math.max(0.12, Number(scene.sceneDuration) || 0);
+  return {
+    id: String(scene.id || `scene-${index + 1}`),
+    groupId: String(scene.groupId || `group-${index + 1}`),
+    groupName: String(scene.groupName || `分镜 ${index + 1}`),
+    sceneNo: positiveNumberOr(scene.sceneNo, index + 1),
+    clipName: String(scene.clipName || `clip-${index + 1}`),
+    audioName: scene.audioName ? String(scene.audioName) : undefined,
+    videoSource: scene.videoSource,
+    audioSource: typeof scene.audioSource === 'string' && scene.audioSource ? scene.audioSource : undefined,
+    videoIn: Math.max(0, Number(scene.videoIn) || 0),
+    videoOut: Math.max(Number(scene.videoIn) || 0, Number(scene.videoOut) || ((Number(scene.videoIn) || 0) + sceneDuration)),
+    audioIn: Math.max(0, Number(scene.audioIn) || 0),
+    audioOut: Math.max(Number(scene.audioIn) || 0, Number(scene.audioOut) || ((Number(scene.audioIn) || 0) + Math.max(0, Number(scene.audioDuration) || 0))),
+    sceneDuration,
+    audioDuration: Math.max(0, Number(scene.audioDuration) || 0),
+    audioGain: clampNumber(Number(scene.audioGain), 0, 2),
+    videoAudioGain: clampNumber(Number(scene.videoAudioGain), 0, 2),
+    width: positiveNumberOr(scene.width, 720),
+    height: positiveNumberOr(scene.height, 1280),
+    bitrate: positiveNumberOr(scene.bitrate, 6000),
+    fps: positiveNumberOr(scene.fps, 30),
+    fadeInOut: Boolean(scene.fadeInOut),
+    voiceLocked: Boolean(scene.voiceLocked),
+    contentProfile: typeof scene.contentProfile === 'string' ? scene.contentProfile : 'standard',
+    audioSelectionSource: typeof scene.audioSelectionSource === 'string' ? scene.audioSelectionSource : undefined,
+    audioUsageType: typeof scene.audioUsageType === 'string' ? scene.audioUsageType : undefined
+  };
+}
+
+function buildFissionMixOutputName(name) {
+  return safeDownloadFileName(name || `fission-mix-${Date.now()}.mp4`);
+}
+
+function quoteConcatDemuxerPath(filePath) {
+  return String(filePath || '').replace(/\\/g, '/').replace(/'/g, "'\\''");
+}
+
+function formatFfmpegSeconds(value) {
+  const numeric = Math.max(0, Number(value) || 0);
+  return numeric.toFixed(4);
+}
+
+function formatFfmpegGain(value) {
+  const numeric = clampNumber(Number(value), 0, 2);
+  return numeric.toFixed(4);
+}
+
+function positiveNumberOr(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
 async function renderViralVideoWithPupCaps(sourcePath, outputPath, overlay) {
   if (!nodePath) {
     throw new Error('未找到可用的 node，无法运行 PupCaps');
@@ -953,6 +1217,14 @@ async function renderViralVideoWithPupCaps(sourcePath, outputPath, overlay) {
 }
 
 function probeVideo(filePath) {
+  return probeMedia(filePath).then((metadata) => ({
+    width: metadata.width || 720,
+    height: metadata.height || 1280,
+    duration: metadata.duration || 0
+  }));
+}
+
+function probeMedia(filePath) {
   return new Promise((resolve, reject) => {
     if (!ffprobePath) {
       reject(new Error('未找到可用的 ffprobe'));
@@ -960,8 +1232,7 @@ function probeVideo(filePath) {
     }
     execFile(ffprobePath, [
       '-v', 'error',
-      '-select_streams', 'v:0',
-      '-show_entries', 'stream=width,height:format=duration',
+      '-show_entries', 'stream=codec_type,width,height,duration:format=duration',
       '-of', 'json',
       filePath
     ], { windowsHide: true }, (error, stdout) => {
@@ -971,17 +1242,139 @@ function probeVideo(filePath) {
       }
       try {
         const data = JSON.parse(stdout || '{}');
-        const stream = data.streams?.[0] || {};
+        const streams = Array.isArray(data.streams) ? data.streams : [];
+        const videoStream = streams.find((stream) => stream?.codec_type === 'video') || streams[0] || {};
+        const audioStream = streams.find((stream) => stream?.codec_type === 'audio');
+        const streamDuration = Number(videoStream.duration) || Number(audioStream?.duration) || 0;
         resolve({
-          width: Number(stream.width) || 720,
-          height: Number(stream.height) || 1280,
-          duration: Number(data.format?.duration) || 0
+          width: Number(videoStream.width) || 0,
+          height: Number(videoStream.height) || 0,
+          duration: Number(data.format?.duration) || streamDuration || 0,
+          hasVideo: Boolean(videoStream && videoStream.codec_type === 'video'),
+          hasAudio: Boolean(audioStream)
         });
       } catch (parseError) {
         reject(parseError);
       }
     });
   });
+}
+
+async function analyzeSpeechWindow(filePath) {
+  const metadata = await probeMedia(filePath).catch(() => ({ duration: 0 }));
+  const duration = Math.max(0, Number(metadata.duration) || 0);
+  if (!(duration > 0)) {
+    return {
+      duration: 0,
+      speechStart: 0,
+      speechEnd: 0,
+      speechDuration: 0,
+      trimmedLeading: 0,
+      trimmedTrailing: 0,
+      hasSpeech: false
+    };
+  }
+  if (!ffmpegPath) {
+    return buildSpeechWindowFallback(duration);
+  }
+
+  const analysisLog = await new Promise((resolve) => {
+    execFile(ffmpegPath, [
+      '-hide_banner',
+      '-i', filePath,
+      '-af', 'silencedetect=noise=-34dB:d=0.18',
+      '-f', 'null',
+      process.platform === 'win32' ? 'NUL' : '/dev/null'
+    ], { windowsHide: true, timeout: 30_000, maxBuffer: 10 * 1024 * 1024 }, (_error, stdout, stderr) => {
+      resolve(`${stdout || ''}\n${stderr || ''}`);
+    });
+  });
+  return buildSpeechWindowFromSilenceLog(String(analysisLog || ''), duration);
+}
+
+function buildSpeechWindowFallback(duration) {
+  return {
+    duration,
+    speechStart: 0,
+    speechEnd: duration,
+    speechDuration: duration,
+    trimmedLeading: 0,
+    trimmedTrailing: 0,
+    hasSpeech: duration >= 0.45
+  };
+}
+
+function buildSpeechWindowFromSilenceLog(log, duration) {
+  const windows = extractSilenceWindows(log);
+  if (windows.length === 0) return buildSpeechWindowFallback(duration);
+
+  const firstWindow = windows[0];
+  const lastWindow = windows[windows.length - 1];
+  const leadingSilenceDuration = Math.max(0, firstWindow.end - firstWindow.start);
+  const trailingSilenceDuration = Math.max(0, duration - lastWindow.start);
+  const speechStart = firstWindow.start <= 0.05 && leadingSilenceDuration >= 0.18
+    ? clampSeconds(firstWindow.end, 0, duration)
+    : 0;
+  const hasTrailingSilence = (
+    lastWindow.openEnded && trailingSilenceDuration >= 0.24
+  ) || (
+    lastWindow.end >= duration - 0.06 && trailingSilenceDuration >= 0.24
+  );
+  const speechEnd = hasTrailingSilence
+    ? clampSeconds(lastWindow.start, speechStart, duration)
+    : duration;
+  const effectiveDuration = Math.max(0, speechEnd - speechStart);
+  if (effectiveDuration < 0.45) {
+    return buildSpeechWindowFallback(duration);
+  }
+  return {
+    duration,
+    speechStart,
+    speechEnd,
+    speechDuration: effectiveDuration,
+    trimmedLeading: speechStart,
+    trimmedTrailing: Math.max(0, duration - speechEnd),
+    hasSpeech: true
+  };
+}
+
+function extractSilenceWindows(log) {
+  const starts = [];
+  const ends = [];
+  const startPattern = /silence_start:\s*([0-9.]+)/g;
+  const endPattern = /silence_end:\s*([0-9.]+)\s*\|\s*silence_duration:\s*([0-9.]+)/g;
+  for (const match of log.matchAll(startPattern)) {
+    starts.push(Number(match[1]));
+  }
+  for (const match of log.matchAll(endPattern)) {
+    ends.push({
+      end: Number(match[1]),
+      duration: Number(match[2])
+    });
+  }
+
+  const windows = [];
+  let endCursor = 0;
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = Number.isFinite(starts[index]) ? starts[index] : 0;
+    while (endCursor < ends.length && (!Number.isFinite(ends[endCursor].end) || ends[endCursor].end < start)) {
+      endCursor += 1;
+    }
+    const nextEnd = endCursor < ends.length ? ends[endCursor] : null;
+    const end = nextEnd ? nextEnd.end : start;
+    windows.push({
+      start,
+      end: Math.max(start, end),
+      openEnded: !nextEnd
+    });
+    if (nextEnd) endCursor += 1;
+  }
+  return windows.filter((window) => Number.isFinite(window.start) && Number.isFinite(window.end));
+}
+
+function clampSeconds(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
 
 function findPupCapsCliPath() {

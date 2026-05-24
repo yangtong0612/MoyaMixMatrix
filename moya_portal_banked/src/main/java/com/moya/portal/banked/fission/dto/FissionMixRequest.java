@@ -44,7 +44,10 @@ public record FissionMixRequest(
 			Integer volume,
 			@NotBlank String mediaUrl,
 			String usageType,
-			String matchKey
+			String matchKey,
+			Double speechStart,
+			Double speechEnd,
+			Double speechDuration
 		) {
 	}
 

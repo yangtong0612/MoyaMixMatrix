@@ -70,6 +70,66 @@ export interface MediaCacheResult {
   size: number;
 }
 
+export interface MediaProbeResult {
+  duration: number;
+  width: number;
+  height: number;
+  hasVideo: boolean;
+  hasAudio: boolean;
+}
+
+export interface MediaSpeechAnalysisResult {
+  duration: number;
+  speechStart: number;
+  speechEnd: number;
+  speechDuration: number;
+  trimmedLeading: number;
+  trimmedTrailing: number;
+  hasSpeech: boolean;
+}
+
+export interface LocalFissionMixScene {
+  id: string;
+  groupId: string;
+  groupName: string;
+  sceneNo: number;
+  clipName: string;
+  audioName?: string;
+  videoSource: string;
+  audioSource?: string;
+  videoIn: number;
+  videoOut: number;
+  audioIn: number;
+  audioOut: number;
+  sceneDuration: number;
+  audioDuration: number;
+  audioGain: number;
+  videoAudioGain: number;
+  width: number;
+  height: number;
+  bitrate: number;
+  fps: number;
+  fadeInOut: boolean;
+  voiceLocked: boolean;
+  contentProfile: 'standard' | 'human_presenter' | 'digital_human';
+  audioSelectionSource?: 'group' | 'global' | 'ai';
+  audioUsageType?: 'ai_voice' | 'voice' | 'music' | 'effect' | 'unknown';
+}
+
+export interface LocalFissionMixRequest {
+  name?: string;
+  scenes: LocalFissionMixScene[];
+}
+
+export interface LocalFissionMixResult {
+  localPath: string;
+  duration: number;
+  width: number;
+  height: number;
+  sceneCount: number;
+  name: string;
+}
+
 export interface DriveFileInfo {
   name: string;
   size: number;
@@ -178,6 +238,9 @@ declare global {
         downloadToLocal(source: string, options?: { fileName?: string; viralOverlay?: unknown }): Promise<MediaDownloadResult>;
         cacheRemoteFile(source: string, options?: { folder?: string; cacheKey?: string; fileName?: string }): Promise<MediaCacheResult>;
         readAsDataUrl(filePath: string, options?: MediaDataUrlOptions): Promise<MediaDataUrlResult>;
+        probeFile(filePath: string): Promise<MediaProbeResult>;
+        analyzeSpeech(filePath: string): Promise<MediaSpeechAnalysisResult>;
+        renderFissionMix(request: LocalFissionMixRequest): Promise<LocalFissionMixResult>;
         onUploadToOssProgress(callback: (progress: OssUploadProgress) => void): () => void;
       };
     };

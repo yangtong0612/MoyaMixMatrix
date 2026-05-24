@@ -48,6 +48,9 @@ contextBridge.exposeInMainWorld('surgicol', {
     downloadToLocal: (source, options) => invoke('media:download-to-local', source, options),
     cacheRemoteFile: (source, options) => invoke('media:cache-remote-file', source, options),
     readAsDataUrl: (filePath, options) => invoke('media:read-as-data-url', filePath, options),
+    probeFile: (filePath) => invoke('media:probe-file', filePath),
+    analyzeSpeech: (filePath) => invoke('media:analyze-speech', filePath),
+    renderFissionMix: (request) => invoke('media:render-fission-mix', request),
     onUploadToOssProgress: (callback) => {
       const listener = (_event, progress) => callback(progress);
       ipcRenderer.on('media:upload-to-oss-progress', listener);
