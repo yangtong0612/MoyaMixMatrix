@@ -1,9 +1,12 @@
 package com.moya.portal.banked.fission;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import com.aliyun.ice20201109.Client;
 import com.aliyun.ice20201109.models.GetMediaProducingJobRequest;
@@ -29,6 +32,10 @@ public class FissionMixService {
 	private static final int DEFAULT_HEIGHT = 1280;
 	private static final int DEFAULT_BITRATE = 6000;
 	private static final double DEFAULT_SCENE_DURATION = 3.0;
+	private static final Set<String> GENERIC_MATCH_TOKENS = Set.of(
+			"scene", "clip", "audio", "video", "mix", "group", "voice", "music", "bgm",
+			"音频", "视频", "素材", "片段", "镜头", "分镜", "混剪"
+	);
 
 	private final AliyunIceProperties properties;
 	private final ObjectMapper objectMapper;
@@ -123,8 +130,9 @@ public class FissionMixService {
 
 		for (int groupIndex = 0; groupIndex < request.groups().size(); groupIndex++) {
 			FissionMixRequest.ShotGroup group = request.groups().get(groupIndex);
-			FissionMixRequest.VideoAsset video = pickVideo(group, variantIndex, groupIndex);
-			FissionMixRequest.AudioAsset audio = pickAudio(group, request.audioItems(), variantIndex, groupIndex);
+			VariantSelection selection = pickVariantSelection(group, request.audioItems(), variantIndex, groupIndex);
+			FissionMixRequest.VideoAsset video = selection.video();
+			FissionMixRequest.AudioAsset audio = selection.audio();
 			validateCloudMediaUrl(video.mediaUrl(), "视频素材 " + video.name());
 			if (audio != null) {
 				validateCloudMediaUrl(audio.mediaUrl(), "音频素材 " + audio.name());
@@ -132,7 +140,8 @@ public class FissionMixService {
 
 			double videoDuration = firstPositive(parseDurationSeconds(video.duration()), parseDurationSeconds(group.duration()), DEFAULT_SCENE_DURATION);
 			double audioDuration = audio == null ? 0 : firstPositive(parseDurationSeconds(audio.duration()), videoDuration);
-			double sceneDuration = Boolean.TRUE.equals(settings(request).followAudioSpeed()) && audioDuration > 0
+			boolean lockSceneToAudio = selection.voiceLocked() && audioDuration > 0;
+			double sceneDuration = (Boolean.TRUE.equals(settings(request).followAudioSpeed()) || lockSceneToAudio) && audioDuration > 0
 					? Math.min(videoDuration, audioDuration)
 					: videoDuration;
 			double audioClipDuration = audio == null ? 0 : Math.min(sceneDuration, audioDuration);
@@ -151,7 +160,7 @@ public class FissionMixService {
 			videoClip.put("Height", 0.9999);
 			videoClip.put("X", 0);
 			videoClip.put("Y", 0);
-			if (Boolean.FALSE.equals(settings(request).retainOriginalAudio())) {
+			if (Boolean.FALSE.equals(settings(request).retainOriginalAudio()) || lockSceneToAudio) {
 				videoClip.put("Effects", List.of(Map.of("Type", "Volume", "Gain", 0)));
 			} else if (Boolean.TRUE.equals(settings(request).ducking()) && audio != null) {
 				videoClip.put("Effects", List.of(Map.of("Type", "Volume", "Gain", 0.2)));
@@ -207,27 +216,209 @@ public class FissionMixService {
 		return objectMapper.valueToTree(config);
 	}
 
-	private FissionMixRequest.VideoAsset pickVideo(FissionMixRequest.ShotGroup group, int variantIndex, int groupIndex) {
-		if (group.clips() == null || group.clips().isEmpty()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分镜「" + group.title() + "」缺少视频素材");
-		}
-		return group.clips().get(Math.floorMod(variantIndex + groupIndex, group.clips().size()));
-	}
-
-	private FissionMixRequest.AudioAsset pickAudio(
+	private VariantSelection pickVariantSelection(
 			FissionMixRequest.ShotGroup group,
 			List<FissionMixRequest.AudioAsset> globalAudios,
 			int variantIndex,
 			int groupIndex
 	) {
-		List<FissionMixRequest.AudioAsset> groupAudios = group.groupAudios();
-		if (groupAudios != null && !groupAudios.isEmpty()) {
-			return groupAudios.get(Math.floorMod(variantIndex, groupAudios.size()));
+		if (group.clips() == null || group.clips().isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分镜「" + group.title() + "」缺少视频素材");
 		}
-		if (globalAudios != null && !globalAudios.isEmpty()) {
-			return globalAudios.get(Math.floorMod(variantIndex + groupIndex, globalAudios.size()));
+
+		String contentProfile = normalizeContentProfile(group);
+		List<AudioCandidate> groupCandidates = buildAudioCandidates(group.groupAudios(), "group");
+		List<AudioCandidate> globalCandidates = buildAudioCandidates(globalAudios, "global");
+		int cursor = Math.max(0, variantIndex + groupIndex);
+		int anchorSize = Math.max(1, group.clips().size(), groupCandidates.size() + globalCandidates.size());
+		FissionMixRequest.VideoAsset video = group.clips().get(
+				"digital_human".equals(contentProfile)
+						? alignedPoolIndex(cursor, group.clips().size(), anchorSize)
+						: positiveModulo(cursor, group.clips().size())
+		);
+		AudioCandidate audioCandidate = pickAudioCandidate(contentProfile, group, video, groupCandidates, globalCandidates, cursor);
+		boolean voiceLocked = audioCandidate != null && "digital_human".equals(contentProfile) && isVoiceLikeUsage(audioCandidate.usageType());
+		return new VariantSelection(video, audioCandidate == null ? null : audioCandidate.audio(), voiceLocked);
+	}
+
+	private List<AudioCandidate> buildAudioCandidates(List<FissionMixRequest.AudioAsset> audios, String source) {
+		if (audios == null || audios.isEmpty()) return List.of();
+		List<AudioCandidate> candidates = new ArrayList<>();
+		for (int index = 0; index < audios.size(); index++) {
+			FissionMixRequest.AudioAsset audio = audios.get(index);
+			candidates.add(new AudioCandidate(audio, source, normalizeUsageType(audio, source), index));
+		}
+		return candidates;
+	}
+
+	private AudioCandidate pickAudioCandidate(
+			String contentProfile,
+			FissionMixRequest.ShotGroup group,
+			FissionMixRequest.VideoAsset video,
+			List<AudioCandidate> groupCandidates,
+			List<AudioCandidate> globalCandidates,
+			int cursor
+	) {
+		for (List<AudioCandidate> pool : buildAudioPriorityPools(contentProfile, groupCandidates, globalCandidates)) {
+			if (pool.isEmpty()) continue;
+			int desiredIndex = alignedPoolIndex(cursor, pool.size(), Math.max(1, group.clips().size(), pool.size()));
+			AudioCandidate best = null;
+			int bestScore = Integer.MIN_VALUE;
+			int bestDistance = Integer.MAX_VALUE;
+			for (int poolIndex = 0; poolIndex < pool.size(); poolIndex++) {
+				AudioCandidate candidate = pool.get(poolIndex);
+				int score = scoreAudioCandidate(candidate, video, group, contentProfile);
+				int distance = circularDistance(poolIndex, desiredIndex, pool.size());
+				if (best == null
+						|| score > bestScore
+						|| (score == bestScore && distance < bestDistance)
+						|| (score == bestScore && distance == bestDistance && preferCandidate(candidate, best))) {
+					best = candidate;
+					bestScore = score;
+					bestDistance = distance;
+				}
+			}
+			if (best != null) return best;
 		}
 		return null;
+	}
+
+	private List<List<AudioCandidate>> buildAudioPriorityPools(
+			String contentProfile,
+			List<AudioCandidate> groupCandidates,
+			List<AudioCandidate> globalCandidates
+	) {
+		List<AudioCandidate> groupAi = filterByUsage(groupCandidates, "ai_voice");
+		List<AudioCandidate> globalAi = filterByUsage(globalCandidates, "ai_voice");
+		List<AudioCandidate> groupVoice = filterByUsage(groupCandidates, "voice");
+		List<AudioCandidate> globalVoice = filterByUsage(globalCandidates, "voice");
+		List<AudioCandidate> groupUnknown = filterByUsage(groupCandidates, "unknown");
+		List<AudioCandidate> globalUnknown = filterByUsage(globalCandidates, "unknown");
+		List<AudioCandidate> groupMusicLike = filterMusicLike(groupCandidates);
+		List<AudioCandidate> globalMusicLike = filterMusicLike(globalCandidates);
+
+		if ("digital_human".equals(contentProfile)) {
+			return List.of(
+					mergeCandidates(groupAi, globalAi),
+					mergeCandidates(groupVoice, globalVoice),
+					mergeCandidates(groupUnknown, globalUnknown),
+					mergeCandidates(groupMusicLike, globalMusicLike)
+			);
+		}
+
+		return List.of(
+				mergeCandidates(mergeCandidates(groupAi, groupVoice), mergeCandidates(groupUnknown, groupMusicLike)),
+				mergeCandidates(mergeCandidates(globalAi, globalVoice), globalUnknown),
+				globalMusicLike
+		);
+	}
+
+	private List<AudioCandidate> mergeCandidates(List<AudioCandidate> left, List<AudioCandidate> right) {
+		List<AudioCandidate> merged = new ArrayList<>(left.size() + right.size());
+		merged.addAll(left);
+		merged.addAll(right);
+		return merged;
+	}
+
+	private List<AudioCandidate> filterByUsage(List<AudioCandidate> candidates, String usageType) {
+		return candidates.stream().filter((candidate) -> usageType.equals(candidate.usageType())).toList();
+	}
+
+	private List<AudioCandidate> filterMusicLike(List<AudioCandidate> candidates) {
+		return candidates.stream()
+				.filter((candidate) -> "music".equals(candidate.usageType()) || "effect".equals(candidate.usageType()))
+				.toList();
+	}
+
+	private boolean preferCandidate(AudioCandidate left, AudioCandidate right) {
+		if (!left.source().equals(right.source())) return "group".equals(left.source());
+		return left.originalIndex() < right.originalIndex();
+	}
+
+	private int scoreAudioCandidate(
+			AudioCandidate candidate,
+			FissionMixRequest.VideoAsset video,
+			FissionMixRequest.ShotGroup group,
+			String contentProfile
+	) {
+		int score = usageBaseScore(candidate.usageType(), contentProfile);
+		if ("group".equals(candidate.source())) score += 8;
+
+		String audioStem = mediaStem(candidate.audio().name());
+		String videoStem = mediaStem(video == null ? null : video.name());
+		List<String> audioTokens = mediaTokens(firstText(candidate.audio().matchKey(), candidate.audio().name()));
+		List<String> videoTokens = mediaTokens(firstText(video == null ? "" : video.matchKey(), video == null ? "" : video.name()));
+		List<String> groupTokens = mediaTokens(firstText(group.title(), "") + " " + firstText(group.script(), "") + " " + firstText(group.voiceover(), ""));
+		List<String> filteredAudioTokens = filterGenericTokens(audioTokens);
+		List<String> filteredVideoTokens = filterGenericTokens(videoTokens);
+		List<String> filteredGroupTokens = filterGenericTokens(groupTokens);
+
+		if (!isBlank(audioStem) && audioStem.equals(videoStem)) {
+			score += 80;
+		}
+
+		score += intersectCount(filteredAudioTokens, filteredVideoTokens) * 16;
+		score += intersectCount(filteredAudioTokens, filteredGroupTokens) * 4;
+
+		String audioSceneToken = firstMatchingToken(audioTokens, "scene");
+		String videoSceneToken = firstMatchingToken(videoTokens, "scene");
+		if (!isBlank(audioSceneToken) && audioSceneToken.equals(videoSceneToken)) score += 34;
+
+		String audioVersionToken = firstVersionToken(audioTokens);
+		String videoVersionToken = firstVersionToken(videoTokens);
+		if (!isBlank(audioVersionToken) && audioVersionToken.equals(videoVersionToken)) score += 24;
+
+		double audioDuration = parseDurationSeconds(candidate.audio().duration());
+		double videoDuration = parseDurationSeconds(video == null ? null : video.duration());
+		if (audioDuration > 0 && videoDuration > 0) {
+			double diff = Math.abs(audioDuration - videoDuration);
+			if (diff <= 0.35) score += 18;
+			else if (diff <= 1.2) score += 10;
+			else if (diff <= 2.4) score += 4;
+		}
+		return score;
+	}
+
+	private int usageBaseScore(String usageType, String contentProfile) {
+		if ("digital_human".equals(contentProfile)) {
+			if ("ai_voice".equals(usageType)) return 120;
+			if ("voice".equals(usageType)) return 96;
+			if ("unknown".equals(usageType)) return 64;
+			if ("music".equals(usageType)) return 18;
+			return 10;
+		}
+		if ("ai_voice".equals(usageType)) return 90;
+		if ("voice".equals(usageType)) return 82;
+		if ("unknown".equals(usageType)) return 58;
+		if ("music".equals(usageType)) return 40;
+		return 24;
+	}
+
+	private String normalizeContentProfile(FissionMixRequest.ShotGroup group) {
+		if ("digital_human".equalsIgnoreCase(firstText(group.contentProfile()))) return "digital_human";
+		String text = String.join(" ", firstText(group.title()), firstText(group.script()), firstText(group.voiceover()),
+				group.clips() == null ? "" : group.clips().stream().map(FissionMixRequest.VideoAsset::name).reduce("", (left, right) -> left + " " + right));
+		String normalized = text.toLowerCase(Locale.ROOT);
+		return normalized.matches(".*(数字人|虚拟人|口播|主播|出镜|讲解|主持|人像|口型|嘴型|唇同步|digital\\s*human|avatar|spokesperson|presenter|host).*")
+				? "digital_human"
+				: "standard";
+	}
+
+	private String normalizeUsageType(FissionMixRequest.AudioAsset audio, String source) {
+		String explicit = firstText(audio.usageType()).toLowerCase(Locale.ROOT);
+		if (explicit.equals("ai_voice") || explicit.equals("voice") || explicit.equals("music") || explicit.equals("effect") || explicit.equals("unknown")) {
+			return explicit;
+		}
+		String text = (firstText(audio.name()) + " " + firstText(audio.mediaUrl())).toLowerCase(Locale.ROOT);
+		if (text.matches(".*((^|[\\s_-])(ai|tts)([\\s_-]|$)|数字人|ai配音|智能配音|voiceover|speech|synthetic).*")) return "ai_voice";
+		if (text.matches(".*(配音|旁白|口播|讲解|解说|人声|主播|台词|narrat|voice|speech|dub).*")) return "voice";
+		if (text.matches(".*(bgm|伴奏|纯音乐|音乐|music|beat|loop|song|melody|instrumental).*")) return "music";
+		if (text.matches(".*(音效|效果|sfx|fx|effect).*")) return "effect";
+		return "group".equals(source) ? "voice" : "unknown";
+	}
+
+	private boolean isVoiceLikeUsage(String usageType) {
+		return "ai_voice".equals(usageType) || "voice".equals(usageType);
 	}
 
 	private FissionMixRequest.MixSettings settings(FissionMixRequest request) {
@@ -251,6 +442,11 @@ public class FissionMixService {
 
 	private int positiveOr(Integer value, int fallback) {
 		return value == null || value <= 0 ? fallback : value;
+	}
+
+	private int positiveModulo(int value, int divisor) {
+		if (divisor <= 0) return 0;
+		return ((value % divisor) + divisor) % divisor;
 	}
 
 	private double firstPositive(double... values) {
@@ -281,6 +477,63 @@ public class FissionMixService {
 		} catch (NumberFormatException exception) {
 			return 0;
 		}
+	}
+
+	private int alignedPoolIndex(int variantIndex, int size, int anchorSize) {
+		if (size <= 1) return 0;
+		int safeAnchor = Math.max(1, anchorSize);
+		double normalized = (positiveModulo(variantIndex, safeAnchor) + 0.5) / safeAnchor;
+		return Math.min(size - 1, (int) Math.floor(normalized * size));
+	}
+
+	private int circularDistance(int index, int desiredIndex, int size) {
+		if (size <= 1) return 0;
+		int direct = Math.abs(index - desiredIndex);
+		return Math.min(direct, size - direct);
+	}
+
+	private String mediaStem(String value) {
+		if (isBlank(value)) return "";
+		String fileName = value.contains("/") || value.contains("\\")
+				? value.replace('\\', '/').substring(value.replace('\\', '/').lastIndexOf('/') + 1)
+				: value;
+		return fileName.replaceFirst("\\.[^.]+$", "").trim().toLowerCase(Locale.ROOT);
+	}
+
+	private List<String> mediaTokens(String value) {
+		String stem = mediaStem(value);
+		if (isBlank(stem)) return List.of();
+		String normalized = stem
+				.replaceAll("([a-zA-Z\\u4e00-\\u9fa5])(\\d)", "$1 $2")
+				.replaceAll("(\\d)([a-zA-Z\\u4e00-\\u9fa5])", "$1 $2");
+		String[] rawTokens = normalized.split("[^a-zA-Z0-9\\u4e00-\\u9fa5]+");
+		Set<String> tokens = new LinkedHashSet<>();
+		for (String token : rawTokens) {
+			if (!isBlank(token)) tokens.add(token.toLowerCase(Locale.ROOT));
+		}
+		return List.copyOf(tokens);
+	}
+
+	private List<String> filterGenericTokens(List<String> tokens) {
+		return tokens.stream().filter((token) -> !GENERIC_MATCH_TOKENS.contains(token)).toList();
+	}
+
+	private int intersectCount(List<String> left, List<String> right) {
+		if (left.isEmpty() || right.isEmpty()) return 0;
+		Set<String> rightSet = new LinkedHashSet<>(right);
+		int count = 0;
+		for (String token : left) {
+			if (rightSet.contains(token)) count += 1;
+		}
+		return count;
+	}
+
+	private String firstMatchingToken(List<String> tokens, String prefix) {
+		return tokens.stream().filter((token) -> token.startsWith(prefix) && token.length() > prefix.length()).findFirst().orElse("");
+	}
+
+	private String firstVersionToken(List<String> tokens) {
+		return tokens.stream().filter((token) -> token.matches("v\\d+")).findFirst().orElse("");
 	}
 
 	private double round(double value) {
@@ -338,5 +591,20 @@ public class FissionMixService {
 		if (status == null) return false;
 		String normalized = status.trim().toLowerCase();
 		return normalized.equals("failed") || normalized.equals("fail") || normalized.equals("error") || normalized.equals("canceled");
+	}
+
+	private record AudioCandidate(
+			FissionMixRequest.AudioAsset audio,
+			String source,
+			String usageType,
+			int originalIndex
+	) {
+	}
+
+	private record VariantSelection(
+			FissionMixRequest.VideoAsset video,
+			FissionMixRequest.AudioAsset audio,
+			boolean voiceLocked
+	) {
 	}
 }

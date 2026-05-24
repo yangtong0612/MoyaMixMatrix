@@ -22,6 +22,7 @@ public record FissionMixRequest(
 			String duration,
 			String script,
 			String voiceover,
+			String contentProfile,
 			@NotEmpty List<@Valid VideoAsset> clips,
 			List<@Valid AudioAsset> groupAudios
 	) {
@@ -31,7 +32,8 @@ public record FissionMixRequest(
 			@NotBlank String id,
 			@NotBlank String name,
 			String duration,
-			@NotBlank String mediaUrl
+			@NotBlank String mediaUrl,
+			String matchKey
 	) {
 	}
 
@@ -40,8 +42,10 @@ public record FissionMixRequest(
 			@NotBlank String name,
 			String duration,
 			Integer volume,
-			@NotBlank String mediaUrl
-	) {
+			@NotBlank String mediaUrl,
+			String usageType,
+			String matchKey
+		) {
 	}
 
 	public record MixSettings(

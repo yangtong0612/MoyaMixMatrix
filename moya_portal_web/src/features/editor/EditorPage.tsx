@@ -56,7 +56,18 @@ import { PreviewPanel } from './components/PreviewPanel';
 import { TimelinePanel } from './components/TimelinePanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { toMediaUrl } from './mediaUrl';
-import { buildAliyunMixRequest, createAliyunOutputMediaUrl, getAliyunMixJobStatus, getAliyunStorageConfig, getProtectedMediaAccessUrl, getViralSubtitleJob, submitAliyunMix, submitViralSubtitleRecognition, type ViralSubtitleSegment } from './aliyunMix';
+import {
+  buildAliyunMixRequest,
+  createAliyunOutputMediaUrl,
+  getAliyunMixJobStatus,
+  getAliyunStorageConfig,
+  getProtectedMediaAccessUrl,
+  getViralSubtitleJob,
+  selectAliyunMixVariantMedia,
+  submitAliyunMix,
+  submitViralSubtitleRecognition,
+  type ViralSubtitleSegment
+} from './aliyunMix';
 
 export function EditorPage() {
   const editor = useEditorStore();
@@ -473,6 +484,7 @@ type GeneratedFissionVideo = FissionPreviewItem & {
   jobStatus?: FissionJobStatus;
   jobStatusText?: string;
   jobMessage?: string;
+  previewMode?: 'mixed' | 'proxy';
 };
 
 interface GeneratedFissionGroupDetail {
@@ -480,11 +492,21 @@ interface GeneratedFissionGroupDetail {
   groupName: string;
   clipName?: string;
   audioName?: string;
-  audioSource?: 'group' | 'global';
+  audioSource?: 'group' | 'global' | 'ai';
+  contentProfile?: 'standard' | 'human_presenter' | 'digital_human';
   coverPath?: string;
 }
 
 type FissionJobStatus = 'preparing' | 'submitted' | 'running' | 'success' | 'failed';
+
+type PreviewMediaState = {
+  type: 'video' | 'audio';
+  name: string;
+  path?: string;
+  muted?: boolean;
+  badge?: string;
+  note?: string;
+};
 
 interface FissionWorkspaceDraft {
   groups: FissionShotGroup[];
@@ -493,6 +515,7 @@ interface FissionWorkspaceDraft {
   expandedIds?: string[];
   comboMode?: FissionComboMode;
   generatedVideos?: GeneratedFissionVideo[];
+  mixBatchCount?: number;
   activeSettingsTab?: FissionSettingsTab;
   soundSettings?: FissionSoundSettings;
 }
@@ -578,6 +601,13 @@ const FISSION_WORKSPACE_DRAFT_KEY = 'editor:fission-workspace-draft';
 const FISSION_DRAFT_LIBRARY_KEY = 'editor:fission-draft-library';
 const ACTIVE_FISSION_DRAFT_ID_KEY = 'editor:fission-active-draft-id';
 const DEFAULT_MIX_BATCH_COUNT = 10;
+const FISSION_MIX_BATCH_OPTIONS = [5, 10, 20, 30, 50] as const;
+
+function normalizeFissionBatchCount(value: unknown, fallback = DEFAULT_MIX_BATCH_COUNT) {
+  const nextCount = Math.floor(Number(value));
+  if (!Number.isFinite(nextCount)) return fallback;
+  return Math.max(1, Math.min(100, nextCount));
+}
 
 function readFissionWorkspaceDraft(value: unknown): FissionWorkspaceDraft | null {
   if (!value || typeof value !== 'object') return null;
@@ -589,6 +619,7 @@ function readFissionWorkspaceDraft(value: unknown): FissionWorkspaceDraft | null
     expandedIds: Array.isArray(draft.expandedIds) ? draft.expandedIds.filter((id): id is string => typeof id === 'string') : undefined,
     comboMode: draft.comboMode === 'single' || draft.comboMode === 'once' || draft.comboMode === 'smart' ? draft.comboMode : undefined,
     generatedVideos: Array.isArray(draft.generatedVideos) ? draft.generatedVideos : undefined,
+    mixBatchCount: normalizeFissionBatchCount(draft.mixBatchCount),
     activeSettingsTab: draft.activeSettingsTab === 'group' || draft.activeSettingsTab === 'sound' || draft.activeSettingsTab === 'strategy'
       ? draft.activeSettingsTab
       : undefined,
@@ -604,6 +635,7 @@ function createEmptyFissionWorkspaceDraft(): FissionWorkspaceDraft {
     expandedIds: defaultFissionGroups[0]?.id ? [defaultFissionGroups[0].id] : [],
     comboMode: 'single',
     generatedVideos: [],
+    mixBatchCount: DEFAULT_MIX_BATCH_COUNT,
     activeSettingsTab: 'group',
     soundSettings: defaultFissionSoundSettings
   };
@@ -3306,7 +3338,8 @@ function FissionWorkspace(props: {
   const [fissionResultView, setFissionResultView] = useState<'segments' | 'waterfall'>('segments');
   const [selectedGeneratedIds, setSelectedGeneratedIds] = useState<string[]>([]);
   const [waterfallDialogOpen, setWaterfallDialogOpen] = useState(false);
-  const [waterfallCountDraft, setWaterfallCountDraft] = useState(10);
+  const [waterfallCountDraft, setWaterfallCountDraft] = useState(DEFAULT_MIX_BATCH_COUNT);
+  const [mixBatchCount, setMixBatchCount] = useState(DEFAULT_MIX_BATCH_COUNT);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationError, setGenerationError] = useState('');
@@ -3327,24 +3360,36 @@ END：4秒，收束行动指令和品牌露出`);
     nextGroup: FinishedVideoGroup;
     existingGroups: FinishedVideoGroup[];
   } | null>(null);
-  const [previewMedia, setPreviewMedia] = useState<{ type: 'video' | 'audio'; name: string; path?: string } | null>(null);
+  const [previewMedia, setPreviewMedia] = useState<PreviewMediaState | null>(null);
   const [selectedPreviewId, setSelectedPreviewId] = useState('');
   const strategyCardsRef = useRef<HTMLDivElement>(null);
   const previewGridRef = useRef<HTMLDivElement>(null);
   const activeGroup = groups.find((group) => group.id === activeGroupId) || groups[0];
   const generatedCount = groups.reduce((total, group) => total + Math.max(1, group.clips.length), 1);
   const selectedPreviewItem = generatedVideos.find((item) => item.id === selectedPreviewId) || generatedVideos[0];
+  const plannedMixBatchCount = normalizeFissionBatchCount(mixBatchCount);
   const generatedVideoCount = generatedVideos.length || generatedCount * Math.max(1, audioItems.length || 1);
   const segmentResultVideos = fissionResultView === 'waterfall' && segmentCandidateVideos.length > 0 ? segmentCandidateVideos : generatedVideos;
+  const resultStrategyTags = buildFissionResultStrategyTags(generatedVideos, soundSettings.retainOriginalAudio);
+  const uploadNoticeMeta = uploadNotice ? describeFissionStatusNotice(uploadNotice) : null;
+  const generationErrorTitle = generationError
+    ? !uploadNotice
+      ? '生成失败'
+      : /部分任务提交失败/i.test(generationError)
+        ? '部分任务失败'
+        : '重试前检查'
+    : '';
+  const hasGeneratedSegmentGroups = generatedVideos.length > 0 && fissionResultView === 'segments';
   const generatedVideoGroups = groups.map((group) => ({
     group,
     videos: segmentResultVideos
       .map((video) => ({
         video,
-        detail: video.groupDetails?.find((detail) => detail.groupId === group.id)
+        detail: findGeneratedDetailForGroup(video, group)
       }))
       .filter((item) => item.detail)
   })).filter((item) => item.videos.length > 0);
+  const shouldShowGeneratedFlatResults = hasGeneratedSegmentGroups && generatedVideoGroups.length === 0;
   const generatedSelectionKeys = fissionResultView === 'segments'
     ? generatedVideoGroups.flatMap(({ group, videos }) => videos.map(({ video }) => fissionResultSelectionKey(group.id, video.id)))
     : [];
@@ -3369,6 +3414,7 @@ END：4秒，收束行动指令和品牌露出`);
         setExpandedIds(draft.expandedIds?.filter((id) => nextGroups.some((group) => group.id === id)) || [nextActiveGroupId]);
         setComboMode(draft.comboMode || 'single');
         setGeneratedVideos(draft.generatedVideos || []);
+        setMixBatchCount(normalizeFissionBatchCount(draft.mixBatchCount));
         setSelectedGeneratedIds([]);
         setActiveSettingsTab(draft.activeSettingsTab || 'group');
         setSoundSettings({ ...defaultFissionSoundSettings, ...draft.soundSettings });
@@ -3394,6 +3440,7 @@ END：4秒，收束行动指令和品牌露出`);
       expandedIds,
       comboMode,
       generatedVideos,
+      mixBatchCount: plannedMixBatchCount,
       activeSettingsTab,
       soundSettings
     } satisfies FissionWorkspaceDraft;
@@ -3405,7 +3452,7 @@ END：4秒，收束行动指令和品牌露出`);
     }, 250);
 
     return () => window.clearTimeout(saveTimer);
-  }, [activeGroupId, activeSettingsTab, audioItems, comboMode, expandedIds, generatedVideos, groups, soundSettings, props]);
+  }, [activeGroupId, activeSettingsTab, audioItems, comboMode, expandedIds, generatedVideos, groups, mixBatchCount, plannedMixBatchCount, soundSettings, props]);
 
   useEffect(() => {
     return () => {
@@ -3501,18 +3548,21 @@ END：4秒，收束行动指令和品牌露出`);
     if (!item) return;
     setSelectedPreviewId(item.id);
     const rawPath = playableGeneratedPath(item);
+    const proxyPreview = isProxyGeneratedVideo(item);
+    const previewNote = buildGeneratedPreviewNote(item, soundSettings.retainOriginalAudio);
+    const previewBadge = proxyPreview ? '本地候选静音预览' : !soundSettings.retainOriginalAudio ? '已关闭原声' : undefined;
     if (!rawPath) {
-      setPreviewMedia({ type: 'video', name: item.name, path: undefined });
+      setPreviewMedia({ type: 'video', name: item.name, path: undefined, muted: proxyPreview, badge: previewBadge, note: previewNote });
       return;
     }
     try {
       const previewPath = shouldRequestProtectedPreview(rawPath)
         ? (await getProtectedMediaAccessUrl(rawPath)).mediaUrl
         : rawPath;
-      setPreviewMedia({ type: 'video', name: item.name, path: previewPath });
+      setPreviewMedia({ type: 'video', name: item.name, path: previewPath, muted: proxyPreview, badge: previewBadge, note: previewNote });
     } catch (error) {
       setGenerationError(error instanceof Error ? error.message : '获取视频预览地址失败');
-      setPreviewMedia({ type: 'video', name: item.name, path: rawPath });
+      setPreviewMedia({ type: 'video', name: item.name, path: rawPath, muted: proxyPreview, badge: previewBadge, note: previewNote });
     }
   }
 
@@ -3547,7 +3597,7 @@ END：4秒，收束行动指令和品牌露出`);
 
   function isGeneratedVideoSelected(video: GeneratedFissionVideo) {
     if (selectedGeneratedIds.includes(video.id)) return true;
-    return video.groupDetails?.some((detail) => selectedGeneratedIds.includes(fissionResultSelectionKey(detail.groupId, video.id))) || false;
+    return groups.some((group) => Boolean(findGeneratedDetailForGroup(video, group)) && selectedGeneratedIds.includes(fissionResultSelectionKey(group.id, video.id)));
   }
 
   function isFissionDetailSelected(groupId: string, videoId: string) {
@@ -3638,7 +3688,7 @@ END：4秒，收束行动指令和品牌露出`);
       setGenerationError('还没有可筛选的分镜混剪结果，请先生成每个分镜的候选素材。');
       return;
     }
-    setWaterfallCountDraft(10);
+    setWaterfallCountDraft(DEFAULT_MIX_BATCH_COUNT);
     setWaterfallDialogOpen(true);
   }
 
@@ -3648,7 +3698,7 @@ END：4秒，收束行动指令和品牌露出`);
       setWaterfallDialogOpen(false);
       return;
     }
-    const composedCount = Math.max(1, Math.min(100, Math.floor(Number(waterfallCountDraft) || 10)));
+    const composedCount = normalizeFissionBatchCount(waterfallCountDraft);
     const selectedRows = generatedVideoGroups.map(({ group, videos }) => {
       const picked = videos.filter(({ video }) => isFissionDetailSelected(group.id, video.id));
       return {
@@ -3670,6 +3720,7 @@ END：4秒，收束行动指令和品牌露出`);
           clipName: picked.detail?.clipName || picked.video.name,
           audioName: picked.detail?.audioName || picked.video.audioName,
           audioSource: picked.detail?.audioSource,
+          contentProfile: picked.detail?.contentProfile,
           coverPath: picked.detail?.coverPath || picked.video.coverPath || previewPath(picked.video)
         } satisfies GeneratedFissionGroupDetail;
       });
@@ -3686,7 +3737,8 @@ END：4秒，收束行动指令和品牌露出`);
         groupDetails: details,
         jobStatus: 'preparing',
         jobStatusText: '瀑布流组合完成',
-        jobMessage: `已按 ${selectedRows.length} 个分镜筛选结果生成完整混剪方案`
+        jobMessage: `已生成 ${selectedRows.length} 个本地组合方案，当前仅静音预览画面，真实音频以云端成片为准。`,
+        previewMode: 'proxy'
       };
     });
     setSegmentCandidateVideos(segmentResultVideos);
@@ -3724,7 +3776,7 @@ END：4秒，收束行动指令和品牌露出`);
       assertFissionCloudUploadReady(groups, audioItems);
       assertEligibleMixGroupsReady(groups, audioItems);
       const storageConfig = await getAliyunStorageConfig();
-      const batchCount = DEFAULT_MIX_BATCH_COUNT;
+      const batchCount = plannedMixBatchCount;
       const cloudMediaUrls = groups.flatMap((group) => [
         ...group.clips.filter(isUsableCloudMedia).map((clip) => clip.path || ''),
         ...(group.groupAudios || []).filter(isUsableCloudMedia).map((audio) => audio.path || '')
@@ -3772,7 +3824,8 @@ END：4秒，收束行动指令和品牌露出`);
             jobId: result.jobId,
             jobStatus: result.jobId ? 'submitted' : 'running',
             jobStatusText: result.jobId ? '已提交，等待合成' : '已提交',
-            jobMessage: result.jobId ? `${mixJob.materialSummary.text} · JobId: ${result.jobId}` : mixJob.materialSummary.text
+            jobMessage: result.jobId ? `${mixJob.materialSummary.text} · JobId: ${result.jobId}` : mixJob.materialSummary.text,
+            previewMode: 'mixed'
           };
           submittedVideos.push(nextVideo);
           setGeneratedVideos([...submittedVideos]);
@@ -3794,17 +3847,17 @@ END：4秒，收束行动指令和品牌露出`);
       setUploadNotice(`已提交 ${submittedVideos.length} 个阿里云混剪任务，右侧仅显示已成功提交的任务。`);
       setGenerationError(failedMessages.length > 0 ? `部分任务提交失败：${failedMessages.slice(0, 3).join('；')}` : '');
     } catch (error) {
-      const message = normalizeFissionGenerateError(error);
-      const fallbackVideos = buildLocalFissionCandidates(groups, audioItems, DEFAULT_MIX_BATCH_COUNT);
+      const feedback = resolveFissionGenerateFeedback(error);
+      const fallbackVideos = buildLocalFissionCandidates(groups, audioItems, plannedMixBatchCount);
       if (fallbackVideos.length > 0) {
         setGenerationProgress(100);
         setGeneratedVideos(fallbackVideos);
         setSelectedGeneratedIds([]);
         setSelectedPreviewId(fallbackVideos[0]?.id || '');
         setGenerationError('');
-        setUploadNotice(`${message} 已先生成本地候选结果，可按分镜筛选后点击“瀑布流合成”。`);
+        setUploadNotice(buildLocalFissionFallbackNotice(fallbackVideos.length, feedback));
       } else {
-        setGenerationError(message);
+        setGenerationError(feedback.detail ? `${feedback.summary}。${feedback.detail}` : feedback.summary);
         setGeneratedVideos([]);
         setSelectedGeneratedIds([]);
         setSelectedPreviewId('');
@@ -4467,31 +4520,61 @@ END：4秒，收束行动指令和品牌露出`);
               <section className="fission-setting-card">
                 <header>当前分组音频</header>
                 <p className="group-audio-empty">
-                  {activeGroup.title}：{activeGroup.groupAudios?.length || 0} 条组内音频，生成混剪时会优先参与该分镜混音。
+                  {activeGroup.title}：{activeGroup.groupAudios?.length || 0} 条组内音频。生成混剪时会优先轮询本分镜音频；若识别到数字人口播片段，会优先匹配口播/AI 音频并尽量保持镜头与口型一致。
                 </p>
               </section>
             </>
           ) : (
             <section className="fission-setting-card">
               <header>脚本策略概览</header>
-              <p className="group-audio-empty">当前共 {groups.length} 个镜头分组，可生成视频 {generatedVideoCount} 个。</p>
+              <p className="group-audio-empty">当前共 {groups.length} 个镜头分组，预计可组合 {generatedVideoCount} 条，本次将生成 {plannedMixBatchCount} 条候选。</p>
             </section>
           )}
         </div>
         <div className="fission-generate-bar">
           <select defaultValue="all">
-            <option value="all">全部</option>
+            <option value="all">全部分镜</option>
           </select>
-          <select defaultValue="none">
-            <option value="none">不限制导出</option>
+          <select value={String(plannedMixBatchCount)} onChange={(event) => setMixBatchCount(normalizeFissionBatchCount(event.target.value))}>
+            {FISSION_MIX_BATCH_OPTIONS.map((count) => (
+              <option key={count} value={count}>生成 {count} 条</option>
+            ))}
           </select>
           <button className="fission-generate-button" type="button" onClick={generateVideos} disabled={isGenerating}>
             {isGenerating ? '生成中...' : '生成视频'}
           </button>
         </div>
-        {uploadNotice ? <div className="script-import-notice">{uploadNotice}</div> : null}
-        {lastOutputMediaUrl ? <div className="script-import-notice">输出地址：{lastOutputMediaUrl}</div> : null}
-        {generationError ? <div className="script-import-notice">{generationError}</div> : null}
+        {uploadNotice || lastOutputMediaUrl || generationError ? (
+          <div className="fission-status-stack">
+            {uploadNotice && uploadNoticeMeta ? (
+              <section className={`fission-status-card ${uploadNoticeMeta.tone}`}>
+                <header>
+                  {uploadNoticeMeta.tone === 'success' ? <CheckCircle2 size={14} /> : <Sparkles size={14} />}
+                  <strong>{uploadNoticeMeta.title}</strong>
+                </header>
+                <p>{uploadNotice}</p>
+              </section>
+            ) : null}
+            {lastOutputMediaUrl ? (
+              <section className="fission-status-card info">
+                <header>
+                  <Link size={14} />
+                  <strong>输出地址</strong>
+                </header>
+                <p className="fission-status-url" title={lastOutputMediaUrl}>{lastOutputMediaUrl}</p>
+              </section>
+            ) : null}
+            {generationError ? (
+              <section className="fission-status-card error">
+                <header>
+                  <Shield size={14} />
+                  <strong>{generationErrorTitle}</strong>
+                </header>
+                <p>{generationError}</p>
+              </section>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="fission-column fission-right">
@@ -4501,7 +4584,8 @@ END：4秒，收束行动指令和品牌露出`);
         </header>
         <div className="strategy-summary">
           <span>可生成脚本: 1</span>
-          <span>可生成视频: {Math.max(DEFAULT_MIX_BATCH_COUNT, generatedVideoCount)}</span>
+          <span>预计组合: {generatedVideoCount}</span>
+          <span>本次生成: {plannedMixBatchCount}</span>
           <span>时长: 22.07s~32.84s</span>
         </div>
         <div className="strategy-card-shell">
@@ -4536,7 +4620,7 @@ END：4秒，收束行动指令和品牌露出`);
         <div className="fission-preview-toolbar">
           <div className="fission-preview-heading">
             <span>视频封面</span>
-            <strong>{generatedVideos.length > 0 ? fissionResultView === 'waterfall' ? '完整混剪结果' : '智能混剪结果' : '等待阿里云生成'}</strong>
+            <strong>{generatedVideos.length > 0 ? fissionResultView === 'waterfall' ? '完整混剪结果' : '智能混剪结果' : '等待生成候选结果'}</strong>
           </div>
           {generatedVideos.length > 0 ? (
             <div className="fission-result-actions">
@@ -4548,9 +4632,17 @@ END：4秒，收束行动指令和品牌露出`);
               <small className="fission-result-count">{selectedGeneratedCount > 0 ? `已选 ${selectedGeneratedCount} / ${selectableResultCount}` : `${generatedVideos.length} 个视频`}</small>
             </div>
           ) : (
-            <small className="fission-result-hint">调用混剪 API 后显示成片</small>
+            <small className="fission-result-hint">点击“生成视频”后显示本地候选或云端混剪结果</small>
           )}
         </div>
+        {resultStrategyTags.length > 0 ? (
+          <div className="fission-result-strategy-bar">
+            <span>当前策略</span>
+            {resultStrategyTags.map((tag) => (
+              <em key={tag}>{tag}</em>
+            ))}
+          </div>
+        ) : null}
         <div
           className={clsx('fission-preview-grid', generatedVideos.length > 0 && 'generated')}
           key={generatedVideos[0]?.id || 'preview-default'}
@@ -4559,8 +4651,8 @@ END：4秒，收束行动指令和品牌露出`);
           {generatedVideos.length === 0 ? (
             <section className="fission-result-empty">
               <Film size={24} />
-              <strong>还没有阿里云混剪成片</strong>
-              <span>导入脚本只会生成左侧分镜；点击“生成视频”并成功提交阿里云任务后，这里才显示 10 条默认混剪结果。</span>
+              <strong>还没有混剪结果</strong>
+              <span>导入脚本只会生成左侧分镜；点击“生成视频”后，这里会显示本地候选结果，或已提交的阿里云混剪任务。</span>
             </section>
           ) : fissionResultView === 'waterfall' ? (
             <section className="fission-waterfall-results">
@@ -4575,6 +4667,7 @@ END：4秒，收束行动指令和品牌露出`);
                 {generatedVideos.map((video) => {
                   const coverUrl = toMediaUrl(video.coverPath || previewPath(video));
                   const selected = selectedGeneratedIds.includes(video.id);
+                  const strategyText = buildGeneratedAudioStrategyText(undefined, video, soundSettings.retainOriginalAudio);
                   return (
                     <article
                       className={clsx(selectedPreviewItem?.id === video.id && 'selected', selected && 'batch-selected')}
@@ -4624,6 +4717,85 @@ END：4秒，收束行动指令和品牌露出`);
                       </div>
                       <strong>{video.name}</strong>
                       <small className="fission-preview-meta">{video.jobStatusText || video.duration || '完整混剪方案'}</small>
+                      {strategyText ? <em className="fission-result-strategy">{strategyText}</em> : null}
+                      {video.jobMessage ? (
+                        <em className="fission-result-message">{video.jobMessage}</em>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ) : shouldShowGeneratedFlatResults ? (
+            <section className="fission-waterfall-results">
+              <header>
+                <div>
+                  <strong>智能混剪结果</strong>
+                  <span>当前结果未附带可用的分镜映射，已按列表平铺显示。</span>
+                </div>
+              </header>
+              <div className="fission-waterfall-grid">
+                {generatedVideos.map((video) => {
+                  const coverUrl = toMediaUrl(video.coverPath || previewPath(video));
+                  const selected = isGeneratedVideoSelected(video);
+                  const primaryDetail = video.groupDetails?.find((detail) => detail.audioName || detail.clipName || detail.coverPath);
+                  const strategyText = buildGeneratedAudioStrategyText(primaryDetail, video, soundSettings.retainOriginalAudio);
+                  return (
+                    <article
+                      className={clsx(selectedPreviewItem?.id === video.id && 'selected', selected && 'batch-selected')}
+                      key={video.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        toggleGeneratedSelection(video.id);
+                        setSelectedPreviewId(video.id);
+                      }}
+                      onDoubleClick={() => void previewGeneratedVideoItem(video)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void previewGeneratedVideoItem(video);
+                        if (event.key === ' ') {
+                          event.preventDefault();
+                          toggleGeneratedSelection(video.id);
+                          setSelectedPreviewId(video.id);
+                        }
+                      }}
+                    >
+                      <span>{video.label}</span>
+                      <button
+                        className="preview-card-select"
+                        type="button"
+                        title={selected ? '取消选择' : '选择该结果'}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleGeneratedSelection(video.id);
+                          setSelectedPreviewId(video.id);
+                        }}
+                      >
+                        {selected ? <CheckCircle2 size={13} /> : null}
+                      </button>
+                      <button
+                        className="preview-card-play"
+                        type="button"
+                        title="预览视频"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void previewGeneratedVideoItem(video);
+                        }}
+                      >
+                        <Play size={13} />
+                      </button>
+                      <div className="fission-card-cover">
+                        {coverUrl ? <video src={coverUrl} muted preload="metadata" /> : null}
+                      </div>
+                      <strong>{video.name}</strong>
+                      <small className="fission-preview-meta">
+                        {buildGeneratedAudioMeta(primaryDetail, video)}
+                        {video.jobStatusText ? ` · ${video.jobStatusText}` : ''}
+                      </small>
+                      {strategyText ? <em className="fission-result-strategy">{strategyText}</em> : null}
+                      {video.jobMessage ? (
+                        <em className="fission-result-message">{video.jobMessage}</em>
+                      ) : null}
                     </article>
                   );
                 })}
@@ -4647,6 +4819,7 @@ END：4秒，收束行动指令和品牌露出`);
                     const coverUrl = toMediaUrl(detail?.coverPath || video.coverPath || previewPath(video));
                     const selectionKey = fissionResultSelectionKey(group.id, video.id);
                     const selected = isFissionDetailSelected(group.id, video.id);
+                    const strategyText = buildGeneratedAudioStrategyText(detail, video, soundSettings.retainOriginalAudio);
                     return (
                       <article
                         className={clsx(
@@ -4699,9 +4872,10 @@ END：4秒，收束行动指令和品牌露出`);
                         </div>
                         <strong>{detail?.clipName || video.name}</strong>
                         <small className="fission-preview-meta">
-                          {detail?.audioName ? `音频：${detail.audioName}${detail.audioSource === 'global' ? '（全局）' : ''}` : video.duration || '云端合成'}
+                          {buildGeneratedAudioMeta(detail, video)}
                           {video.jobStatusText ? ` · ${video.jobStatusText}` : ''}
                         </small>
+                        {strategyText ? <em className="fission-result-strategy">{strategyText}</em> : null}
                         {video.jobMessage ? (
                           <em className="fission-result-message">{video.jobMessage}</em>
                         ) : null}
@@ -4837,13 +5011,26 @@ END：4秒，收束行动指令和品牌露出`);
         <div className="script-import-backdrop">
           <section className="media-preview-dialog">
             <header>
-              <strong>{previewMedia.name}</strong>
+              <div className="media-preview-heading-stack">
+                <div className="media-preview-heading-main">
+                  <strong>{previewMedia.name}</strong>
+                  {previewMedia.badge ? <span className="media-preview-badge">{previewMedia.badge}</span> : null}
+                </div>
+                {previewMedia.note ? <small className="media-preview-note">{previewMedia.note}</small> : null}
+              </div>
               <button type="button" onClick={() => setPreviewMedia(null)}>关闭</button>
             </header>
             <div className="media-preview-body">
               {previewMedia.path ? (
                 previewMedia.type === 'video' ? (
-                  <video src={toMediaUrl(previewMedia.path)} controls autoPlay />
+                  previewMedia.muted ? (
+                    <div className="media-preview-stage is-muted">
+                      <video src={toMediaUrl(previewMedia.path)} autoPlay loop muted playsInline />
+                      {previewMedia.note ? <div className="media-preview-stage-note">{previewMedia.note}</div> : null}
+                    </div>
+                  ) : (
+                    <video src={toMediaUrl(previewMedia.path)} controls autoPlay />
+                  )
                 ) : (
                   <audio src={toMediaUrl(previewMedia.path)} controls autoPlay />
                 )
@@ -4908,6 +5095,27 @@ function stripScriptField(line?: string) {
   return line?.replace(/^[^：:\-—]+[：:\-—]\s*/, '').trim() || '';
 }
 
+function normalizeGeneratedGroupName(value?: string) {
+  return (value || '').replace(/\s+/g, '').trim().toLowerCase();
+}
+
+function findGeneratedDetailForGroup(video: GeneratedFissionVideo | undefined, group: Pick<FissionShotGroup, 'id' | 'title' | 'sceneNo'>) {
+  if (!video?.groupDetails?.length) return undefined;
+  const detailById = video.groupDetails.find((detail) => detail.groupId === group.id);
+  if (detailById) return detailById;
+
+  const normalizedTitle = normalizeGeneratedGroupName(group.title);
+  if (normalizedTitle) {
+    const detailByName = video.groupDetails.find((detail) => normalizeGeneratedGroupName(detail.groupName) === normalizedTitle);
+    if (detailByName) return detailByName;
+  }
+
+  const detailByScene = video.groupDetails.find((detail) => detail.groupName?.includes(`分镜${group.sceneNo}`));
+  if (detailByScene) return detailByScene;
+
+  return undefined;
+}
+
 function previewPath(media?: { path?: string; localPath?: string }) {
   return media?.localPath || (isCloudMediaUrl(media?.path) ? undefined : media?.path);
 }
@@ -4916,6 +5124,68 @@ function playableGeneratedPath(video?: GeneratedFissionVideo) {
   if (!video) return undefined;
   if (/^https?:\/\//i.test(video.path || '')) return video.path;
   return video.coverPath || previewPath(video);
+}
+
+function isProxyGeneratedVideo(video?: GeneratedFissionVideo) {
+  if (!video) return false;
+  if (video.previewMode) return video.previewMode === 'proxy';
+  return video.jobStatusText === '本地候选' || video.jobStatusText === '瀑布流组合完成' || /云端未提交|本地组合方案/i.test(video.jobMessage || '');
+}
+
+function buildGeneratedPreviewNote(video: GeneratedFissionVideo | undefined, retainOriginalAudio: boolean) {
+  if (!video) return undefined;
+  if (isProxyGeneratedVideo(video)) {
+    return video.jobStatusText === '瀑布流组合完成'
+      ? '当前仅预览瀑布流组合画面，不代表最终成片音频；提交云端后才可试听真实混剪声音。'
+      : '当前仅预览本地候选画面，不播放原素材声音；提交云端后才可试听真实混剪音频。';
+  }
+  if (!retainOriginalAudio) {
+    return '当前已关闭视频原声，云端成片会优先保留混剪后的匹配音频。';
+  }
+  return undefined;
+}
+
+function buildGeneratedAudioMeta(detail?: GeneratedFissionGroupDetail, video?: GeneratedFissionVideo) {
+  if (!detail?.audioName) return video?.duration || '云端合成';
+  const labels: string[] = [];
+  if (detail.audioSource === 'ai') labels.push('AI口播优先');
+  else if (detail.audioSource === 'group') labels.push('组内优先');
+  else if (detail.audioSource === 'global') labels.push('全局兜底');
+  return `音频：${detail.audioName}${labels.length > 0 ? `（${labels.join(' / ')}）` : ''}`;
+}
+
+function buildGeneratedAudioStrategyTags(detail: GeneratedFissionGroupDetail | undefined, video: GeneratedFissionVideo | undefined, retainOriginalAudio: boolean) {
+  const tags: string[] = [];
+  if (detail?.contentProfile === 'digital_human') tags.push('数字人口播优先匹配');
+  else if (detail?.contentProfile === 'human_presenter') tags.push('人物出镜优先口播音频');
+  if (detail?.audioSource === 'ai') tags.push('优先 AI / 口播音频');
+  else if (detail?.audioSource === 'group') tags.push('优先本分镜音频');
+  else if (detail?.audioSource === 'global') tags.push('全局音频兜底');
+  if (!retainOriginalAudio) tags.push('已关闭原声');
+  if (isProxyGeneratedVideo(video)) tags.push('本地候选静音预览');
+  return Array.from(new Set(tags));
+}
+
+function buildGeneratedAudioStrategyText(detail: GeneratedFissionGroupDetail | undefined, video: GeneratedFissionVideo | undefined, retainOriginalAudio: boolean) {
+  const tags = buildGeneratedAudioStrategyTags(detail, video, retainOriginalAudio);
+  return tags.length > 0 ? `策略：${tags.join(' · ')}` : undefined;
+}
+
+function buildFissionResultStrategyTags(videos: GeneratedFissionVideo[], retainOriginalAudio: boolean) {
+  if (videos.length === 0) return [];
+  const tags = ['组内音频优先'];
+  if (videos.some((video) => video.groupDetails?.some((detail) => detail.contentProfile === 'digital_human'))) {
+    tags.push('数字人口播优先 AI / 口播');
+  }
+  if (videos.some((video) => video.groupDetails?.some((detail) => detail.contentProfile === 'human_presenter'))) {
+    tags.push('人物出镜优先匹配口播');
+  }
+  if (videos.some((video) => video.groupDetails?.some((detail) => detail.audioSource === 'global'))) {
+    tags.push('全局音频兜底');
+  }
+  if (!retainOriginalAudio) tags.push('已关闭视频原声');
+  if (videos.some((video) => isProxyGeneratedVideo(video))) tags.push('本地候选仅静音预览');
+  return Array.from(new Set(tags));
 }
 
 function shouldRequestProtectedPreview(path?: string) {
@@ -4986,15 +5256,60 @@ function normalizeFissionUploadError(error: unknown, mediaLabel: string) {
   return `${mediaLabel}云端上传未完成，已保留本地素材可预览。${rawMessage || '请检查网络或 OSS 配置。'}`;
 }
 
-function normalizeFissionGenerateError(error: unknown) {
+function resolveFissionGenerateFeedback(error: unknown) {
   const rawMessage = error instanceof Error ? error.message : String(error || '');
-  if (/Request failed with status code 5\d\d/i.test(rawMessage)) {
-    return '后端提交阿里云混剪失败。请先确认后端服务日志、阿里云 ICE 配置和 OSS 输出地址配置正常，再重新生成。';
+  const prefixedMatch = rawMessage.match(/^(第\s*\d+\s*条：)\s*(.+)$/);
+  const prefix = prefixedMatch?.[1] ?? '';
+  const message = (prefixedMatch?.[2] ?? rawMessage).trim();
+
+  if (/Request failed with status code 5\d\d/i.test(message) || /后端提交阿里云混剪失败|阿里云混剪提交失败/i.test(message)) {
+    return {
+      summary: `${prefix}阿里云混剪提交失败`,
+      detail: '请检查后端服务日志、阿里云 ICE 配置和 OSS 输出地址后再重试。',
+      fallback: '已切换为本地候选结果，可先按分镜筛选，再点击“瀑布流合成”。'
+    };
   }
-  if (/Request failed with status code 4\d\d/i.test(rawMessage)) {
-    return '阿里云混剪请求参数未通过后端校验，请确认视频和音频都已成功上传到 OSS 后再生成。';
+
+  if (/Request failed with status code 4\d\d/i.test(message) || /请求参数未通过后端校验|素材校验未通过/i.test(message)) {
+    return {
+      summary: `${prefix}阿里云混剪素材校验未通过`,
+      detail: '请确认视频和音频都已成功上传到 OSS 后再重新生成。',
+      fallback: '已切换为本地候选结果，请补齐云端素材后再重试。'
+    };
   }
-  return rawMessage || '提交阿里云混剪任务失败';
+
+  return {
+    summary: prefix ? `${prefix}${message || '提交阿里云混剪任务失败'}` : message || '提交阿里云混剪任务失败',
+    fallback: '已切换为本地候选结果，可先按分镜筛选，再点击“瀑布流合成”。'
+  };
+}
+
+function normalizeFissionGenerateError(error: unknown) {
+  return resolveFissionGenerateFeedback(error).summary;
+}
+
+function describeFissionStatusNotice(message: string) {
+  if (/已生成\s*\d+\s*条本地候选结果|本地候选已生成/i.test(message)) {
+    return { tone: 'info' as const, title: '本地候选已生成' };
+  }
+  if (/本地候选|补齐云端素材|云端回退|未提交/i.test(message)) {
+    return { tone: 'info' as const, title: '本地预览' };
+  }
+  if (/正在提交|上传中|处理中/i.test(message)) {
+    return { tone: 'info' as const, title: '进行中' };
+  }
+  if (/已提交|已保存|已替换|已上传|已返回|已根据|已解析/i.test(message)) {
+    return { tone: 'success' as const, title: '当前状态' };
+  }
+  return { tone: 'info' as const, title: '当前提示' };
+}
+
+function buildLocalFissionFallbackNotice(fallbackCount: number, feedback: ReturnType<typeof resolveFissionGenerateFeedback>) {
+  const countLabel = Math.max(1, fallbackCount || 0);
+  if (/提交失败|素材校验未通过|无法连接后端服务|OSS/i.test(feedback.summary)) {
+    return `已生成 ${countLabel} 条本地候选结果，可先预览、筛选，再点击“瀑布流合成”；云端混剪可稍后重试。`;
+  }
+  return `已生成 ${countLabel} 条本地候选结果，可先预览、筛选，再点击“瀑布流合成”。`;
 }
 
 function ensureOssUploaderReady() {
@@ -5051,7 +5366,7 @@ function collectMixAudioNames(groups: FissionShotGroup[], audioItems: FissionAud
 
 function assertFissionCloudUploadReady(groups: FissionShotGroup[], audioItems: FissionAudioItem[]) {
   const cloudVideoCount = groups.reduce((total, group) => total + group.clips.filter(isUsableCloudMedia).length, 0);
-  const cloudAudioCount = collectUploadedMixAudios(groups, audioItems).length;
+  const cloudAudioCount = collectAllUploadedMixAudios(groups, audioItems).length;
   const uploadingCount = groups.reduce((total, group) =>
     total
     + group.clips.filter((clip) => clip.uploadStatus === 'uploading').length
@@ -5094,18 +5409,22 @@ function assertEligibleMixGroupsReady(groups: FissionShotGroup[], audioItems: Fi
   if (uploadingItems.length > 0) {
     throw new Error(`视频或组内音频还在上传中，请等待完成后再混剪：${uploadingItems.slice(0, 6).join('、')}`);
   }
-  throw new Error('当前没有同时具备“已上传视频 + 已上传组内音频”的分镜。请只给要参与混剪的分镜上传视频和组内音频。');
+  throw new Error('当前没有同时具备“已上传视频 + 可用混剪音频”的分镜。请给要参与混剪的分镜补充组内音频，或在底部导入可复用的全局音频。');
 }
 
-function collectUploadedMixAudios(groups: FissionShotGroup[], audioItems: FissionAudioItem[]) {
+function collectAllUploadedMixAudios(groups: FissionShotGroup[], audioItems: FissionAudioItem[]) {
   return dedupeAudioItems([
     ...audioItems,
     ...groups.flatMap((group) => group.groupAudios || [])
   ]).filter(isUsableCloudMedia);
 }
 
+function collectUploadedGlobalMixAudios(audioItems: FissionAudioItem[]) {
+  return dedupeAudioItems(audioItems).filter(isUsableCloudMedia);
+}
+
 function collectEligibleMixGroups(groups: FissionShotGroup[], audioItems: FissionAudioItem[]) {
-  const uploadedGlobalAudios = dedupeAudioItems(audioItems).filter(isUsableCloudMedia);
+  const uploadedGlobalAudios = collectUploadedGlobalMixAudios(audioItems);
   return groups
     .map((group) => ({
       group,
@@ -5116,12 +5435,18 @@ function collectEligibleMixGroups(groups: FissionShotGroup[], audioItems: Fissio
 }
 
 function collectVariantAudioNames(groups: FissionShotGroup[], audioItems: FissionAudioItem[], variantIndex: number) {
-  const uploadedGlobalAudios = collectUploadedMixAudios(groups, audioItems);
+  const uploadedGlobalAudios = collectUploadedGlobalMixAudios(audioItems);
   const names = groups
     .map((group, groupIndex) => {
-      const groupAudios = (group.groupAudios || []).filter(isUsableCloudMedia);
-      if (groupAudios.length > 0) return groupAudios[variantIndex % groupAudios.length]?.name;
-      return uploadedGlobalAudios.length > 0 ? uploadedGlobalAudios[(variantIndex + groupIndex) % uploadedGlobalAudios.length]?.name : undefined;
+      const selection = selectAliyunMixVariantMedia({
+        group,
+        clips: group.clips.filter(isUsableCloudMedia),
+        groupAudios: (group.groupAudios || []).filter(isUsableCloudMedia),
+        globalAudios: uploadedGlobalAudios,
+        variantIndex,
+        groupIndex
+      });
+      return selection.audio?.name;
     })
     .filter((name): name is string => Boolean(name));
   return Array.from(new Set(names)).slice(0, 4).join(' / ');
@@ -5129,29 +5454,36 @@ function collectVariantAudioNames(groups: FissionShotGroup[], audioItems: Fissio
 
 function collectVariantMaterialSummary(groups: FissionShotGroup[], audioItems: FissionAudioItem[], variantIndex: number) {
   const eligibleGroups = collectEligibleMixGroups(groups, audioItems);
-  const uploadedGlobalAudios = collectUploadedMixAudios(groups, audioItems);
+  const uploadedGlobalAudios = collectUploadedGlobalMixAudios(audioItems);
   const videoNames: string[] = [];
   const audioNames: string[] = [];
   const details: GeneratedFissionGroupDetail[] = [];
   let coverPath: string | undefined;
 
   eligibleGroups.forEach(({ group, uploadedClips, uploadedGroupAudios }, groupIndex) => {
-    const clip = uploadedClips[(variantIndex + groupIndex) % uploadedClips.length];
+    const selection = selectAliyunMixVariantMedia({
+      group,
+      clips: uploadedClips,
+      groupAudios: uploadedGroupAudios,
+      globalAudios: uploadedGlobalAudios,
+      variantIndex,
+      groupIndex
+    });
+    const clip = selection.clip;
+    const audio = selection.audio;
     if (clip) {
       videoNames.push(`${group.title}:${clip.name}`);
       coverPath ||= previewPath(clip);
     }
 
-    const groupAudio = uploadedGroupAudios[variantIndex % uploadedGroupAudios.length];
-    const globalAudio = uploadedGlobalAudios.length > 0 ? uploadedGlobalAudios[(variantIndex + groupIndex) % uploadedGlobalAudios.length] : undefined;
-    const audio = groupAudio || globalAudio;
     if (audio) audioNames.push(`${group.title}:${audio.name}`);
     details.push({
       groupId: group.id,
       groupName: group.title,
       clipName: clip?.name,
       audioName: audio?.name,
-      audioSource: groupAudio ? 'group' : globalAudio ? 'global' : undefined,
+      audioSource: selection.audioSource,
+      contentProfile: selection.selectionProfile,
       coverPath: previewPath(clip)
     });
   });
@@ -5174,20 +5506,28 @@ function buildLocalFissionCandidates(groups: FissionShotGroup[], audioItems: Fis
       audios: (group.groupAudios || []).filter((audio) => Boolean(previewPath(audio) || audio.path))
     }))
     .filter((item) => item.clips.length > 0);
-  const globalAudios = audioItems.filter((audio) => Boolean(previewPath(audio) || audio.path));
+  const globalAudios = dedupeAudioItems(audioItems).filter((audio) => Boolean(previewPath(audio) || audio.path));
   if (sourceGroups.length === 0) return [];
 
   return Array.from({ length: batchCount }, (_, index) => {
     const details: GeneratedFissionGroupDetail[] = sourceGroups.map(({ group, clips, audios }, groupIndex) => {
-      const clip = clips[(index + groupIndex) % clips.length];
-      const audioPool = audios.length > 0 ? audios : globalAudios;
-      const audio = audioPool.length > 0 ? audioPool[(index + groupIndex) % audioPool.length] : undefined;
+      const selection = selectAliyunMixVariantMedia({
+        group,
+        clips,
+        groupAudios: audios,
+        globalAudios,
+        variantIndex: index,
+        groupIndex
+      });
+      const clip = selection.clip || clips[0];
+      const audio = selection.audio;
       return {
         groupId: group.id,
         groupName: group.title,
         clipName: clip.name,
         audioName: audio?.name,
-        audioSource: audios.length > 0 && audio ? 'group' : audio ? 'global' : undefined,
+        audioSource: selection.audioSource,
+        contentProfile: selection.selectionProfile,
         coverPath: previewPath(clip) || clip.path
       };
     });
@@ -5206,7 +5546,8 @@ function buildLocalFissionCandidates(groups: FissionShotGroup[], audioItems: Fis
       groupDetails: details,
       jobStatus: 'preparing',
       jobStatusText: '本地候选',
-      jobMessage: '云端未提交，先用于本地筛选和瀑布流组合'
+      jobMessage: '当前为本地候选预览，真实音频以云端成片为准。',
+      previewMode: 'proxy'
     };
   });
 }
