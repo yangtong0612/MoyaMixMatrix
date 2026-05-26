@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { flushSync } from 'react-dom';
 import {
@@ -38,7 +38,6 @@ import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
 import { getMe, type AuthTokenResponse } from '@/features/cloud-drive/api/netdisk';
 import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
 import { useCloudDriveStore } from '@/features/cloud-drive/cloudDriveStore';
-import { EditorPage } from '@/features/editor/EditorPage';
 import {
   cacheProductVideoAssetLocally,
   createProductVideoTask,
@@ -59,6 +58,11 @@ const navItems = [
   { to: '/transfers', label: '传输', icon: Download },
   { to: '/settings', label: '设置', icon: Settings }
 ];
+
+const LazyEditorPage = lazy(async () => {
+  const module = await import('@/features/editor/EditorPage');
+  return { default: module.EditorPage };
+});
 
 type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
 type ProductVideoScenarioKey = 'product-spokesperson' | 'product-showcase' | 'store-traffic' | 'hot-replica';
@@ -1030,7 +1034,14 @@ export function App() {
           <Routes>
             <Route path="/" element={<HomeView />} />
             <Route path="/cloud-drive" element={isAuthenticated ? <CloudDrivePage /> : <Navigate to="/cloud-drive" replace />} />
-            <Route path="/editor" element={<EditorPage />} />
+            <Route
+              path="/editor"
+              element={(
+                <Suspense fallback={<EditorRouteLoading />}>
+                  <LazyEditorPage />
+                </Suspense>
+              )}
+            />
             <Route path="/product-video/create" element={<ProductVideoCreateView />} />
             <Route path="/transfers" element={isAuthenticated ? <CloudDrivePage initialMenu="transport" /> : <Navigate to="/transfers" replace />} />
             <Route path="/settings" element={<SettingsView />} />
@@ -1039,6 +1050,15 @@ export function App() {
       </div>
       ) : null}
     </div>
+  );
+}
+
+function EditorRouteLoading() {
+  return (
+    <section className="editor-route-loading" aria-live="polite">
+      <strong>正在加载剪辑工作台</strong>
+      <span>首次进入会稍慢一些，资源加载完成后会更流畅。</span>
+    </section>
   );
 }
 

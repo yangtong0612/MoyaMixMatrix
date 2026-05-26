@@ -3,6 +3,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { defaultClipSettings, useEditorStore } from '../editorStore';
 import { toMediaUrl } from '../mediaUrl';
 
+const PREVIEW_PLAYBACK_RATE_OPTIONS = [1, 1.25, 1.5, 2] as const;
+const DEFAULT_PREVIEW_PLAYBACK_RATE = 1.25;
+
 export function PreviewPanel() {
   const panelRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -11,6 +14,7 @@ export function PreviewPanel() {
   const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
   const [quality, setQuality] = useState('original');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9');
+  const [previewPlaybackRate, setPreviewPlaybackRate] = useState<number>(DEFAULT_PREVIEW_PLAYBACK_RATE);
   const activeMaterialId = useEditorStore((state) => state.activeMaterialId);
   const material = useEditorStore((state) => state.materials.find((item) => item.id === activeMaterialId));
   const clipSettings = useEditorStore((state) => (activeMaterialId ? state.clipSettings[activeMaterialId] : undefined));
@@ -20,6 +24,7 @@ export function PreviewPanel() {
   const sourceUrl = useMemo(() => toMediaUrl(material?.path), [material?.path]);
   const duration = material?.duration && Number.isFinite(material.duration) ? material.duration : 0;
   const settings = { ...defaultClipSettings, ...clipSettings };
+  const effectivePlaybackRate = Number((settings.speed * previewPlaybackRate).toFixed(2));
   const animationScale = settings.animation === 'zoom' ? 1.08 : 1;
   const animationOpacity = settings.animation === 'fade' ? 0.78 : 1;
   const visualFilter = [
@@ -44,9 +49,9 @@ export function PreviewPanel() {
     const video = videoRef.current;
     if (!video) return;
     video.volume = Math.max(0, Math.min(1, settings.volume / 100));
-    video.playbackRate = settings.speed;
+    video.playbackRate = Math.max(0.25, Math.min(4, effectivePlaybackRate));
     video.preservesPitch = settings.preservePitch;
-  }, [settings.volume, settings.speed, settings.preservePitch, sourceUrl]);
+  }, [settings.volume, settings.speed, settings.preservePitch, sourceUrl, effectivePlaybackRate]);
 
   function togglePlay() {
     const video = videoRef.current;
@@ -74,6 +79,14 @@ export function PreviewPanel() {
 
   function toggleFitMode() {
     setFitMode((mode) => (mode === 'contain' ? 'cover' : 'contain'));
+  }
+
+  function cyclePreviewPlaybackRate() {
+    setPreviewPlaybackRate((current) => {
+      const currentIndex = PREVIEW_PLAYBACK_RATE_OPTIONS.findIndex((option) => option === current);
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % PREVIEW_PLAYBACK_RATE_OPTIONS.length : 0;
+      return PREVIEW_PLAYBACK_RATE_OPTIONS[nextIndex];
+    });
   }
 
   function toggleFullscreen() {
@@ -166,6 +179,15 @@ export function PreviewPanel() {
         </div>
 
         <div className="player-view-actions">
+          <button
+            className="player-text-button player-speed-button"
+            type="button"
+            title={`切换预览倍速，当前 ${effectivePlaybackRate.toFixed(effectivePlaybackRate % 1 === 0 ? 0 : effectivePlaybackRate % 0.5 === 0 ? 1 : 2)}x`}
+            onClick={cyclePreviewPlaybackRate}
+            disabled={!material}
+          >
+            {effectivePlaybackRate.toFixed(effectivePlaybackRate % 1 === 0 ? 0 : effectivePlaybackRate % 0.5 === 0 ? 1 : 2)}x
+          </button>
           <label className="quality-select capcut-quality" title="清晰度">
             <select value={quality} onChange={(event) => setQuality(event.target.value)} disabled={!material}>
               <option value="original">原画</option>
