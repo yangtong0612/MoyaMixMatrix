@@ -9,6 +9,7 @@ import {
   type FissionMixContentProfile,
   type FissionMixSelectionProfile
 } from './fissionMixMatcher';
+import { buildWaterfallMixSelections } from './fissionWaterfallComposer';
 
 export interface AliyunMixShotGroup {
   id: string;
@@ -51,6 +52,7 @@ export interface AliyunMixSettings {
   ducking: boolean;
   fadeInOut: boolean;
   volume: number;
+  compositionMode?: 'segments' | 'waterfall';
   width?: number;
   height?: number;
   bitrate?: number;
@@ -85,7 +87,7 @@ export interface AliyunMixRequest {
       speechDuration?: number;
     }>;
   }>;
-  audioItems: Array<{
+  bgmItems: Array<{
     id: string;
     name: string;
     duration: string;
@@ -233,13 +235,11 @@ export function buildAliyunMixRequest(input: {
   settings: AliyunMixSettings;
   outputMediaUrl: string;
   variantIndex?: number;
+  compositionMode?: 'segments' | 'waterfall';
   dryRun?: boolean;
 }): AliyunMixRequest {
   const uploadedGlobalAudios = dedupeAudios(input.audioItems).filter(isUsableCloudMedia);
-  const eligibleSourceGroups = input.groups.filter((group) =>
-    group.clips.some(isUsableCloudMedia) &&
-    ((group.groupAudios || []).some(isUsableCloudMedia) || uploadedGlobalAudios.length > 0)
-  );
+  const eligibleSourceGroups = input.groups.filter((group) => group.clips.some(isUsableCloudMedia));
 
   if (eligibleSourceGroups.length === 0) {
     const uploadingItems = input.groups.flatMap((group) => [
@@ -253,31 +253,57 @@ export function buildAliyunMixRequest(input: {
     if (uploadingItems.length > 0) {
       throw new Error(`视频或组内音频还在上传中，请上传完成后再混剪：${uploadingItems.slice(0, 6).join('、')}`);
     }
-    throw new Error('当前没有同时具备“已上传视频 + 可用混剪音频”的分镜，不能提交阿里云混剪。');
+    throw new Error('当前没有已上传完成的视频分镜，不能提交阿里云混剪。');
   }
 
   const variantIndex = input.variantIndex || 0;
-  const groups = eligibleSourceGroups.map((group, groupIndex) => {
+  const compositionMode = input.compositionMode || input.settings.compositionMode || 'segments';
+  const waterfallSelections = compositionMode === 'waterfall'
+    ? buildWaterfallMixSelections({
+      groups: eligibleSourceGroups.map((group) => ({
+        ...group,
+        clips: group.clips.filter(isUsableCloudMedia),
+        groupAudios: (group.groupAudios || []).filter(isUsableCloudMedia)
+      })),
+      globalAudios: [],
+      variantIndex
+    })
+    : null;
+  const groups = (waterfallSelections || eligibleSourceGroups.map((group, groupIndex) => {
     const uploadedGroupClips = group.clips.filter(isUsableCloudMedia);
     const uploadedGroupAudios = (group.groupAudios || []).filter(isUsableCloudMedia);
     const selection = selectAliyunMixVariantMedia({
       group,
       clips: uploadedGroupClips,
       groupAudios: uploadedGroupAudios,
-      globalAudios: uploadedGlobalAudios,
+      globalAudios: [],
       variantIndex,
       groupIndex
     });
-    const selectedClip = selection.clip || uploadedGroupClips[0];
-    const selectedAudio = selection.audio;
     return {
-      id: group.id,
-      sceneNo: group.sceneNo,
-      title: group.title,
-      duration: group.duration,
-      script: group.script,
-      voiceover: group.voiceover,
+      orderIndex: groupIndex,
+      group,
+      clip: selection.clip || uploadedGroupClips[0],
+      audio: selection.audio,
+      selectionProfile: selection.selectionProfile,
       contentProfile: selection.contentProfile,
+      audioUsageType: selection.audioUsageType,
+      audioSource: selection.audioSource,
+      voiceLocked: selection.voiceLocked,
+      voiceProfileKey: '',
+      continuityLocked: false
+    };
+  })).map((item) => {
+    const selectedClip = item.clip;
+    const selectedAudio = item.audio;
+    return {
+      id: item.group.id,
+      sceneNo: item.group.sceneNo,
+      title: item.group.title,
+      duration: item.group.duration || '',
+      script: item.group.script,
+      voiceover: item.group.voiceover,
+      contentProfile: item.contentProfile,
       clips: selectedClip ? [{
         id: selectedClip.id,
         name: selectedClip.name,
@@ -291,7 +317,7 @@ export function buildAliyunMixRequest(input: {
         duration: selectedAudio.duration,
         volume: selectedAudio.volume,
         mediaUrl: selectedAudio.path || '',
-        usageType: selection.audioUsageType || inferAliyunMixAudioUsageType(selectedAudio, selection.audioPoolSource === 'group' ? 'group' : 'global'),
+        usageType: item.audioUsageType || inferAliyunMixAudioUsageType(selectedAudio, item.audioSource === 'group' ? 'group' : 'global'),
         matchKey: buildAliyunMixMatchKey(selectedAudio.name),
         speechStart: selectedAudio.speechStart,
         speechEnd: selectedAudio.speechEnd,
@@ -302,7 +328,7 @@ export function buildAliyunMixRequest(input: {
 
   return {
     groups,
-    audioItems: [],
+    bgmItems: buildVariantBgmItems(uploadedGlobalAudios, variantIndex),
     settings: {
       followAudioSpeed: input.settings.followAudioSpeed,
       retainOriginalAudio: input.settings.retainOriginalAudio,
@@ -317,6 +343,23 @@ export function buildAliyunMixRequest(input: {
     outputMediaUrl: input.outputMediaUrl,
     dryRun: input.dryRun
   };
+}
+
+function buildVariantBgmItems(audios: AliyunMixAudioItem[], variantIndex: number) {
+  if (audios.length === 0) return [];
+  const selected = audios[Math.max(0, variantIndex) % audios.length];
+  return [{
+    id: selected.id,
+    name: selected.name,
+    duration: selected.duration,
+    volume: selected.volume,
+    mediaUrl: selected.path || '',
+    usageType: inferAliyunMixAudioUsageType(selected, 'global'),
+    matchKey: buildAliyunMixMatchKey(selected.name),
+    speechStart: selected.speechStart,
+    speechEnd: selected.speechEnd,
+    speechDuration: selected.speechDuration
+  }];
 }
 
 function dedupeAudios(audios: AliyunMixAudioItem[]) {

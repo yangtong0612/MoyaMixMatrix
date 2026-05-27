@@ -116,9 +116,19 @@ export interface LocalFissionMixScene {
   audioUsageType?: 'ai_voice' | 'voice' | 'music' | 'effect' | 'unknown';
 }
 
+export interface LocalFissionMixBackgroundTrack {
+  id: string;
+  name: string;
+  source: string;
+  duration: number;
+  gain: number;
+  fadeInOut: boolean;
+}
+
 export interface LocalFissionMixRequest {
   name?: string;
   scenes: LocalFissionMixScene[];
+  bgmTracks?: LocalFissionMixBackgroundTrack[];
 }
 
 export interface LocalFissionMixResult {

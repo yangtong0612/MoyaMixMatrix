@@ -15,6 +15,18 @@ class FissionMixServiceTests {
 	@Test
 	void buildTimeline_prefersAiVoiceForDigitalHumanSegments() {
 		FissionMixService service = new FissionMixService(new AliyunIceProperties(), new ObjectMapper());
+		FissionMixRequest.AudioAsset aiVoice = new FissionMixRequest.AudioAsset(
+				"audio-ai",
+				"scene01_v2_ai_voice",
+				"4.80s",
+				100,
+				"https://example.com/scene01_v2_ai.mp3",
+				"ai_voice",
+				"scene01 v2 ai voice",
+				null,
+				null,
+				null
+		);
 		FissionMixRequest request = new FissionMixRequest(
 				List.of(
 						new FissionMixRequest.ShotGroup(
@@ -29,13 +41,13 @@ class FissionMixServiceTests {
 										new FissionMixRequest.VideoAsset("clip-1", "scene01_v1", "5.00s", "https://example.com/scene01_v1.mp4", "scene01 v1"),
 										new FissionMixRequest.VideoAsset("clip-2", "scene01_v2", "5.00s", "https://example.com/scene01_v2.mp4", "scene01 v2")
 								),
-								List.of(
-										new FissionMixRequest.AudioAsset("audio-bgm", "bgm_opening", "5.00s", 100, "https://example.com/bgm_opening.mp3", "music", "bgm opening")
-								)
+								List.of(aiVoice)
 						)
 				),
 				List.of(
-						new FissionMixRequest.AudioAsset("audio-ai", "scene01_v2_ai_voice", "4.80s", 100, "https://example.com/scene01_v2_ai.mp3", "ai_voice", "scene01 v2 ai voice")
+				),
+				List.of(
+						new FissionMixRequest.AudioAsset("audio-bgm", "bgm_opening", "5.00s", 100, "https://example.com/bgm_opening.mp3", "music", "bgm opening", null, null, null)
 				),
 				new FissionMixRequest.MixSettings(true, true, true, true, 100, 720, 1280, 6000),
 				1,
@@ -46,9 +58,11 @@ class FissionMixServiceTests {
 		JsonNode timeline = service.buildTimeline(request);
 		JsonNode videoClip = timeline.path("VideoTracks").get(0).path("VideoTrackClips").get(0);
 		JsonNode audioClip = timeline.path("AudioTracks").get(0).path("AudioTrackClips").get(0);
+		JsonNode bgmClip = timeline.path("AudioTracks").get(1).path("AudioTrackClips").get(0);
 
 		assertEquals("https://example.com/scene01_v2.mp4", videoClip.path("MediaURL").asText());
 		assertEquals("https://example.com/scene01_v2_ai.mp3", audioClip.path("MediaURL").asText());
+		assertEquals("https://example.com/bgm_opening.mp3", bgmClip.path("MediaURL").asText());
 		assertEquals(0.0, videoClip.path("Effects").get(0).path("Gain").asDouble());
 		assertTrue(audioClip.path("TimelineOut").asDouble() <= videoClip.path("TimelineOut").asDouble());
 	}
@@ -60,9 +74,9 @@ class FissionMixServiceTests {
 				new FissionMixRequest.VideoAsset("clip-1", "scene02", "5.00s", "https://example.com/scene02.mp4", "scene02")
 		);
 		List<FissionMixRequest.AudioAsset> groupAudios = List.of(
-				new FissionMixRequest.AudioAsset("audio-1", "scene02_v1", "5.00s", 100, "https://example.com/scene02_v1.mp3", "voice", "scene02 v1"),
-				new FissionMixRequest.AudioAsset("audio-2", "scene02_v2", "5.00s", 100, "https://example.com/scene02_v2.mp3", "voice", "scene02 v2"),
-				new FissionMixRequest.AudioAsset("audio-3", "scene02_v3", "5.00s", 100, "https://example.com/scene02_v3.mp3", "voice", "scene02 v3")
+				new FissionMixRequest.AudioAsset("audio-1", "scene02_v1", "5.00s", 100, "https://example.com/scene02_v1.mp3", "voice", "scene02 v1", null, null, null),
+				new FissionMixRequest.AudioAsset("audio-2", "scene02_v2", "5.00s", 100, "https://example.com/scene02_v2.mp3", "voice", "scene02 v2", null, null, null),
+				new FissionMixRequest.AudioAsset("audio-3", "scene02_v3", "5.00s", 100, "https://example.com/scene02_v3.mp3", "voice", "scene02 v3", null, null, null)
 		);
 
 		for (int variantIndex = 0; variantIndex < groupAudios.size(); variantIndex++) {
@@ -80,6 +94,7 @@ class FissionMixServiceTests {
 									groupAudios
 							)
 					),
+					List.of(),
 					List.of(),
 					new FissionMixRequest.MixSettings(true, true, true, true, 100, 720, 1280, 6000),
 					variantIndex,

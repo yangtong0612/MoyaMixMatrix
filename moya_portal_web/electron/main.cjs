@@ -913,6 +913,7 @@ async function renderFissionMix(request = {}) {
   await fs.mkdir(outputDir, { recursive: true });
   const tempDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'moya-fission-mix-'));
   const outputPath = path.join(outputDir, buildFissionMixOutputName(normalizedRequest.name));
+  const stitchedPath = path.join(tempDir, 'stitched.mp4');
   const sourceCache = new Map();
 
   try {
@@ -925,7 +926,7 @@ async function renderFissionMix(request = {}) {
     }
 
     if (sceneFiles.length === 1) {
-      await fs.copyFile(sceneFiles[0], outputPath);
+      await fs.copyFile(sceneFiles[0], stitchedPath);
     } else {
       const concatListPath = path.join(tempDir, 'concat.txt');
       const concatList = sceneFiles.map((filePath) => `file '${quoteConcatDemuxerPath(filePath)}'`).join('\n');
@@ -937,8 +938,14 @@ async function renderFissionMix(request = {}) {
         '-i', concatListPath,
         '-c', 'copy',
         '-movflags', '+faststart',
-        outputPath
+        stitchedPath
       ], { timeout: 180000 });
+    }
+
+    if (normalizedRequest.bgmTracks.length > 0) {
+      await renderFissionMixBackgroundAudio(stitchedPath, outputPath, normalizedRequest, sourceCache);
+    } else {
+      await fs.copyFile(stitchedPath, outputPath);
     }
 
     const metadata = await probeMedia(outputPath).catch(() => null);
@@ -1060,6 +1067,85 @@ async function renderFissionMixScene(scene, outputPath, sourceCache) {
   await runProcess(ffmpegPath, args, { timeout: 180000 });
 }
 
+async function renderFissionMixBackgroundAudio(inputPath, outputPath, request, sourceCache) {
+  const targetDuration = Math.max(
+    0.12,
+    Number((await probeMedia(inputPath).catch(() => null))?.duration) || 0,
+    request.scenes.reduce((total, scene) => total + (Number(scene.sceneDuration) || 0), 0)
+  );
+  const baseMetadata = await probeMedia(inputPath).catch(() => null);
+  const usableTracks = [];
+
+  for (const track of request.bgmTracks) {
+    const prepared = await prepareFissionMixSource(track.source, {
+      folder: 'fission/render-bgm',
+      fileName: `${track.name || track.id}.mp3`
+    }, sourceCache);
+    if (!prepared.localPath || !prepared.metadata?.hasAudio) continue;
+    usableTracks.push({
+      ...track,
+      source: prepared.localPath,
+      duration: Math.max(0.02, Number(track.duration) || Number(prepared.metadata?.duration) || 0)
+    });
+  }
+
+  if (usableTracks.length === 0) {
+    await fs.copyFile(inputPath, outputPath);
+    return;
+  }
+
+  const args = ['-y', '-i', inputPath];
+  const filters = [];
+  const audioMixLabels = [];
+  let inputIndex = 1;
+
+  if (baseMetadata?.hasAudio) {
+    filters.push(`[0:a]atrim=duration=${formatFfmpegSeconds(targetDuration)},asetpts=PTS-STARTPTS[base]`);
+    audioMixLabels.push('[base]');
+  } else {
+    args.push(
+      '-f', 'lavfi',
+      '-t', formatFfmpegSeconds(targetDuration),
+      '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'
+    );
+    filters.push(`[1:a]atrim=duration=${formatFfmpegSeconds(targetDuration)},asetpts=PTS-STARTPTS[base]`);
+    audioMixLabels.push('[base]');
+    inputIndex = 2;
+  }
+
+  usableTracks.forEach((track, trackIndex) => {
+    args.push('-stream_loop', '-1', '-i', track.source);
+    let filter = `[${inputIndex + trackIndex}:a]atrim=duration=${formatFfmpegSeconds(targetDuration)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(track.gain)}`;
+    if (track.fadeInOut) {
+      const fadeDuration = Math.min(0.6, Math.max(0.12, targetDuration / 10));
+      const fadeOutStart = Math.max(0, targetDuration - fadeDuration);
+      filter += `,afade=t=in:st=0:d=${formatFfmpegSeconds(fadeDuration)},afade=t=out:st=${formatFfmpegSeconds(fadeOutStart)}:d=${formatFfmpegSeconds(fadeDuration)}`;
+    }
+    filter += `[bgm${trackIndex}]`;
+    filters.push(filter);
+    audioMixLabels.push(`[bgm${trackIndex}]`);
+  });
+
+  filters.push(
+    `${audioMixLabels.join('')}amix=inputs=${audioMixLabels.length}:duration=longest:dropout_transition=0,atrim=duration=${formatFfmpegSeconds(targetDuration)},aresample=async=1:first_pts=0[a]`
+  );
+
+  args.push(
+    '-filter_complex', filters.join(';'),
+    '-map', '0:v',
+    '-map', '[a]',
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-ar', '48000',
+    '-ac', '2',
+    '-movflags', '+faststart',
+    outputPath
+  );
+
+  await runProcess(ffmpegPath, args, { timeout: 180000 });
+}
+
 async function prepareFissionMixSource(source, options = {}, sourceCache = new Map()) {
   const cacheKey = `${options.folder || 'general'}:${source}`;
   if (sourceCache.has(cacheKey)) {
@@ -1091,12 +1177,17 @@ async function prepareFissionMixSource(source, options = {}, sourceCache = new M
 
 function normalizeFissionMixRenderRequest(request = {}) {
   const rawScenes = Array.isArray(request.scenes) ? request.scenes : [];
+  const rawBgmTracks = Array.isArray(request.bgmTracks) ? request.bgmTracks : [];
   const scenes = rawScenes
     .map((scene, index) => normalizeFissionMixScene(scene, index))
     .filter(Boolean);
+  const bgmTracks = rawBgmTracks
+    .map((track, index) => normalizeFissionMixBackgroundTrack(track, index))
+    .filter(Boolean);
   return {
     name: safeDownloadFileName(`${String(request.name || 'fission-mix').replace(/\.[^.]+$/, '')}-${Date.now()}.mp4`),
-    scenes
+    scenes,
+    bgmTracks
   };
 }
 
@@ -1130,6 +1221,19 @@ function normalizeFissionMixScene(scene, index) {
     contentProfile: typeof scene.contentProfile === 'string' ? scene.contentProfile : 'standard',
     audioSelectionSource: typeof scene.audioSelectionSource === 'string' ? scene.audioSelectionSource : undefined,
     audioUsageType: typeof scene.audioUsageType === 'string' ? scene.audioUsageType : undefined
+  };
+}
+
+function normalizeFissionMixBackgroundTrack(track, index) {
+  if (!track || typeof track !== 'object') return null;
+  if (!track.source || typeof track.source !== 'string') return null;
+  return {
+    id: String(track.id || `bgm-${index + 1}`),
+    name: String(track.name || `BGM ${index + 1}`),
+    source: track.source,
+    duration: Math.max(0.02, Number(track.duration) || 0),
+    gain: clampNumber(Number(track.gain), 0, 2),
+    fadeInOut: Boolean(track.fadeInOut)
   };
 }
 

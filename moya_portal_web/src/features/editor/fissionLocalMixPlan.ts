@@ -1,9 +1,10 @@
-import { selectAliyunMixVariantMedia } from './aliyunMix';
 import {
   normalizePresenterSpeechWindow,
   parsePresenterDurationSeconds
 } from './fissionPresenterMixAlgorithm';
 import type { FissionMixAudioSource, FissionMixAudioUsageType, FissionMixSelectionProfile } from './fissionMixMatcher';
+import { selectFissionMixVariantMedia } from './fissionMixMatcher';
+import { buildWaterfallMixSelections } from './fissionWaterfallComposer';
 
 export interface LocalFissionMixClipLike {
   id: string;
@@ -46,6 +47,7 @@ export interface LocalFissionMixSettings {
   ducking: boolean;
   fadeInOut: boolean;
   volume: number;
+  compositionMode?: 'segments' | 'waterfall';
   width?: number;
   height?: number;
   bitrate?: number;
@@ -80,6 +82,15 @@ export interface LocalFissionMixScene {
   audioUsageType?: FissionMixAudioUsageType;
 }
 
+export interface LocalFissionMixBackgroundTrack {
+  id: string;
+  name: string;
+  source: string;
+  duration: number;
+  gain: number;
+  fadeInOut: boolean;
+}
+
 export interface LocalFissionMixGroupDetail {
   groupId: string;
   groupName: string;
@@ -92,9 +103,11 @@ export interface LocalFissionMixGroupDetail {
 
 export interface LocalFissionMixVariantPlan {
   scenes: LocalFissionMixScene[];
+  bgmTracks: LocalFissionMixBackgroundTrack[];
   details: LocalFissionMixGroupDetail[];
   durationSeconds: number;
   audioNames: string;
+  bgmName?: string;
   coverPath?: string;
 }
 
@@ -141,27 +154,54 @@ export async function buildLocalFissionMixPlan<
       clips,
       audios
     } satisfies ResolvedGroup<TClip, TAudio>;
-  }))).filter((item) => item.clips.length > 0 && (item.audios.length > 0 || resolvedGlobalAudios.length > 0));
+  }))).filter((item) => item.clips.length > 0);
 
   if (resolvedGroups.length === 0) {
-    throw new Error('当前没有同时具备“视频 + 对应音频”的可混剪分镜，请先检查分镜素材和音频素材是否都可用。');
+    throw new Error('当前没有可混剪的分镜视频，请先检查分镜素材是否都可用。');
   }
+
+  const groupSelections = input.settings.compositionMode === 'waterfall'
+    ? buildWaterfallMixSelections({
+      groups: resolvedGroups.map((item) => ({
+        ...item.group,
+        clips: item.clips,
+        groupAudios: item.audios
+      })),
+      globalAudios: [],
+      variantIndex: input.variantIndex
+    })
+    : resolvedGroups.map(({ group, clips, audios }, groupIndex) => {
+      const selection = selectFissionMixVariantMedia({
+        group,
+        clips,
+        groupAudios: audios,
+        globalAudios: [],
+        variantIndex: input.variantIndex,
+        groupIndex
+      });
+      return {
+        orderIndex: groupIndex,
+        group,
+        clip: selection.clip as ResolvedClip<TClip> | undefined,
+        audio: selection.audio as ResolvedAudio<TAudio> | undefined,
+        selectionProfile: selection.selectionProfile,
+        contentProfile: selection.contentProfile,
+        audioUsageType: selection.audioUsageType,
+        audioSource: selection.audioSource,
+        voiceLocked: selection.voiceLocked,
+        voiceProfileKey: '',
+        continuityLocked: false
+      };
+    });
 
   const details: LocalFissionMixGroupDetail[] = [];
   const scenes: LocalFissionMixScene[] = [];
   let durationSeconds = 0;
   let coverPath: string | undefined;
 
-  resolvedGroups.forEach(({ group, clips, audios }, groupIndex) => {
-    const selection = selectAliyunMixVariantMedia({
-      group,
-      clips,
-      groupAudios: audios,
-      globalAudios: resolvedGlobalAudios,
-      variantIndex: input.variantIndex,
-      groupIndex
-    });
-    const clip = (selection.clip || clips[0]) as ResolvedClip<TClip> | undefined;
+  groupSelections.forEach((selection, groupIndex) => {
+    const group = selection.group as LocalFissionMixGroupLike<TClip, TAudio>;
+    const clip = (selection.clip || group.clips[0]) as ResolvedClip<TClip> | undefined;
     if (!clip?.renderSource) return;
     const audio = selection.audio as ResolvedAudio<TAudio> | undefined;
     const speechWindow = audio ? normalizePresenterSpeechWindow(audio) : normalizePresenterSpeechWindow(null);
@@ -239,11 +279,22 @@ export async function buildLocalFissionMixPlan<
     throw new Error('当前分镜没有生成出可渲染的本地混剪方案，请检查视频和音频路径是否可访问。');
   }
 
+  const selectedBgm = selectVariantBackgroundAudio(resolvedGlobalAudios, input.variantIndex);
+
   return {
     scenes,
+    bgmTracks: selectedBgm ? [{
+      id: selectedBgm.id,
+      name: selectedBgm.name,
+      source: selectedBgm.renderSource,
+      duration: firstPositive(parseDurationSeconds(selectedBgm.duration), DEFAULT_SCENE_DURATION),
+      gain: normalizedVolume(selectedBgm.volume, input.settings.volume) / 100,
+      fadeInOut: input.settings.fadeInOut
+    }] : [],
     details,
     durationSeconds,
     audioNames: Array.from(new Set(details.map((detail) => detail.audioName).filter((name): name is string => Boolean(name)))).slice(0, 4).join(' / '),
+    bgmName: selectedBgm?.name,
     coverPath
   };
 }
@@ -296,6 +347,11 @@ function dedupeAudioItems<TAudio extends LocalFissionMixAudioLike>(audios: TAudi
     seen.add(key);
     return true;
   });
+}
+
+function selectVariantBackgroundAudio<TAudio extends LocalFissionMixAudioLike>(audios: ResolvedAudio<TAudio>[], variantIndex: number) {
+  if (audios.length === 0) return undefined;
+  return audios[Math.max(0, variantIndex) % audios.length];
 }
 
 function parseDurationSeconds(value?: string) {

@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotEmpty;
 public record FissionMixRequest(
 		@NotEmpty List<@Valid ShotGroup> groups,
 		List<@Valid AudioAsset> audioItems,
+		List<@Valid AudioAsset> bgmItems,
 		@Valid MixSettings settings,
 		Integer variantIndex,
 		@NotBlank String outputMediaUrl,

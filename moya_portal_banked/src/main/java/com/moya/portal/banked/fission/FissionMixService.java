@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import com.aliyun.ice20201109.Client;
@@ -134,7 +135,7 @@ public class FissionMixService {
 
 		for (int groupIndex = 0; groupIndex < request.groups().size(); groupIndex++) {
 			FissionMixRequest.ShotGroup group = request.groups().get(groupIndex);
-			VariantSelection selection = pickVariantSelection(group, request.audioItems(), variantIndex, groupIndex);
+			VariantSelection selection = pickVariantSelection(group, List.of(), variantIndex, groupIndex);
 			FissionMixRequest.VideoAsset video = selection.video();
 			FissionMixRequest.AudioAsset audio = selection.audio();
 			validateCloudMediaUrl(video.mediaUrl(), "视频素材 " + video.name());
@@ -204,10 +205,18 @@ public class FissionMixService {
 			cursor += sceneDuration;
 		}
 
+		List<Map<String, Object>> bgmClips = buildBackgroundMusicClips(request.bgmItems(), cursor, request);
 		Map<String, Object> timeline = new LinkedHashMap<>();
 		timeline.put("VideoTracks", List.of(Map.of("VideoTrackClips", videoClips)));
-		if (!audioClips.isEmpty()) {
-			timeline.put("AudioTracks", List.of(Map.of("AudioTrackClips", audioClips)));
+		if (!audioClips.isEmpty() || !bgmClips.isEmpty()) {
+			List<Map<String, Object>> audioTracks = new ArrayList<>();
+			if (!audioClips.isEmpty()) {
+				audioTracks.add(Map.of("AudioTrackClips", audioClips));
+			}
+			if (!bgmClips.isEmpty()) {
+				audioTracks.add(Map.of("AudioTrackClips", bgmClips));
+			}
+			timeline.put("AudioTracks", audioTracks);
 		}
 		return objectMapper.valueToTree(timeline);
 	}
@@ -244,7 +253,7 @@ public class FissionMixService {
 		List<AudioCandidate> groupCandidates = buildAudioCandidates(group.groupAudios(), "group");
 		List<AudioCandidate> globalCandidates = buildAudioCandidates(globalAudios, "global");
 		int cursor = Math.max(0, variantIndex + groupIndex);
-		int anchorSize = Math.max(1, group.clips().size(), groupCandidates.size() + globalCandidates.size());
+		int anchorSize = Math.max(1, Math.max(group.clips().size(), groupCandidates.size() + globalCandidates.size()));
 		FissionMixRequest.VideoAsset video = group.clips().get(
 				isPresenterSelectionProfile(selectionProfile)
 						? alignedPoolIndex(cursor, group.clips().size(), anchorSize)
@@ -265,6 +274,60 @@ public class FissionMixService {
 		return candidates;
 	}
 
+	private List<Map<String, Object>> buildBackgroundMusicClips(
+			List<FissionMixRequest.AudioAsset> bgmItems,
+			double totalDuration,
+			FissionMixRequest request
+	) {
+		if (bgmItems == null || bgmItems.isEmpty() || totalDuration <= 0.05) {
+			return List.of();
+		}
+		List<FissionMixRequest.AudioAsset> usableItems = bgmItems.stream()
+				.filter(Objects::nonNull)
+				.filter(item -> item.mediaUrl() != null && !item.mediaUrl().isBlank())
+				.toList();
+		if (usableItems.isEmpty()) {
+			return List.of();
+		}
+
+		List<Map<String, Object>> clips = new ArrayList<>();
+		double cursor = 0;
+		int bgmIndex = 0;
+		while (cursor < totalDuration - 0.01) {
+			FissionMixRequest.AudioAsset bgm = usableItems.get(bgmIndex % usableItems.size());
+			validateCloudMediaUrl(bgm.mediaUrl(), "全局BGM " + bgm.name());
+			double remaining = totalDuration - cursor;
+			double sourceDuration = firstPositive(parseDurationSeconds(bgm.duration()), remaining, DEFAULT_SCENE_DURATION);
+			double clipDuration = Math.max(0.1, Math.min(sourceDuration, remaining));
+
+			Map<String, Object> audioClip = new LinkedHashMap<>();
+			audioClip.put("ClipId", "bgm-" + (bgmIndex + 1));
+			audioClip.put("MediaURL", bgm.mediaUrl());
+			audioClip.put("Type", "Audio");
+			audioClip.put("TimelineIn", round(cursor));
+			audioClip.put("TimelineOut", round(cursor + clipDuration));
+			audioClip.put("In", 0);
+			audioClip.put("Out", round(clipDuration));
+			List<Map<String, Object>> effects = new ArrayList<>();
+			effects.add(Map.of("Type", "Volume", "Gain", normalizedVolume(bgm.volume(), settings(request).volume()) / 100.0));
+			if (Boolean.TRUE.equals(settings(request).fadeInOut())) {
+				double fadeDuration = Math.min(0.6, Math.max(0.12, clipDuration / 2));
+				if (cursor <= 0.01) {
+					effects.add(Map.of("Type", "AFade", "SubType", "In", "Duration", round(fadeDuration)));
+				}
+				if (cursor + clipDuration >= totalDuration - 0.01) {
+					effects.add(Map.of("Type", "AFade", "SubType", "Out", "Duration", round(fadeDuration)));
+				}
+			}
+			audioClip.put("Effects", effects);
+			clips.add(audioClip);
+
+			cursor += clipDuration;
+			bgmIndex += 1;
+		}
+		return clips;
+	}
+
 	private AudioCandidate pickAudioCandidate(
 			String selectionProfile,
 			FissionMixRequest.ShotGroup group,
@@ -275,7 +338,7 @@ public class FissionMixService {
 	) {
 		for (List<AudioCandidate> pool : buildAudioPriorityPools(selectionProfile, groupCandidates, globalCandidates)) {
 			if (pool.isEmpty()) continue;
-			int desiredIndex = alignedPoolIndex(cursor, pool.size(), Math.max(1, group.clips().size(), pool.size()));
+			int desiredIndex = alignedPoolIndex(cursor, pool.size(), Math.max(1, Math.max(group.clips().size(), pool.size())));
 			AudioCandidate best = null;
 			int bestScore = Integer.MIN_VALUE;
 			int bestDistance = Integer.MAX_VALUE;

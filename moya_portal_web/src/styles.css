@@ -13164,6 +13164,25 @@ progress::-webkit-progress-value {
   font-size: 13px;
 }
 
+.global-bgm-heading {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.global-bgm-heading span {
+  color: #8b95a6;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.global-bgm-helper {
+  margin: 0 0 10px;
+  color: #8b95a6;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .audio-header-actions,
 .audio-row-actions {
   display: inline-flex;
@@ -13176,6 +13195,16 @@ progress::-webkit-progress-value {
   place-items: center;
   width: 100%;
   height: 128px;
+  color: #8b95a6;
+  border: 1px dashed #303033;
+  background: #171719;
+}
+
+.global-bgm-empty-button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 140px;
   color: #8b95a6;
   border: 1px dashed #303033;
   background: #171719;
@@ -13227,6 +13256,12 @@ progress::-webkit-progress-value {
   margin-top: 3px;
   color: #9ca3af;
   font-size: 11px;
+}
+
+.global-bgm-setting-card .audio-item-list {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .fission-audio-usage-select {
@@ -13784,21 +13819,64 @@ progress::-webkit-progress-value {
   background: rgb(255 255 255 / 18%);
 }
 
+.fission-result-shell {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px;
+}
+
 .material-filter-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #303033;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 2%), rgb(255 255 255 / 1%));
+}
+
+.fission-filter-label {
+  display: grid;
+  gap: 3px;
+  min-width: 154px;
+}
+
+.fission-filter-label span {
+  color: #eef2ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.fission-filter-label small {
+  color: #7d8b9f;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.fission-filter-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  padding: 8px 10px 6px;
-  border-top: 1px solid #303033;
+  min-width: 0;
+}
+
+.fission-filter-apply {
+  min-width: 94px;
 }
 
 .fission-preview-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 28px;
-  padding: 0 10px 7px;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #303033;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 2.8%), rgb(255 255 255 / 1.2%));
   color: #8f9db0;
   font-size: 12px;
 }
@@ -13809,31 +13887,33 @@ progress::-webkit-progress-value {
   gap: 9px;
 }
 
-.fission-preview-toolbar span,
-.fission-preview-toolbar strong {
-  position: relative;
+.fission-preview-heading {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fission-preview-heading span,
+.fission-preview-heading strong {
+  position: static;
   font-size: 12px;
   font-weight: 600;
 }
 
-.fission-preview-toolbar span::after {
-  content: "";
-  position: absolute;
-  right: -7px;
-  top: 50%;
-  width: 1px;
-  height: 12px;
-  background: #343a42;
-  transform: translateY(-50%);
+.fission-preview-heading span::after {
+  display: none;
 }
 
-.fission-preview-toolbar strong {
-  color: #d4d4d8;
+.fission-preview-heading strong {
+  width: fit-content;
+  color: #f4f4f5;
+  font-size: 14px;
 }
 
 .fission-preview-toolbar small {
   color: #a1a1aa;
   font-size: 12px;
+  line-height: 1.45;
 }
 
 .fission-result-actions {
@@ -13842,6 +13922,8 @@ progress::-webkit-progress-value {
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .fission-result-actions button {
@@ -13881,7 +13963,10 @@ progress::-webkit-progress-value {
   grid-auto-rows: max-content;
   align-items: start;
   align-content: start;
-  padding-top: 2px;
+  padding: 4px;
+  border: 1px solid #303033;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 2%), rgb(255 255 255 / 0.6%));
 }
 
 .fission-result-group {
@@ -14238,12 +14323,12 @@ progress::-webkit-progress-value {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 0 10px 8px;
-  padding: 8px 10px;
-  border: 1px solid #3a3a3d;
-  border-radius: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #303033;
+  border-radius: 16px;
   background:
-    linear-gradient(180deg, rgb(255 255 255 / 4%), transparent 42%),
+    linear-gradient(180deg, rgb(255 255 255 / 3%), transparent 42%),
     #18191c;
 }
 
@@ -14281,20 +14366,44 @@ progress::-webkit-progress-value {
 }
 
 .fission-pagination {
-  display: flex;
-  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   min-height: 42px;
-  padding: 7px 10px;
-  border-top: 1px solid #303033;
-  background: #151515;
+  padding: 12px;
+  border: 1px solid #303033;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 2.6%), rgb(255 255 255 / 1%));
+}
+
+.fission-pagination-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .fission-pagination span {
-  margin-right: auto;
-  color: #9ca3af;
+  margin-right: 0;
+  color: #d4d4d8;
   font-size: 12px;
+  font-weight: 600;
+}
+
+.fission-pagination-meta small {
+  color: #8b96a8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.fission-pagination-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid #303033;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 16%);
 }
 
 .fission-pagination button.active {
@@ -14303,8 +14412,9 @@ progress::-webkit-progress-value {
 }
 
 .fission-pagination .waterfall-action {
-  margin-left: auto;
-  min-width: 92px;
+  margin-left: 0;
+  min-width: 118px;
+  min-height: 34px;
   color: #ffffff;
   border-color: #4a4a4d;
   background: linear-gradient(180deg, #3a3a3d, #202124);
@@ -18978,7 +19088,10 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .fission-board .material-filter-row {
   border-color: #dbe4ef;
-  background: #ffffff;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 98%), rgb(244 248 252 / 96%)),
+    #ffffff;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 5%);
 }
 
 .theme-light.editor-workbench .fission-board .material-filter-row select,
@@ -18996,9 +19109,19 @@ progress::-webkit-progress-value {
   box-shadow: 0 0 0 2px rgb(91 126 255 / 10%);
 }
 
+.theme-light.editor-workbench .fission-board .fission-filter-label span {
+  color: #0f172a;
+}
+
+.theme-light.editor-workbench .fission-board .fission-filter-label small {
+  color: #64748b;
+}
+
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar {
   color: #64748b;
-  background: #ffffff;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 98%), rgb(244 248 252 / 96%)),
+    #ffffff;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar strong {
@@ -19539,13 +19662,14 @@ progress::-webkit-progress-value {
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar {
-  border-top: 1px solid #edf2f7;
-  border-bottom: 1px solid #edf2f7;
-  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  border-color: #e2e8f0;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 98%), rgb(244 248 252 / 96%)),
+    #ffffff;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar span::after {
-  background: #dbe4ef;
+  display: none;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar span,
@@ -19556,6 +19680,11 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar strong {
   color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .fission-result-shell {
+  gap: 12px;
+  padding: 12px;
 }
 
 .theme-light.editor-workbench .fission-board .fission-result-group-grid,
@@ -19631,6 +19760,49 @@ progress::-webkit-progress-value {
   border-color: #fda4af;
   background: #ffe4e6;
   color: #be123c;
+}
+
+.theme-light.editor-workbench .fission-board .fission-result-strategy-bar,
+.theme-light.editor-workbench .fission-board .fission-pagination {
+  border-color: #dbe4ef;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 98%), rgb(244 248 252 / 96%)),
+    #ffffff;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 5%);
+}
+
+.theme-light.editor-workbench .fission-board .fission-result-strategy-bar > span,
+.theme-light.editor-workbench .fission-board .fission-pagination span {
+  color: #0f172a;
+}
+
+.theme-light.editor-workbench .fission-board .fission-pagination-meta small {
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .fission-board .fission-pagination-pager {
+  border-color: #d7e0eb;
+  background: #f8fbff;
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .fission-pagination button {
+  border-color: #d2dce8;
+  background: linear-gradient(180deg, #ffffff, #f4f7fb);
+  color: #334155;
+}
+
+.theme-light.editor-workbench .fission-board .fission-pagination button:hover {
+  border-color: rgb(91 126 255 / 34%);
+  background: #eef3ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .fission-pagination .waterfall-action {
+  color: #ffffff;
+  border-color: transparent;
+  background: linear-gradient(135deg, #5b7eff 0%, #4058d8 100%);
+  box-shadow: 0 14px 26px rgb(91 126 255 / 22%);
 }
 
 /* White-mode polish for the generated-result panel. */
