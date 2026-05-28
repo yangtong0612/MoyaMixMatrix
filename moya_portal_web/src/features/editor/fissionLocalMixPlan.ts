@@ -1,10 +1,15 @@
 import {
+  isPresenterVoiceLikeUsage,
   normalizePresenterSpeechWindow,
   parsePresenterDurationSeconds
 } from './fissionPresenterMixAlgorithm';
 import type { FissionMixAudioSource, FissionMixAudioUsageType, FissionMixSelectionProfile } from './fissionMixMatcher';
 import { selectFissionMixVariantMedia } from './fissionMixMatcher';
-import { buildWaterfallMixSelections } from './fissionWaterfallComposer';
+import {
+  buildWaterfallMixSelections,
+  type WaterfallClipAudioContinuityEdge,
+  type WaterfallClipAudioContinuityProfile
+} from './fissionWaterfallComposer';
 
 export interface LocalFissionMixClipLike {
   id: string;
@@ -12,6 +17,7 @@ export interface LocalFissionMixClipLike {
   duration: string;
   path?: string;
   localPath?: string;
+  audioContinuity?: WaterfallClipAudioContinuityProfile;
 }
 
 export interface LocalFissionMixAudioLike {
@@ -82,6 +88,11 @@ export interface LocalFissionMixScene {
   contentProfile: FissionMixSelectionProfile;
   audioSelectionSource?: FissionMixAudioSource;
   audioUsageType?: FissionMixAudioUsageType;
+  transitionMode?: 'default' | 'waterfall';
+  leadingTrim?: number;
+  trailingTrim?: number;
+  audioFadeInDuration?: number;
+  audioFadeOutDuration?: number;
 }
 
 export interface LocalFissionMixBackgroundTrack {
@@ -91,6 +102,23 @@ export interface LocalFissionMixBackgroundTrack {
   duration: number;
   gain: number;
   fadeInOut: boolean;
+}
+
+export interface LocalFissionMixNarrationSegment {
+  id: string;
+  sceneId: string;
+  groupId: string;
+  groupName: string;
+  name: string;
+  source: string;
+  audioIn: number;
+  audioOut: number;
+  timelineIn: number;
+  timelineOut: number;
+  gain: number;
+  fadeInDuration: number;
+  fadeOutDuration: number;
+  usageType?: FissionMixAudioUsageType;
 }
 
 export interface LocalFissionMixGroupDetail {
@@ -106,6 +134,7 @@ export interface LocalFissionMixGroupDetail {
 export interface LocalFissionMixVariantPlan {
   scenes: LocalFissionMixScene[];
   bgmTracks: LocalFissionMixBackgroundTrack[];
+  narrationSegments: LocalFissionMixNarrationSegment[];
   details: LocalFissionMixGroupDetail[];
   durationSeconds: number;
   audioNames: string;
@@ -135,6 +164,8 @@ const DEFAULT_WIDTH = 720;
 const DEFAULT_HEIGHT = 1280;
 const DEFAULT_BITRATE = 6000;
 const DEFAULT_FPS = 30;
+const WATERFALL_MIN_SCENE_DURATION = 0.72;
+const WATERFALL_MAX_EDGE_TRIM = 0.14;
 
 export async function buildLocalFissionMixPlan<
   TClip extends LocalFissionMixClipLike,
@@ -198,6 +229,12 @@ export async function buildLocalFissionMixPlan<
 
   const details: LocalFissionMixGroupDetail[] = [];
   const scenes: LocalFissionMixScene[] = [];
+  const narrationSegments: LocalFissionMixNarrationSegment[] = [];
+  const sceneBoundaryProfiles: Array<{
+    continuity?: WaterfallClipAudioContinuityProfile;
+    usesEmbeddedAudio: boolean;
+    usesNarrationAudio: boolean;
+  }> = [];
   let durationSeconds = 0;
   let coverPath: string | undefined;
 
@@ -205,37 +242,84 @@ export async function buildLocalFissionMixPlan<
     const group = selection.group as LocalFissionMixGroupLike<TClip, TAudio>;
     const clip = (selection.clip || group.clips[0]) as ResolvedClip<TClip> | undefined;
     if (!clip?.renderSource) return;
+    const sceneStart = durationSeconds;
     const audio = selection.audio as ResolvedAudio<TAudio> | undefined;
     const speechWindow = audio ? normalizePresenterSpeechWindow(audio) : normalizePresenterSpeechWindow(null);
     const videoDuration = firstPositive(parseDurationSeconds(clip.duration), parseDurationSeconds(group.duration), DEFAULT_SCENE_DURATION);
     const audioDuration = audio
       ? firstPositive(speechWindow.effectiveDuration, parseDurationSeconds(audio.duration), videoDuration)
       : 0;
+    const usesWaterfallNarrationAudio = Boolean(
+      input.settings.compositionMode === 'waterfall'
+      && audio
+      && isWaterfallNarrationUsage(selection.audioUsageType)
+      && audioDuration > 0
+    );
     const lockSceneToAudio = Boolean(selection.voiceLocked && audioDuration > 0);
-    const sceneDuration = (input.settings.followAudioSpeed || lockSceneToAudio) && audioDuration > 0
+    let sceneDuration = (input.settings.followAudioSpeed || lockSceneToAudio) && audioDuration > 0
       ? Math.min(videoDuration, audioDuration)
       : videoDuration;
-    const audioClipDuration = audio ? Math.min(sceneDuration, audioDuration) : 0;
-    const videoIn = lockSceneToAudio
+    if (usesWaterfallNarrationAudio) {
+      sceneDuration = Math.min(videoDuration, Math.max(0.24, audioDuration));
+    }
+    let audioClipDuration = audio ? Math.min(sceneDuration, audioDuration) : 0;
+    let videoIn = lockSceneToAudio
       ? clampSeconds(speechWindow.speechStart, 0, Math.max(0, videoDuration - sceneDuration))
       : 0;
-    const videoOut = clampSeconds(videoIn + sceneDuration, videoIn, videoDuration);
-    const audioIn = audio
+    let videoOut = clampSeconds(videoIn + sceneDuration, videoIn, videoDuration);
+    let audioIn = audio
       ? (
-        lockSceneToAudio
+        lockSceneToAudio || usesWaterfallNarrationAudio
           ? clampSeconds(speechWindow.speechStart, 0, Math.max(0, speechWindow.rawDuration - audioClipDuration))
           : 0
       )
       : 0;
-    const audioOut = audio
+    let audioOut = audio
       ? (
-        lockSceneToAudio
+        lockSceneToAudio || usesWaterfallNarrationAudio
           ? clampSeconds(audioIn + audioClipDuration, audioIn, speechWindow.rawDuration)
           : audioClipDuration
       )
       : 0;
-    const videoAudioGain = determineVideoAudioGain(input.settings, Boolean(audio), lockSceneToAudio);
-    const normalizedAudioGain = audio ? normalizedVolume(audio.volume, input.settings.volume) / 100 : 0;
+    const videoAudioGain = determineVideoAudioGain(
+      input.settings,
+      Boolean(audio),
+      lockSceneToAudio,
+      selection.audioUsageType
+    );
+    const normalizedAudioGain = usesWaterfallNarrationAudio
+      ? 0
+      : audio
+        ? normalizedVolume(audio.volume, input.settings.volume) / 100
+        : 0;
+    const sceneAudioSource = usesWaterfallNarrationAudio ? undefined : audio?.renderSource;
+    const usesWaterfallEmbeddedAudio = Boolean(
+      input.settings.compositionMode === 'waterfall'
+      && !audio
+      && !lockSceneToAudio
+      && videoAudioGain > 0.0001
+    );
+    const boundaryProfile = usesWaterfallEmbeddedAudio
+      ? buildWaterfallSceneBoundaryProfile(clip.audioContinuity, videoDuration)
+      : usesWaterfallNarrationAudio
+        ? buildWaterfallNarrationBoundaryProfile(sceneDuration, audioDuration)
+        : buildDefaultSceneBoundaryProfile();
+    let appliedLeadingTrim = boundaryProfile.leadingTrim;
+    let appliedTrailingTrim = boundaryProfile.trailingTrim;
+
+    if (usesWaterfallEmbeddedAudio) {
+      const trimmedWindow = applyWaterfallBoundaryTrims(videoDuration, boundaryProfile.leadingTrim, boundaryProfile.trailingTrim);
+      videoIn = trimmedWindow.videoIn;
+      videoOut = trimmedWindow.videoOut;
+      sceneDuration = trimmedWindow.sceneDuration;
+      appliedLeadingTrim = trimmedWindow.videoIn;
+      appliedTrailingTrim = Math.max(0, videoDuration - trimmedWindow.videoOut);
+      audioClipDuration = audio ? Math.min(sceneDuration, audioDuration) : 0;
+      if (audio && (lockSceneToAudio || usesWaterfallNarrationAudio)) {
+        audioIn = clampSeconds(speechWindow.speechStart, 0, Math.max(0, speechWindow.rawDuration - audioClipDuration));
+        audioOut = clampSeconds(audioIn + audioClipDuration, audioIn, speechWindow.rawDuration);
+      }
+    }
 
     scenes.push({
       id: `scene-${group.sceneNo || groupIndex + 1}-${clip.id}`,
@@ -245,7 +329,7 @@ export async function buildLocalFissionMixPlan<
       clipName: clip.name,
       audioName: audio?.name,
       videoSource: clip.renderSource,
-      audioSource: audio?.renderSource,
+      audioSource: sceneAudioSource,
       videoIn,
       videoOut,
       audioIn,
@@ -263,7 +347,35 @@ export async function buildLocalFissionMixPlan<
       voiceLocked: lockSceneToAudio,
       contentProfile: selection.selectionProfile,
       audioSelectionSource: selection.audioSource,
-      audioUsageType: selection.audioUsageType
+      audioUsageType: selection.audioUsageType,
+      transitionMode: input.settings.compositionMode === 'waterfall' ? 'waterfall' : 'default',
+      leadingTrim: appliedLeadingTrim,
+      trailingTrim: appliedTrailingTrim,
+      audioFadeInDuration: boundaryProfile.fadeInDuration,
+      audioFadeOutDuration: boundaryProfile.fadeOutDuration
+    });
+    if (usesWaterfallNarrationAudio && audio?.renderSource && audioClipDuration > 0.02) {
+      narrationSegments.push({
+        id: `narration-${group.id}-${clip.id}-${groupIndex}`,
+        sceneId: `scene-${group.sceneNo || groupIndex + 1}-${clip.id}`,
+        groupId: group.id,
+        groupName: group.title,
+        name: audio.name,
+        source: audio.renderSource,
+        audioIn,
+        audioOut,
+        timelineIn: sceneStart,
+        timelineOut: sceneStart + audioClipDuration,
+        gain: normalizedVolume(audio.volume, input.settings.volume) / 100,
+        fadeInDuration: boundaryProfile.fadeInDuration,
+        fadeOutDuration: boundaryProfile.fadeOutDuration,
+        usageType: selection.audioUsageType
+      });
+    }
+    sceneBoundaryProfiles.push({
+      continuity: clip.audioContinuity,
+      usesEmbeddedAudio: usesWaterfallEmbeddedAudio,
+      usesNarrationAudio: usesWaterfallNarrationAudio
     });
     details.push({
       groupId: group.id,
@@ -282,6 +394,9 @@ export async function buildLocalFissionMixPlan<
     throw new Error('当前分镜没有生成出可渲染的本地混剪方案，请检查视频和音频路径是否可访问。');
   }
 
+  applyWaterfallBoundaryPairing(scenes, sceneBoundaryProfiles);
+  applyWaterfallNarrationSegmentPairing(narrationSegments);
+
   const selectedBgm = selectVariantBackgroundAudio(resolvedGlobalAudios, input.variantIndex);
 
   return {
@@ -294,6 +409,7 @@ export async function buildLocalFissionMixPlan<
       gain: normalizedVolume(selectedBgm.volume, input.settings.volume) / 100,
       fadeInOut: input.settings.fadeInOut
     }] : [],
+    narrationSegments,
     details,
     durationSeconds,
     audioNames: Array.from(new Set(details.map((detail) => detail.audioName).filter((name): name is string => Boolean(name)))).slice(0, 4).join(' / '),
@@ -306,8 +422,18 @@ export function estimateLocalFissionMixDuration(plan: Pick<LocalFissionMixVarian
   return Math.max(0, Number(plan.durationSeconds) || 0);
 }
 
-function determineVideoAudioGain(settings: LocalFissionMixSettings, hasExternalAudio: boolean, voiceLocked: boolean) {
+function determineVideoAudioGain(
+  settings: LocalFissionMixSettings,
+  hasExternalAudio: boolean,
+  voiceLocked: boolean,
+  audioUsageType?: FissionMixAudioUsageType
+) {
   if (!settings.retainOriginalAudio || voiceLocked) return 0;
+  if (settings.compositionMode === 'waterfall' && hasExternalAudio) {
+    if (isWaterfallNarrationUsage(audioUsageType)) return 0;
+    if (settings.ducking) return 0.08;
+    return 0.18;
+  }
   if (settings.ducking && hasExternalAudio) return 0.2;
   return 1;
 }
@@ -379,4 +505,229 @@ function positiveOr(value: unknown, fallback: number) {
 function clampSeconds(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
+}
+
+function buildDefaultSceneBoundaryProfile() {
+  return {
+    leadingTrim: 0,
+    trailingTrim: 0,
+    fadeInDuration: 0,
+    fadeOutDuration: 0
+  };
+}
+
+function buildWaterfallNarrationBoundaryProfile(sceneDuration: number, audioDuration: number) {
+  const targetDuration = firstPositive(audioDuration, sceneDuration, DEFAULT_SCENE_DURATION);
+  const fadeDuration = clampSeconds(Math.min(0.02, Math.max(0.01, targetDuration / 90)), 0.008, 0.024);
+  return {
+    leadingTrim: 0,
+    trailingTrim: 0,
+    fadeInDuration: fadeDuration,
+    fadeOutDuration: fadeDuration
+  };
+}
+
+function buildWaterfallSceneBoundaryProfile(
+  continuity: WaterfallClipAudioContinuityProfile | undefined,
+  clipDuration: number
+) {
+  if (!continuity?.hasAudio) {
+    return {
+      leadingTrim: 0,
+      trailingTrim: 0,
+      fadeInDuration: Math.min(0.035, Math.max(0.016, clipDuration / 90)),
+      fadeOutDuration: Math.min(0.035, Math.max(0.016, clipDuration / 90))
+    };
+  }
+  const leadingTrim = computeWaterfallBoundaryTrim(continuity.head, 'head');
+  const trailingTrim = computeWaterfallBoundaryTrim(continuity.tail, 'tail');
+  return {
+    leadingTrim,
+    trailingTrim,
+    fadeInDuration: computeWaterfallBoundaryFadeDuration(continuity.head, 'head', clipDuration, leadingTrim),
+    fadeOutDuration: computeWaterfallBoundaryFadeDuration(continuity.tail, 'tail', clipDuration, trailingTrim)
+  };
+}
+
+function computeWaterfallBoundaryTrim(
+  edge: WaterfallClipAudioContinuityEdge | undefined,
+  side: 'head' | 'tail'
+) {
+  if (!edge) return 0;
+  const rawSilence = Math.max(0, side === 'head' ? Number(edge.leadingSilence) || 0 : Number(edge.trailingSilence) || 0);
+  if (!(rawSilence > 0.012)) return 0;
+
+  const quietEnough = edge.silenceRatio >= 0.18 || edge.activeRatio <= 0.62 || normalizeContinuityDb(edge.meanVolumeDb) <= -28;
+  const hotEdge = edge.activeRatio >= 0.82 && normalizeContinuityDb(edge.meanVolumeDb) >= -22;
+  let trim = quietEnough ? rawSilence * 0.82 : rawSilence * 0.28;
+  if (hotEdge) trim *= 0.55;
+  if (rawSilence > 0.1) trim = Math.max(trim, rawSilence - 0.018);
+  return clampSeconds(trim, 0, WATERFALL_MAX_EDGE_TRIM);
+}
+
+function computeWaterfallBoundaryFadeDuration(
+  edge: WaterfallClipAudioContinuityEdge | undefined,
+  side: 'head' | 'tail',
+  clipDuration: number,
+  trimSeconds: number
+) {
+  const silence = edge
+    ? Math.max(0, side === 'head' ? Number(edge.leadingSilence) || 0 : Number(edge.trailingSilence) || 0)
+    : 0;
+  const meanVolume = normalizeContinuityDb(edge?.meanVolumeDb ?? -36);
+  const activeRatio = clampRatio(edge?.activeRatio ?? 0.36);
+  const hotness = clampRatio(
+    activeRatio * 0.55
+    + normalizeContinuityUnit(meanVolume, -42, -18) * 0.3
+    + normalizeContinuityUnit(edge?.peakVolumeDb ?? -20, -24, -5) * 0.15
+  );
+  const base = 0.018 + hotness * 0.045;
+  const trimBonus = Math.min(0.02, trimSeconds * 0.45);
+  const silenceBonus = Math.min(0.018, silence * 0.18);
+  return clampSeconds(base + trimBonus + silenceBonus, 0.014, Math.min(0.11, Math.max(0.022, clipDuration / 4)));
+}
+
+function applyWaterfallBoundaryTrims(videoDuration: number, leadingTrim: number, trailingTrim: number) {
+  const maxTotalTrim = Math.max(0, Math.min(
+    WATERFALL_MAX_EDGE_TRIM * 1.6,
+    videoDuration - WATERFALL_MIN_SCENE_DURATION
+  ));
+  let safeLeadingTrim = clampSeconds(leadingTrim, 0, WATERFALL_MAX_EDGE_TRIM);
+  let safeTrailingTrim = clampSeconds(trailingTrim, 0, WATERFALL_MAX_EDGE_TRIM);
+  const requestedTotal = safeLeadingTrim + safeTrailingTrim;
+  if (requestedTotal > maxTotalTrim && requestedTotal > 0) {
+    const scale = maxTotalTrim / requestedTotal;
+    safeLeadingTrim *= scale;
+    safeTrailingTrim *= scale;
+  }
+  const videoIn = clampSeconds(safeLeadingTrim, 0, Math.max(0, videoDuration - 0.12));
+  const videoOut = clampSeconds(videoDuration - safeTrailingTrim, videoIn + 0.12, videoDuration);
+  return {
+    videoIn,
+    videoOut,
+    sceneDuration: Math.max(0.12, videoOut - videoIn)
+  };
+}
+
+function applyWaterfallBoundaryPairing(
+  scenes: LocalFissionMixScene[],
+  boundaries: Array<{
+    continuity?: WaterfallClipAudioContinuityProfile;
+    usesEmbeddedAudio: boolean;
+    usesNarrationAudio: boolean;
+  }>
+) {
+  for (let index = 1; index < scenes.length; index += 1) {
+    const leftMeta = boundaries[index - 1];
+    const rightMeta = boundaries[index];
+    const leftScene = scenes[index - 1];
+    const rightScene = scenes[index];
+
+    if (leftMeta?.usesNarrationAudio && rightMeta?.usesNarrationAudio && isWaterfallNarrationScene(leftScene) && isWaterfallNarrationScene(rightScene)) {
+      const pairFade = clampSeconds(
+        0.018 + Math.min(0.014, Math.abs((leftScene.audioDuration || 0) - (rightScene.audioDuration || 0)) * 0.015),
+        0.016,
+        0.036
+      );
+      leftScene.audioFadeOutDuration = Math.max(
+        leftScene.audioFadeOutDuration || 0,
+        Math.min(pairFade, Math.max(0.016, leftScene.audioDuration / 4 || leftScene.sceneDuration / 5))
+      );
+      rightScene.audioFadeInDuration = Math.max(
+        rightScene.audioFadeInDuration || 0,
+        Math.min(pairFade, Math.max(0.016, rightScene.audioDuration / 4 || rightScene.sceneDuration / 5))
+      );
+      continue;
+    }
+
+    if (!leftMeta?.usesEmbeddedAudio || !rightMeta?.usesEmbeddedAudio) continue;
+
+    const leftTail = leftMeta.continuity?.tail;
+    const rightHead = rightMeta.continuity?.head;
+    const pairHotness = Math.max(
+      computeBoundaryEdgeHotness(leftTail, 'tail'),
+      computeBoundaryEdgeHotness(rightHead, 'head')
+    );
+    const handle = boundaryHandleSeconds(leftTail, 'tail') + boundaryHandleSeconds(rightHead, 'head');
+    const meanDiff = Math.abs(normalizeContinuityDb(leftTail?.meanVolumeDb ?? -36) - normalizeContinuityDb(rightHead?.meanVolumeDb ?? -36));
+    const activeDiff = Math.abs(clampRatio(leftTail?.activeRatio ?? 0.5) - clampRatio(rightHead?.activeRatio ?? 0.5));
+    const pairFade = clampSeconds(
+      0.022
+      + pairHotness * 0.05
+      + Math.min(0.018, handle * 0.2)
+      + Math.min(0.014, activeDiff * 0.03)
+      + (meanDiff > 5.5 ? 0.01 : 0),
+      0.018,
+      0.11
+    );
+
+    scenes[index - 1].audioFadeOutDuration = Math.max(
+      scenes[index - 1].audioFadeOutDuration || 0,
+      Math.min(pairFade, Math.max(0.016, scenes[index - 1].sceneDuration / 3))
+    );
+    scenes[index].audioFadeInDuration = Math.max(
+      scenes[index].audioFadeInDuration || 0,
+      Math.min(pairFade, Math.max(0.016, scenes[index].sceneDuration / 3))
+    );
+  }
+}
+
+function boundaryHandleSeconds(edge: WaterfallClipAudioContinuityEdge | undefined, side: 'head' | 'tail') {
+  if (!edge) return 0;
+  const silence = side === 'head' ? edge.leadingSilence : edge.trailingSilence;
+  return clampSeconds(Number(silence) || 0, 0, WATERFALL_MAX_EDGE_TRIM);
+}
+
+function computeBoundaryEdgeHotness(edge: WaterfallClipAudioContinuityEdge | undefined, side: 'head' | 'tail') {
+  if (!edge) return 0;
+  const handle = boundaryHandleSeconds(edge, side);
+  return clampRatio(
+    clampRatio(edge.activeRatio) * 0.48
+    + normalizeContinuityUnit(edge.meanVolumeDb, -42, -18) * 0.28
+    + normalizeContinuityUnit(edge.peakVolumeDb, -24, -5) * 0.14
+    + clampRatio(1 - clampRatio(edge.silenceRatio)) * 0.1
+    - clampRatio(handle / WATERFALL_MAX_EDGE_TRIM) * 0.18
+  );
+}
+
+function normalizeContinuityDb(value: number) {
+  if (!Number.isFinite(value)) return -72;
+  return Math.max(-72, Math.min(0, value));
+}
+
+function normalizeContinuityUnit(value: number, quietDb: number, loudDb: number) {
+  const normalized = normalizeContinuityDb(value);
+  return clampRatio((normalized - quietDb) / Math.max(1, loudDb - quietDb));
+}
+
+function clampRatio(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+function isWaterfallNarrationUsage(usageType?: FissionMixAudioUsageType) {
+  return isPresenterVoiceLikeUsage(usageType);
+}
+
+function isWaterfallNarrationScene(scene: LocalFissionMixScene) {
+  return scene.transitionMode === 'waterfall'
+    && isWaterfallNarrationUsage(scene.audioUsageType)
+    && (scene.videoAudioGain || 0) <= 0.08;
+}
+
+function applyWaterfallNarrationSegmentPairing(segments: LocalFissionMixNarrationSegment[]) {
+  for (let index = 1; index < segments.length; index += 1) {
+    const previous = segments[index - 1];
+    const current = segments[index];
+    const overlap = clampSeconds(
+      Math.min(previous.fadeOutDuration || 0.016, current.fadeInDuration || 0.016, 0.045),
+      0,
+      0.045
+    );
+    if (overlap <= 0.004) continue;
+    current.timelineIn = Math.max(0, current.timelineIn - overlap);
+    current.timelineOut = Math.max(current.timelineIn + 0.02, current.timelineOut - overlap);
+    previous.fadeOutDuration = Math.max(previous.fadeOutDuration || 0, overlap);
+    current.fadeInDuration = Math.max(current.fadeInDuration || 0, overlap);
+  }
 }

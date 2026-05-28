@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('surgicol', {
     readAsDataUrl: (filePath, options) => invoke('media:read-as-data-url', filePath, options),
     probeFile: (filePath) => invoke('media:probe-file', filePath),
     analyzeSpeech: (filePath) => invoke('media:analyze-speech', filePath),
+    analyzeAudioContinuity: (filePath) => invoke('media:analyze-audio-continuity', filePath),
     renderFissionMix: (request) => invoke('media:render-fission-mix', request),
     onUploadToOssProgress: (callback) => {
       const listener = (_event, progress) => callback(progress);

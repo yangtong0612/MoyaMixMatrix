@@ -716,6 +716,7 @@ function registerIpc() {
   });
   ipcMain.handle('media:probe-file', async (_event, filePath) => probeMedia(filePath));
   ipcMain.handle('media:analyze-speech', async (_event, filePath) => analyzeSpeechWindow(filePath));
+  ipcMain.handle('media:analyze-audio-continuity', async (_event, filePath) => analyzeAudioContinuity(filePath));
   ipcMain.handle('media:render-fission-mix', async (_event, request = {}) => renderFissionMix(request));
 }
 
@@ -914,6 +915,7 @@ async function renderFissionMix(request = {}) {
   const tempDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'moya-fission-mix-'));
   const outputPath = path.join(outputDir, buildFissionMixOutputName(normalizedRequest.name));
   const stitchedPath = path.join(tempDir, 'stitched.mp4');
+  const narratedPath = path.join(tempDir, 'stitched-narration.mp4');
   const sourceCache = new Map();
 
   try {
@@ -926,26 +928,41 @@ async function renderFissionMix(request = {}) {
     }
 
     if (sceneFiles.length === 1) {
-      await fs.copyFile(sceneFiles[0], stitchedPath);
+      await finalizeFissionMixSceneFile(sceneFiles[0], stitchedPath);
     } else {
       const concatListPath = path.join(tempDir, 'concat.txt');
       const concatList = sceneFiles.map((filePath) => `file '${quoteConcatDemuxerPath(filePath)}'`).join('\n');
       await fs.writeFile(concatListPath, `${concatList}\n`, 'utf8');
+      // Each scene is encoded independently. Re-encoding the final audio once avoids
+      // AAC padding/cut-point artifacts that are more noticeable in waterfall stitching.
       await runProcess(ffmpegPath, [
         '-y',
         '-f', 'concat',
         '-safe', '0',
         '-i', concatListPath,
-        '-c', 'copy',
+        '-c:v', 'copy',
+        '-af', 'aresample=async=1:first_pts=0',
+        '-c:a', 'aac',
+        '-b:a', '160k',
+        '-ar', '48000',
+        '-ac', '2',
         '-movflags', '+faststart',
         stitchedPath
       ], { timeout: 180000 });
     }
 
+    const baseAudioPath = normalizedRequest.narrationSegments.length > 0
+      ? narratedPath
+      : stitchedPath;
+
+    if (normalizedRequest.narrationSegments.length > 0) {
+      await renderFissionMixNarrationAudio(stitchedPath, narratedPath, normalizedRequest, sourceCache);
+    }
+
     if (normalizedRequest.bgmTracks.length > 0) {
-      await renderFissionMixBackgroundAudio(stitchedPath, outputPath, normalizedRequest, sourceCache);
+      await renderFissionMixBackgroundAudio(baseAudioPath, outputPath, normalizedRequest, sourceCache);
     } else {
-      await fs.copyFile(stitchedPath, outputPath);
+      await fs.copyFile(baseAudioPath, outputPath);
     }
 
     const metadata = await probeMedia(outputPath).catch(() => null);
@@ -1023,8 +1040,18 @@ async function renderFissionMixScene(scene, outputPath, sourceCache) {
   const audioMixLabels = ['[sil]'];
 
   if (includeVideoAudio) {
+    const videoAudioFade = scene.fadeInOut
+      ? buildFissionSceneAudioEdgeFadeFilter(
+        sceneDuration,
+        scene.transitionMode === 'waterfall' ? 'waterfall-video' : 'scene-video',
+        {
+          fadeInDuration: scene.audioFadeInDuration,
+          fadeOutDuration: scene.audioFadeOutDuration
+        }
+      )
+      : '';
     filters.push(
-      `[0:a]atrim=start=${formatFfmpegSeconds(videoIn)}:end=${formatFfmpegSeconds(videoOut)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(scene.videoAudioGain)}[va]`
+      `[0:a]atrim=start=${formatFfmpegSeconds(videoIn)}:end=${formatFfmpegSeconds(videoOut)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(scene.videoAudioGain)}${videoAudioFade}[va]`
     );
     audioMixLabels.push('[va]');
   }
@@ -1039,9 +1066,14 @@ async function renderFissionMixScene(scene, outputPath, sourceCache) {
     const clippedExternalAudioDuration = Math.max(0.02, audioOut - audioIn);
     let externalAudioFilter = `[${externalAudioInputIndex}:a]atrim=start=${formatFfmpegSeconds(audioIn)}:end=${formatFfmpegSeconds(audioOut)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(scene.audioGain)}`;
     if (scene.fadeInOut) {
-      const fadeDuration = Math.min(0.3, Math.max(0.08, clippedExternalAudioDuration / 2));
-      const fadeOutStart = Math.max(0, clippedExternalAudioDuration - fadeDuration);
-      externalAudioFilter += `,afade=t=in:st=0:d=${formatFfmpegSeconds(fadeDuration)},afade=t=out:st=${formatFfmpegSeconds(fadeOutStart)}:d=${formatFfmpegSeconds(fadeDuration)}`;
+      externalAudioFilter += buildFissionSceneAudioEdgeFadeFilter(
+        clippedExternalAudioDuration,
+        isFissionVoiceLikeAudioUsage(scene.audioUsageType) || scene.voiceLocked ? 'voice' : 'scene-external',
+        {
+          fadeInDuration: scene.audioFadeInDuration,
+          fadeOutDuration: scene.audioFadeOutDuration
+        }
+      );
     }
     externalAudioFilter += '[ea]';
     filters.push(externalAudioFilter);
@@ -1061,8 +1093,7 @@ async function renderFissionMixScene(scene, outputPath, sourceCache) {
     '-crf', '20',
     '-pix_fmt', 'yuv420p',
     '-r', String(fps),
-    '-c:a', 'aac',
-    '-b:a', '160k',
+    '-c:a', 'alac',
     '-ar', '48000',
     '-ac', '2',
     '-movflags', '+faststart',
@@ -1183,16 +1214,21 @@ async function prepareFissionMixSource(source, options = {}, sourceCache = new M
 function normalizeFissionMixRenderRequest(request = {}) {
   const rawScenes = Array.isArray(request.scenes) ? request.scenes : [];
   const rawBgmTracks = Array.isArray(request.bgmTracks) ? request.bgmTracks : [];
+  const rawNarrationSegments = Array.isArray(request.narrationSegments) ? request.narrationSegments : [];
   const scenes = rawScenes
     .map((scene, index) => normalizeFissionMixScene(scene, index))
     .filter(Boolean);
   const bgmTracks = rawBgmTracks
     .map((track, index) => normalizeFissionMixBackgroundTrack(track, index))
     .filter(Boolean);
+  const narrationSegments = rawNarrationSegments
+    .map((segment, index) => normalizeFissionMixNarrationSegment(segment, index))
+    .filter(Boolean);
   return {
     name: safeDownloadFileName(`${String(request.name || 'fission-mix').replace(/\.[^.]+$/, '')}-${Date.now()}.mp4`),
     scenes,
-    bgmTracks
+    bgmTracks,
+    narrationSegments
   };
 }
 
@@ -1226,7 +1262,12 @@ function normalizeFissionMixScene(scene, index) {
     voiceLocked: Boolean(scene.voiceLocked),
     contentProfile: typeof scene.contentProfile === 'string' ? scene.contentProfile : 'standard',
     audioSelectionSource: typeof scene.audioSelectionSource === 'string' ? scene.audioSelectionSource : undefined,
-    audioUsageType: typeof scene.audioUsageType === 'string' ? scene.audioUsageType : undefined
+    audioUsageType: typeof scene.audioUsageType === 'string' ? scene.audioUsageType : undefined,
+    transitionMode: scene.transitionMode === 'waterfall' ? 'waterfall' : 'default',
+    leadingTrim: Math.max(0, Number(scene.leadingTrim) || 0),
+    trailingTrim: Math.max(0, Number(scene.trailingTrim) || 0),
+    audioFadeInDuration: Math.max(0, Number(scene.audioFadeInDuration) || 0),
+    audioFadeOutDuration: Math.max(0, Number(scene.audioFadeOutDuration) || 0)
   };
 }
 
@@ -1240,6 +1281,31 @@ function normalizeFissionMixBackgroundTrack(track, index) {
     duration: Math.max(0.02, Number(track.duration) || 0),
     gain: clampNumber(Number(track.gain), 0, 2),
     fadeInOut: Boolean(track.fadeInOut)
+  };
+}
+
+function normalizeFissionMixNarrationSegment(segment, index) {
+  if (!segment || typeof segment !== 'object') return null;
+  if (!segment.source || typeof segment.source !== 'string') return null;
+  const audioIn = Math.max(0, Number(segment.audioIn) || 0);
+  const audioOut = Math.max(audioIn, Number(segment.audioOut) || audioIn);
+  const timelineIn = Math.max(0, Number(segment.timelineIn) || 0);
+  const timelineOut = Math.max(timelineIn, Number(segment.timelineOut) || timelineIn + Math.max(0, audioOut - audioIn));
+  return {
+    id: String(segment.id || `narration-${index + 1}`),
+    sceneId: String(segment.sceneId || `scene-${index + 1}`),
+    groupId: String(segment.groupId || `group-${index + 1}`),
+    groupName: String(segment.groupName || `分镜 ${index + 1}`),
+    name: String(segment.name || `旁白 ${index + 1}`),
+    source: segment.source,
+    audioIn,
+    audioOut,
+    timelineIn,
+    timelineOut,
+    gain: clampNumber(Number(segment.gain), 0, 2),
+    fadeInDuration: Math.max(0, Number(segment.fadeInDuration) || 0),
+    fadeOutDuration: Math.max(0, Number(segment.fadeOutDuration) || 0),
+    usageType: typeof segment.usageType === 'string' ? segment.usageType : undefined
   };
 }
 
@@ -1259,6 +1325,144 @@ function formatFfmpegSeconds(value) {
 function formatFfmpegGain(value) {
   const numeric = clampNumber(Number(value), 0, 2);
   return numeric.toFixed(4);
+}
+
+async function finalizeFissionMixSceneFile(inputPath, outputPath) {
+  await runProcess(ffmpegPath, [
+    '-y',
+    '-i', inputPath,
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-ar', '48000',
+    '-ac', '2',
+    '-movflags', '+faststart',
+    outputPath
+  ], { timeout: 180000 });
+}
+
+async function renderFissionMixNarrationAudio(inputPath, outputPath, request, sourceCache) {
+  const targetDuration = Math.max(
+    0.12,
+    Number((await probeMedia(inputPath).catch(() => null))?.duration) || 0,
+    request.scenes.reduce((total, scene) => total + (Number(scene.sceneDuration) || 0), 0)
+  );
+  const baseMetadata = await probeMedia(inputPath).catch(() => null);
+  const usableSegments = [];
+
+  for (const segment of request.narrationSegments || []) {
+    const prepared = await prepareFissionMixSource(segment.source, {
+      folder: 'fission/render-narration',
+      fileName: `${segment.name || segment.id}.mp3`
+    }, sourceCache);
+    if (!prepared.localPath || !prepared.metadata?.hasAudio) continue;
+    usableSegments.push({
+      ...segment,
+      source: prepared.localPath,
+      sourceDuration: Math.max(0.02, Number(prepared.metadata?.duration) || 0)
+    });
+  }
+
+  if (usableSegments.length === 0) {
+    await fs.copyFile(inputPath, outputPath);
+    return;
+  }
+
+  const args = ['-y', '-i', inputPath];
+  const filters = [];
+  const audioMixLabels = [];
+  let baseInputIndex = 1;
+
+  if (baseMetadata?.hasAudio) {
+    filters.push(`[0:a]atrim=duration=${formatFfmpegSeconds(targetDuration)},asetpts=PTS-STARTPTS[base]`);
+    audioMixLabels.push('[base]');
+  } else {
+    args.push(
+      '-f', 'lavfi',
+      '-t', formatFfmpegSeconds(targetDuration),
+      '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'
+    );
+    filters.push(`[1:a]atrim=duration=${formatFfmpegSeconds(targetDuration)},asetpts=PTS-STARTPTS[base]`);
+    audioMixLabels.push('[base]');
+    baseInputIndex = 2;
+  }
+
+  usableSegments.forEach((segment, segmentIndex) => {
+    args.push('-i', segment.source);
+    const inputIndex = baseInputIndex + segmentIndex;
+    const segmentDuration = Math.max(0.02, Math.min(segment.audioOut - segment.audioIn, segment.sourceDuration));
+    const delayMs = Math.max(0, Math.round(segment.timelineIn * 1000));
+    let filter = `[${inputIndex}:a]atrim=start=${formatFfmpegSeconds(segment.audioIn)}:end=${formatFfmpegSeconds(segment.audioIn + segmentDuration)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(segment.gain)}`;
+    filter += buildFissionSceneAudioEdgeFadeFilter(
+      segmentDuration,
+      isFissionVoiceLikeAudioUsage(segment.usageType) ? 'voice' : 'scene-external',
+      {
+        fadeInDuration: segment.fadeInDuration,
+        fadeOutDuration: segment.fadeOutDuration
+      }
+    );
+    filter += `,adelay=${delayMs}|${delayMs}[nar${segmentIndex}]`;
+    filters.push(filter);
+    audioMixLabels.push(`[nar${segmentIndex}]`);
+  });
+
+  filters.push(
+    `${audioMixLabels.join('')}amix=inputs=${audioMixLabels.length}:duration=longest:dropout_transition=0,atrim=duration=${formatFfmpegSeconds(targetDuration)},aresample=async=1:first_pts=0[a]`
+  );
+
+  args.push(
+    '-filter_complex', filters.join(';'),
+    '-map', '0:v',
+    '-map', '[a]',
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-ar', '48000',
+    '-ac', '2',
+    '-movflags', '+faststart',
+    outputPath
+  );
+
+  await runProcess(ffmpegPath, args, { timeout: 180000 });
+}
+
+function isFissionVoiceLikeAudioUsage(usageType) {
+  return usageType === 'voice' || usageType === 'ai_voice';
+}
+
+function buildFissionSceneAudioEdgeFadeFilter(duration, profile = 'scene-video', options = {}) {
+  const clipDuration = Math.max(0, Number(duration) || 0);
+  if (clipDuration < 0.08) return '';
+
+  let fadeDuration = 0;
+  if (profile === 'voice') {
+    fadeDuration = Math.min(0.035, Math.max(0.014, clipDuration / 80));
+  } else if (profile === 'waterfall-video') {
+    fadeDuration = Math.min(0.09, Math.max(0.024, clipDuration / 28));
+  } else if (profile === 'scene-video') {
+    fadeDuration = Math.min(0.07, Math.max(0.02, clipDuration / 36));
+  } else {
+    fadeDuration = Math.min(0.22, Math.max(0.06, clipDuration / 12));
+  }
+
+  const maxSafeFade = Math.max(0, clipDuration / 2 - 0.006);
+  const safeFadeInDuration = Math.min(
+    Math.max(0, Number(options.fadeInDuration) || fadeDuration),
+    maxSafeFade
+  );
+  const safeFadeOutDuration = Math.min(
+    Math.max(0, Number(options.fadeOutDuration) || fadeDuration),
+    maxSafeFade
+  );
+  let filter = '';
+  if (safeFadeInDuration > 0.01) {
+    filter += `,afade=t=in:st=0:d=${formatFfmpegSeconds(safeFadeInDuration)}`;
+  }
+  if (safeFadeOutDuration > 0.01) {
+    const fadeOutStart = Math.max(0, clipDuration - safeFadeOutDuration);
+    filter += `,afade=t=out:st=${formatFfmpegSeconds(fadeOutStart)}:d=${formatFfmpegSeconds(safeFadeOutDuration)}`;
+  }
+  return filter;
 }
 
 function positiveNumberOr(value, fallback) {
@@ -1402,6 +1606,35 @@ async function analyzeSpeechWindow(filePath) {
   return buildSpeechWindowFromSilenceLog(String(analysisLog || ''), duration);
 }
 
+async function analyzeAudioContinuity(filePath) {
+  const metadata = await probeMedia(filePath).catch(() => ({ duration: 0, hasAudio: false }));
+  const duration = Math.max(0, Number(metadata.duration) || 0);
+  const hasAudio = Boolean(metadata.hasAudio);
+  if (!(duration > 0) || !hasAudio) {
+    return buildAudioContinuityFallback(duration, hasAudio);
+  }
+  if (!ffmpegPath) {
+    return buildAudioContinuityFallback(duration, true);
+  }
+
+  const analysisWindow = clampSeconds(
+    duration <= 0.36 ? duration / 2 : 0.22,
+    0.08,
+    Math.max(0.08, Math.min(0.32, duration / 2))
+  );
+  const safeWindow = Math.max(0.08, Math.min(analysisWindow, duration));
+  const head = await analyzeAudioContinuityEdge(filePath, 0, safeWindow).catch(() => buildAudioContinuityEdgeFallback(safeWindow));
+  const tailStart = Math.max(0, duration - safeWindow);
+  const tail = await analyzeAudioContinuityEdge(filePath, tailStart, safeWindow).catch(() => buildAudioContinuityEdgeFallback(safeWindow));
+  return {
+    duration,
+    hasAudio: true,
+    analysisWindow: safeWindow,
+    head,
+    tail
+  };
+}
+
 function buildSpeechWindowFallback(duration) {
   return {
     duration,
@@ -1480,6 +1713,92 @@ function extractSilenceWindows(log) {
     if (nextEnd) endCursor += 1;
   }
   return windows.filter((window) => Number.isFinite(window.start) && Number.isFinite(window.end));
+}
+
+async function analyzeAudioContinuityEdge(filePath, start, duration) {
+  const edgeDuration = Math.max(0.04, Number(duration) || 0);
+  if (!ffmpegPath) return buildAudioContinuityEdgeFallback(edgeDuration);
+  const analysisLog = await new Promise((resolve) => {
+    execFile(ffmpegPath, [
+      '-hide_banner',
+      '-i', filePath,
+      '-vn',
+      '-af', `atrim=start=${formatFfmpegSeconds(start)}:end=${formatFfmpegSeconds(start + edgeDuration)},asetpts=PTS-STARTPTS,silencedetect=noise=-38dB:d=0.03,volumedetect`,
+      '-f', 'null',
+      process.platform === 'win32' ? 'NUL' : '/dev/null'
+    ], { windowsHide: true, timeout: 30_000, maxBuffer: 10 * 1024 * 1024 }, (_error, stdout, stderr) => {
+      resolve(`${stdout || ''}\n${stderr || ''}`);
+    });
+  });
+  return buildAudioContinuityEdgeFromLog(String(analysisLog || ''), edgeDuration);
+}
+
+function buildAudioContinuityFallback(duration, hasAudio) {
+  const safeDuration = Math.max(0, Number(duration) || 0);
+  const analysisWindow = clampSeconds(
+    safeDuration <= 0.36 ? safeDuration / 2 : 0.22,
+    0.08,
+    Math.max(0.08, Math.min(0.32, safeDuration / 2 || 0.08))
+  );
+  return {
+    duration: safeDuration,
+    hasAudio: Boolean(hasAudio),
+    analysisWindow,
+    head: buildAudioContinuityEdgeFallback(analysisWindow),
+    tail: buildAudioContinuityEdgeFallback(analysisWindow)
+  };
+}
+
+function buildAudioContinuityEdgeFallback(duration) {
+  const safeDuration = Math.max(0.04, Number(duration) || 0.04);
+  return {
+    meanVolumeDb: -24,
+    peakVolumeDb: -8,
+    silenceRatio: 0.18,
+    activeRatio: 0.82,
+    leadingSilence: 0,
+    trailingSilence: 0,
+    duration: safeDuration
+  };
+}
+
+function buildAudioContinuityEdgeFromLog(log, duration) {
+  const safeDuration = Math.max(0.04, Number(duration) || 0.04);
+  const silenceWindows = extractSilenceWindows(log);
+  let silenceTotal = 0;
+  let leadingSilence = 0;
+  let trailingSilence = 0;
+
+  silenceWindows.forEach((window, index) => {
+    const start = clampSeconds(window.start, 0, safeDuration);
+    const end = clampSeconds(window.end, start, safeDuration);
+    const length = Math.max(0, end - start);
+    silenceTotal += length;
+    if (index === 0 && start <= 0.02) {
+      leadingSilence = Math.max(leadingSilence, length);
+    }
+    if (index === silenceWindows.length - 1 && end >= safeDuration - 0.02) {
+      trailingSilence = Math.max(trailingSilence, length);
+    }
+  });
+
+  const silenceRatio = clampNumber(silenceTotal / safeDuration, 0, 1);
+  return {
+    meanVolumeDb: parseVolumeDetectDb(log, 'mean_volume', -60),
+    peakVolumeDb: parseVolumeDetectDb(log, 'max_volume', -30),
+    silenceRatio,
+    activeRatio: clampNumber(1 - silenceRatio, 0, 1),
+    leadingSilence: clampSeconds(leadingSilence, 0, safeDuration),
+    trailingSilence: clampSeconds(trailingSilence, 0, safeDuration),
+    duration: safeDuration
+  };
+}
+
+function parseVolumeDetectDb(log, label, fallback) {
+  const pattern = new RegExp(`${label}:\\s*(-?[0-9.]+)\\s*dB`, 'i');
+  const match = pattern.exec(log);
+  const numeric = Number(match?.[1]);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 function clampSeconds(value, min, max) {

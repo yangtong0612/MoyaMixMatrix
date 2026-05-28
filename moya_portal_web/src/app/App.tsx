@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
+import { Component, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type DragEvent, type ErrorInfo, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { flushSync } from 'react-dom';
 import {
@@ -38,6 +38,7 @@ import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
 import { getMe, type AuthTokenResponse } from '@/features/cloud-drive/api/netdisk';
 import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
 import { useCloudDriveStore } from '@/features/cloud-drive/cloudDriveStore';
+import { useEditorStore } from '@/features/editor/editorStore';
 import {
   cacheProductVideoAssetLocally,
   createProductVideoTask,
@@ -69,6 +70,35 @@ const LazyEditorPage = lazy(async () => {
   const module = await import('@/features/editor/EditorPage');
   return { default: module.EditorPage };
 });
+
+type EditorRouteBoundaryState = {
+  error: Error | null;
+};
+
+class EditorRouteBoundary extends Component<{ children: ReactNode }, EditorRouteBoundaryState> {
+  state: EditorRouteBoundaryState = {
+    error: null
+  };
+
+  static getDerivedStateFromError(error: Error): EditorRouteBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Editor route crashed:', error, info);
+  }
+
+  private handleRetry = () => {
+    this.setState({ error: null });
+  };
+
+  render() {
+    if (this.state.error) {
+      return <EditorRouteFailure error={this.state.error} onRetry={this.handleRetry} />;
+    }
+    return this.props.children;
+  }
+}
 
 type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
 type ProductVideoScenarioKey = 'product-spokesperson' | 'product-showcase' | 'store-traffic' | 'hot-replica';
@@ -908,6 +938,8 @@ function scenarioVideoLines(key: ProductVideoScenarioKey, sampleCopy: string) {
 
 export function App() {
   const location = useLocation();
+  const isNavigationLocked = useEditorStore((state) => state.isNavigationLocked);
+  const navigationLockReason = useEditorStore((state) => state.navigationLockReason);
   const isEditorRoute = location.pathname.startsWith('/editor');
   const isProductCreateRoute = location.pathname.startsWith('/product-video/create');
   const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
@@ -955,6 +987,28 @@ export function App() {
     window.surgicol?.app?.setTitlebarTheme(theme).catch(() => undefined);
   }, [theme]);
 
+  useEffect(() => {
+    if (!isNavigationLocked) return undefined;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isNavigationLocked]);
+
+  const navigationLockTitle = navigationLockReason || '当前正在执行视频合成，请等待当前任务完成后再切换页面。';
+
+  function preventLockedNavigation(event: ReactMouseEvent<HTMLElement>, targetPath?: string) {
+    if (!isNavigationLocked) return false;
+    if (targetPath && location.pathname === targetPath) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
   async function handleAuthenticated(token: AuthTokenResponse) {
     localStorage.setItem('access', token.token);
     const user = await getMe();
@@ -974,7 +1028,14 @@ export function App() {
   return (
     <div className={`app-window theme-${theme}${isEditorRoute || isProductCreateRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
       <header className="app-titlebar">
-        <NavLink className="titlebar-brand" to="/">
+        <NavLink
+          className={isNavigationLocked ? 'titlebar-brand route-lock-disabled' : 'titlebar-brand'}
+          to="/"
+          onClick={(event) => {
+            void preventLockedNavigation(event, '/');
+          }}
+          title={isNavigationLocked ? navigationLockTitle : undefined}
+        >
           <img src={moyaMatrixLogo} alt="moya矩阵" />
           <div>
             <strong>moya矩阵</strong>
@@ -984,7 +1045,15 @@ export function App() {
         {showShell && (isEditorRoute || isProductCreateRoute) ? (
           <nav className="titlebar-nav" aria-label="功能切换">
             {navItems.map((item) => (
-              <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'active' : undefined)}>
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => (isActive ? `active${isNavigationLocked ? ' route-lock-disabled' : ''}` : (isNavigationLocked ? 'route-lock-disabled' : undefined))}
+                onClick={(event) => {
+                  void preventLockedNavigation(event, item.to);
+                }}
+                title={isNavigationLocked ? navigationLockTitle : undefined}
+              >
                 <item.icon size={14} />
                 <span>{item.label}</span>
               </NavLink>
@@ -997,7 +1066,16 @@ export function App() {
             <span>{theme === 'dark' ? '白天' : '暗夜'}</span>
           </button>
           {isAuthenticated ? (
-            <button className="logout-button" type="button" onClick={expireSession}>
+            <button
+              className="logout-button"
+              type="button"
+              onClick={(event) => {
+                if (preventLockedNavigation(event)) return;
+                expireSession();
+              }}
+              disabled={isNavigationLocked}
+              title={isNavigationLocked ? navigationLockTitle : undefined}
+            >
               <LogOut size={15} />
               <span>退出</span>
             </button>
@@ -1028,7 +1106,15 @@ export function App() {
 
           <nav>
             {navItems.map((item) => (
-              <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => (isActive ? `nav-item active${isNavigationLocked ? ' route-lock-disabled' : ''}` : `nav-item${isNavigationLocked ? ' route-lock-disabled' : ''}`)}
+                onClick={(event) => {
+                  void preventLockedNavigation(event, item.to);
+                }}
+                title={isNavigationLocked ? navigationLockTitle : undefined}
+              >
                 <item.icon size={18} />
                 <span>{item.label}</span>
               </NavLink>
@@ -1043,9 +1129,11 @@ export function App() {
             <Route
               path="/editor"
               element={(
-                <Suspense fallback={<EditorRouteLoading />}>
-                  <LazyEditorPage />
-                </Suspense>
+                <EditorRouteBoundary>
+                  <Suspense fallback={<EditorRouteLoading />}>
+                    <LazyEditorPage />
+                  </Suspense>
+                </EditorRouteBoundary>
               )}
             />
             <Route path="/product-video/create" element={<ProductVideoCreateView />} />
@@ -1089,6 +1177,29 @@ function EditorRouteLoading() {
             </article>
           ))}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function EditorRouteFailure({ error, onRetry }: { error: Error; onRetry: () => void }) {
+  return (
+    <section className="editor-route-loading editor-route-failure" aria-live="assertive">
+      <div className="editor-route-loading-shell" role="alert" aria-label="剪辑工作台加载失败">
+        <div className="editor-route-loading-orbit" aria-hidden="true">
+          <span className="editor-route-loading-halo" />
+          <img src={moyaMatrixLogo} alt="" />
+        </div>
+        <div className="editor-route-loading-copy">
+          <small>moya matrix editor</small>
+          <strong>剪辑工作台加载失败</strong>
+          <span>页面已经拦截到异常，不会再直接白屏。可以先重试当前工作台；如果还会复现，再刷新整个应用。</span>
+        </div>
+        <div className="editor-route-actions">
+          <button type="button" onClick={onRetry}>重试工作台</button>
+          <button type="button" onClick={() => window.location.reload()}>刷新应用</button>
+        </div>
+        <code className="editor-route-error-detail">{error.message || '未知异常'}</code>
       </div>
     </section>
   );

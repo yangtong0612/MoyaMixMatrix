@@ -50,6 +50,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
+import type { MediaAudioContinuityResult } from '@/shared/types/electron';
 import { useEditorStore, type MaterialItem } from './editorStore';
 import { MaterialPanel } from './components/MaterialPanel';
 import { PreviewPanel } from './components/PreviewPanel';
@@ -82,6 +83,36 @@ import {
 import { buildLocalFissionMixPlan } from './fissionLocalMixPlan';
 import { buildWaterfallMixSelections } from './fissionWaterfallComposer';
 
+function getSurgicolBridge() {
+  return (window as Window & { surgicol?: Window['surgicol'] }).surgicol;
+}
+
+function hasSurgicolStoreBridge() {
+  const bridge = getSurgicolBridge();
+  return Boolean(bridge?.store);
+}
+
+async function readStoredValue<T>(key: string, fallback: T): Promise<T> {
+  const store = getSurgicolBridge()?.store;
+  if (!store) return fallback;
+  try {
+    const value = await store.get<T>(key);
+    return (value ?? fallback) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeStoredValue(key: string, value: unknown) {
+  const store = getSurgicolBridge()?.store;
+  if (!store) return false;
+  try {
+    return await store.set(key, value);
+  } catch {
+    return false;
+  }
+}
+
 export function EditorPage() {
   const editor = useEditorStore();
   const [searchParams] = useSearchParams();
@@ -89,6 +120,8 @@ export function EditorPage() {
   const [activeWorkflow, setActiveWorkflow] = useState<EditorWorkflow>('materials');
   const [menuOpen, setMenuOpen] = useState(false);
   const [workspaceBootstrapped, setWorkspaceBootstrapped] = useState(false);
+  const [workspaceBootstrapPending, setWorkspaceBootstrapPending] = useState(false);
+  const [workspaceBootstrapNotice, setWorkspaceBootstrapNotice] = useState('');
   const [fissionDraftVersion, setFissionDraftVersion] = useState(0);
   const [finishedLibraryVersion, setFinishedLibraryVersion] = useState(0);
   const [draftLibrary, setDraftLibrary] = useState<StoredFissionDraft[]>([]);
@@ -135,46 +168,61 @@ export function EditorPage() {
   }
 
   async function bootstrapDraftState() {
-    const drafts = await window.surgicol.store.get<StoredFissionDraft[]>(FISSION_DRAFT_LIBRARY_KEY).catch(() => []);
-    const activeDraftId = await window.surgicol.store.get<string>(ACTIVE_FISSION_DRAFT_ID_KEY).catch(() => '');
-    const currentWorkspaceSnapshot = await window.surgicol.store.get<FissionWorkspaceDraft>(FISSION_WORKSPACE_DRAFT_KEY).catch(() => null);
-    const draftList = Array.isArray(drafts) ? drafts : [];
-    setDraftLibrary(draftList);
-    const activeDraft = draftList.find((draft) => draft.id === activeDraftId) || draftList[0];
-    if (activeDraft?.name) {
-      editor.setDraftName(activeDraft.name);
-      activeFissionDraftIdRef.current = activeDraft.id;
-      if (currentWorkspaceSnapshot) {
-        fissionSnapshotRef.current = currentWorkspaceSnapshot;
-        await syncActiveFissionDraftSnapshot(currentWorkspaceSnapshot, activeDraft.name, true);
-      } else if (activeDraft.snapshot) {
-        fissionSnapshotRef.current = activeDraft.snapshot;
-        await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, activeDraft.snapshot);
+    setWorkspaceBootstrapPending(true);
+    setWorkspaceBootstrapNotice('');
+    try {
+      if (!hasSurgicolStoreBridge()) {
+        setWorkspaceBootstrapNotice('本地桌面桥接暂未就绪，已先打开默认工作区。草稿同步恢复后会自动继续可用。');
+        return;
       }
-    } else {
-      if (currentWorkspaceSnapshot) {
-        fissionSnapshotRef.current = currentWorkspaceSnapshot;
-        await syncActiveFissionDraftSnapshot(currentWorkspaceSnapshot, editor.draftName, true);
+      const drafts = await readStoredValue<StoredFissionDraft[]>(FISSION_DRAFT_LIBRARY_KEY, []);
+      const activeDraftId = await readStoredValue<string>(ACTIVE_FISSION_DRAFT_ID_KEY, '');
+      const currentWorkspaceSnapshot = await readStoredValue<FissionWorkspaceDraft | null>(FISSION_WORKSPACE_DRAFT_KEY, null);
+      const draftList = Array.isArray(drafts) ? drafts : [];
+      setDraftLibrary(draftList);
+      const activeDraft = draftList.find((draft) => draft.id === activeDraftId) || draftList[0];
+      if (activeDraft?.name) {
+        editor.setDraftName(activeDraft.name);
+        activeFissionDraftIdRef.current = activeDraft.id;
+        if (currentWorkspaceSnapshot) {
+          fissionSnapshotRef.current = currentWorkspaceSnapshot;
+          await syncActiveFissionDraftSnapshot(currentWorkspaceSnapshot, activeDraft.name, true);
+        } else if (activeDraft.snapshot) {
+          fissionSnapshotRef.current = activeDraft.snapshot;
+          await writeStoredValue(FISSION_WORKSPACE_DRAFT_KEY, activeDraft.snapshot);
+        }
+      } else {
+        if (currentWorkspaceSnapshot) {
+          fissionSnapshotRef.current = currentWorkspaceSnapshot;
+          await syncActiveFissionDraftSnapshot(currentWorkspaceSnapshot, editor.draftName, true);
+        }
+        const latestDrafts = window.surgicol?.editor?.listDrafts
+          ? await window.surgicol.editor.listDrafts().catch(() => [])
+          : [];
+        if (latestDrafts[0]) editor.setDraftName(latestDrafts[0].name);
       }
-      const latestDrafts = await window.surgicol.editor.listDrafts().catch(() => []);
-      if (latestDrafts[0]) editor.setDraftName(latestDrafts[0].name);
+    } catch (error) {
+      console.error('Failed to bootstrap editor draft state:', error);
+      setWorkspaceBootstrapNotice('本地草稿读取失败，已回退到默认工作区。你可以继续编辑，稍后再重新保存。');
+    } finally {
+      setWorkspaceBootstrapped(true);
+      setWorkspaceBootstrapPending(false);
     }
-    setWorkspaceBootstrapped(true);
   }
 
   async function persistFissionDraftLibrary(nextDrafts: StoredFissionDraft[], activeDraftId?: string) {
     setDraftLibrary(nextDrafts);
-    await window.surgicol.store.set(FISSION_DRAFT_LIBRARY_KEY, nextDrafts);
+    await writeStoredValue(FISSION_DRAFT_LIBRARY_KEY, nextDrafts);
     if (activeDraftId) {
       activeFissionDraftIdRef.current = activeDraftId;
-      await window.surgicol.store.set(ACTIVE_FISSION_DRAFT_ID_KEY, activeDraftId);
+      await writeStoredValue(ACTIVE_FISSION_DRAFT_ID_KEY, activeDraftId);
     }
   }
 
   async function syncActiveFissionDraftSnapshot(snapshot: FissionWorkspaceDraft, preferredName?: string, silent = false) {
     const now = new Date().toISOString();
     const draftName = (preferredName || editor.draftName).trim() || `裂变草稿 ${formatDraftTimestamp(new Date())}`;
-    const existingDrafts = await window.surgicol.store.get<StoredFissionDraft[]>(FISSION_DRAFT_LIBRARY_KEY).catch(() => []);
+    const existingDrafts = await readStoredValue<StoredFissionDraft[]>(FISSION_DRAFT_LIBRARY_KEY, []);
     const draftList = Array.isArray(existingDrafts) ? existingDrafts : [];
     const draftId = activeFissionDraftIdRef.current || crypto.randomUUID();
     const existingDraft = draftList.find((draft) => draft.id === draftId);
@@ -188,7 +236,7 @@ export function EditorPage() {
     };
     const nextDrafts = [nextDraft, ...draftList.filter((draft) => draft.id !== draftId)].slice(0, 20);
     await persistFissionDraftLibrary(nextDrafts, draftId);
-    await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, snapshot);
+    await writeStoredValue(FISSION_WORKSPACE_DRAFT_KEY, snapshot);
     if (!silent) {
       setLastSavedAt(new Date().toLocaleTimeString());
     }
@@ -219,7 +267,7 @@ export function EditorPage() {
       },
       ...draftLibrary.filter((draft) => draft.id !== draftId)
     ].slice(0, 20), draftId);
-    await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, snapshot);
+    await writeStoredValue(FISSION_WORKSPACE_DRAFT_KEY, snapshot);
     fissionSnapshotRef.current = snapshot;
     setFissionDraftVersion((value) => value + 1);
     setActiveWorkflow('fission');
@@ -235,8 +283,8 @@ export function EditorPage() {
     if (!targetDraft) return;
     editor.setDraftName(targetDraft.name);
     activeFissionDraftIdRef.current = targetDraft.id;
-    await window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, targetDraft.snapshot);
-    await window.surgicol.store.set(ACTIVE_FISSION_DRAFT_ID_KEY, targetDraft.id);
+    await writeStoredValue(FISSION_WORKSPACE_DRAFT_KEY, targetDraft.snapshot);
+    await writeStoredValue(ACTIVE_FISSION_DRAFT_ID_KEY, targetDraft.id);
     fissionSnapshotRef.current = targetDraft.snapshot;
     setFissionDraftVersion((value) => value + 1);
     setActiveWorkflow('fission');
@@ -263,21 +311,44 @@ export function EditorPage() {
     };
   }, [activeWorkflow, workspaceBootstrapped]);
 
+  const navigationLockTitle = editor.navigationLockReason || '当前正在执行合成，请等待完成后再切换页面。';
+
   return (
     <section className="page editor-page">
       <header className="editor-topbar">
         <div className="editor-menu">
-          <button className="editor-menu-button" type="button" onClick={() => setMenuOpen((open) => !open)}>菜单</button>
+          <button
+            className="editor-menu-button"
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            disabled={editor.isNavigationLocked}
+            title={editor.isNavigationLocked ? navigationLockTitle : undefined}
+          >
+            菜单
+          </button>
           {menuOpen ? (
             <div className="editor-menu-panel">
-              <button type="button" onClick={() => void createNewFissionWorkspace()}>新建裂变工作</button>
+              <button
+                type="button"
+                onClick={() => void createNewFissionWorkspace()}
+                disabled={editor.isNavigationLocked}
+                title={editor.isNavigationLocked ? navigationLockTitle : undefined}
+              >
+                新建裂变工作
+              </button>
               <button type="button" onClick={() => void saveCurrentFissionDraft('manual')} disabled={activeWorkflow !== 'fission'}>保存当前草稿</button>
               <div className="editor-menu-panel-title">最近草稿</div>
               {draftLibrary.length === 0 ? (
                 <span className="editor-menu-empty">还没有裂变草稿</span>
               ) : (
                 draftLibrary.slice(0, 5).map((draft) => (
-                  <button type="button" key={draft.id} onClick={() => void restoreFissionDraft(draft.id)}>
+                  <button
+                    type="button"
+                    key={draft.id}
+                    onClick={() => void restoreFissionDraft(draft.id)}
+                    disabled={editor.isNavigationLocked}
+                    title={editor.isNavigationLocked ? navigationLockTitle : undefined}
+                  >
                     {draft.name}
                   </button>
                 ))
@@ -321,12 +392,23 @@ export function EditorPage() {
             type="button"
             key={tab.id}
             onClick={() => setActiveWorkflow(tab.id)}
+            disabled={editor.isNavigationLocked}
+            title={editor.isNavigationLocked ? navigationLockTitle : undefined}
           >
             <tab.icon size={18} />
             <span>{tab.label}</span>
           </button>
         ))}
       </div>
+
+      {workspaceBootstrapNotice ? (
+        <div className="editor-bootstrap-notice" role="status">
+          <span>{workspaceBootstrapNotice}</span>
+          <button type="button" onClick={() => void bootstrapDraftState()} disabled={workspaceBootstrapPending}>
+            {workspaceBootstrapPending ? '正在重试...' : '重新连接'}
+          </button>
+        </div>
+      ) : null}
 
       {activeWorkflow === 'materials' ? (
         <div className="editor-workspace">
@@ -370,7 +452,17 @@ export function EditorPage() {
               void syncActiveFissionDraftSnapshot(snapshot, editor.draftName, true);
             }}
           />
-        ) : null
+        ) : (
+          <section className="editor-workspace-placeholder" aria-live="polite">
+            <div className="editor-workspace-placeholder-card">
+              <strong>正在恢复裂变工作区</strong>
+              <span>草稿、分镜和声音设置正在同步，首次进入会稍慢一些。</span>
+              <button type="button" onClick={() => void bootstrapDraftState()} disabled={workspaceBootstrapPending}>
+                {workspaceBootstrapPending ? '正在连接桌面桥接...' : '重新尝试'}
+              </button>
+            </div>
+          </section>
+        )
       ) : activeWorkflow === 'finished' ? (
         <FinishedVideosWorkspace refreshToken={finishedLibraryVersion} />
       ) : activeWorkflow === 'optimize' ? (
@@ -532,6 +624,10 @@ interface GeneratedSegmentWaterfallClip {
   duration: string;
   path?: string;
   localPath?: string;
+  audioContinuity?: MediaAudioContinuityResult;
+  sourceClipName?: string;
+  sourceAudioName?: string;
+  sourceCoverPath?: string;
 }
 
 interface GeneratedSegmentWaterfallGroup {
@@ -1301,8 +1397,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   useEffect(() => {
     let canceled = false;
     Promise.all([
-      window.surgicol.store.get<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY).catch(() => []),
-      window.surgicol.store.get<ViralTemplateCard[]>(VIRAL_CUSTOM_TEMPLATES_KEY).catch(() => [])
+      readStoredValue<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY, []),
+      readStoredValue<ViralTemplateCard[]>(VIRAL_CUSTOM_TEMPLATES_KEY, [])
     ])
       .then(([tasks, templates]) => {
         if (canceled) return;
@@ -1498,14 +1594,14 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   }
 
   async function persistViralRecentTask(task: ViralRecentTask) {
-    const storedTasks = await window.surgicol.store.get<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY).catch(() => []);
+    const storedTasks = await readStoredValue<ViralRecentTask[]>(VIRAL_RECENT_TASKS_KEY, []);
     const nextTasks = [task, ...(Array.isArray(storedTasks) ? storedTasks.filter((item) => item.id !== task.id) : [])].slice(0, 12);
     setRecentTasks(nextTasks);
     const taskVideoSize = getViralRecentTaskVideoSize(task);
     if (taskVideoSize) {
       setRecentTaskVideoSizes((sizes) => ({ ...sizes, [task.id]: taskVideoSize }));
     }
-    await window.surgicol.store.set(VIRAL_RECENT_TASKS_KEY, nextTasks);
+    await writeStoredValue(VIRAL_RECENT_TASKS_KEY, nextTasks);
   }
 
   async function saveCustomTemplate(mode: 'manual' | 'analyze') {
@@ -1535,7 +1631,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     };
     const nextTemplates = [nextTemplate, ...customTemplateCards.filter((item) => !item.cardId.startsWith('draft-preview-'))].slice(0, 24);
     setCustomTemplateCards(nextTemplates);
-    await window.surgicol.store.set(VIRAL_CUSTOM_TEMPLATES_KEY, nextTemplates);
+    await writeStoredValue(VIRAL_CUSTOM_TEMPLATES_KEY, nextTemplates);
     setSelectedTemplateCardId(nextTemplate.cardId);
     setTemplateMakerOpen(false);
     setTemplateDraft({ name: '', source: '', description: '', baseKey: 'street' });
@@ -1581,7 +1677,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   async function deleteCustomTemplate(cardId: string) {
     const nextTemplates = customTemplateCards.filter((item) => item.cardId !== cardId);
     setCustomTemplateCards(nextTemplates);
-    await window.surgicol.store.set(VIRAL_CUSTOM_TEMPLATES_KEY, nextTemplates);
+    await writeStoredValue(VIRAL_CUSTOM_TEMPLATES_KEY, nextTemplates);
     if (selectedTemplateCardId === cardId) setSelectedTemplateCardId(viralTemplateCards[0].cardId);
     setNotice('已删除自定义网感模板。');
   }
@@ -2036,7 +2132,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       setNotice('请先选择要入库的包装版本。');
       return;
     }
-    const storedLibrary = await window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY).catch(() => []);
+    const storedLibrary = await readStoredValue<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY, []);
     const existingGroups = readFinishedVideoGroups(storedLibrary);
     const now = new Date().toISOString();
     const draftName = `${props.projectName.trim() || '未命名项目'} · 网感剪辑`;
@@ -2101,7 +2197,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         }]
       }))
     };
-    await window.surgicol.store.set(FINISHED_VIDEOS_KEY, [nextGroup, ...existingGroups.filter((group) => group.id !== groupId)]);
+    await writeStoredValue(FINISHED_VIDEOS_KEY, [nextGroup, ...existingGroups.filter((group) => group.id !== groupId)]);
     await persistViralRecentTask({
       ...savedOverlayBase,
       finishedCount: versionsToSave.length,
@@ -3617,6 +3713,7 @@ function FissionWorkspace(props: {
   onDraftStateChange: (snapshot: FissionWorkspaceDraft) => void;
   onDraftAutoSaved: (snapshot: FissionWorkspaceDraft) => void;
 }) {
+  const setNavigationLock = useEditorStore((state) => state.setNavigationLock);
   const draftLoadedRef = useRef(false);
   const generationTimerRef = useRef<number>();
   const protectedMediaUrlCacheRef = useRef(new Map<string, string>());
@@ -3624,6 +3721,7 @@ function FissionWorkspace(props: {
   const localMixSourceCacheRef = useRef(new Map<string, string | null>());
   const remoteDurationCacheRef = useRef(new Map<string, number>());
   const speechWindowCacheRef = useRef(new Map<string, ReturnType<typeof normalizePresenterSpeechWindow>>());
+  const audioContinuityCacheRef = useRef(new Map<string, MediaAudioContinuityResult>());
   const [groups, setGroups] = useState<FissionShotGroup[]>(defaultFissionGroups);
   const [activeGroupId, setActiveGroupId] = useState(defaultFissionGroups[1].id);
   const [expandedIds, setExpandedIds] = useState<string[]>([defaultFissionGroups[1].id]);
@@ -3705,6 +3803,31 @@ END：4秒，收束行动指令和品牌露出`);
     : '';
   const selectableResultCount = generatedVideos.length;
   const selectedGeneratedCount = selectedGeneratedIds.filter((id) => generatedVideos.some((video) => video.id === id)).length;
+  const strategyScriptCount = groups.length > 0
+    ? new Set(groups.map((group) => group.sourceDocumentTitle || '__current__')).size
+    : 0;
+  const strategyDurationLabel = buildFissionDurationRangeLabel(selectedMixGroups.length > 0 ? selectedMixGroups : groups);
+
+  useEffect(() => {
+    if (isGenerating) {
+      setNavigationLock(true, '当前正在执行瀑布流合成，请等待本轮合成完成后再切换路由或工作区。');
+      return () => {
+        setNavigationLock(false);
+      };
+    }
+    setNavigationLock(false);
+    return undefined;
+  }, [isGenerating, setNavigationLock]);
+
+  const strategySummaryItems = [
+    { label: '脚本', value: String(strategyScriptCount) },
+    { label: '分镜', value: `${selectedSceneCount}/${groups.length}` },
+    { label: '素材', value: String(selectedClipCount) },
+    { label: '组合', value: String(generatedVideoCount) },
+    { label: '每镜候选', value: String(plannedMixBatchCount) },
+    { label: '时长', value: strategyDurationLabel }
+  ];
+  const showStrategyScrollControls = groups.length > 1;
 
   async function resolveProtectedPlayableMediaUrl(path?: string) {
     if (!path) return undefined;
@@ -3824,6 +3947,58 @@ END：4秒，收束行动指令和品牌露出`);
     });
     speechWindowCacheRef.current.set(cacheKey, speechWindow);
     return speechWindow;
+  }
+
+  async function analyzeMixClipAudioContinuity(media?: { id?: string; name?: string; localPath?: string; path?: string }) {
+    if (!media) return null;
+    const cacheKey = media.localPath || media.path || media.id || media.name || '';
+    if (!cacheKey) return null;
+    const cached = audioContinuityCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+
+    const analyzer = window.surgicol?.media?.analyzeAudioContinuity;
+    if (typeof analyzer !== 'function') return null;
+
+    const analysisPath = await resolveRenderableMixSource(media);
+    if (!analysisPath) return null;
+    const resolvedCached = audioContinuityCacheRef.current.get(analysisPath);
+    if (resolvedCached) {
+      audioContinuityCacheRef.current.set(cacheKey, resolvedCached);
+      return resolvedCached;
+    }
+
+    const analysis = await analyzer(analysisPath).catch(() => null);
+    if (!analysis) return null;
+    audioContinuityCacheRef.current.set(cacheKey, analysis);
+    audioContinuityCacheRef.current.set(analysisPath, analysis);
+    return analysis;
+  }
+
+  async function enrichWaterfallGroupsWithAudioContinuity(sourceGroups: GeneratedSegmentWaterfallGroup[]) {
+    const analyzer = window.surgicol?.media?.analyzeAudioContinuity;
+    if (typeof analyzer !== 'function') return sourceGroups;
+
+    const totalCandidates = sourceGroups.reduce((count, group) => count + group.clips.length, 0);
+    if (totalCandidates <= 0) return sourceGroups;
+
+    const nextGroups: GeneratedSegmentWaterfallGroup[] = [];
+    let analyzedCount = 0;
+
+    for (const group of sourceGroups) {
+      const nextClips: GeneratedSegmentWaterfallClip[] = [];
+      for (const clip of group.clips) {
+        analyzedCount += 1;
+        setUploadNotice(`正在分析瀑布流候选音频衔接 ${analyzedCount}/${totalCandidates}...`);
+        const audioContinuity = clip.audioContinuity || await analyzeMixClipAudioContinuity(clip);
+        nextClips.push(audioContinuity ? { ...clip, audioContinuity } : clip);
+      }
+      nextGroups.push({
+        ...group,
+        clips: nextClips
+      });
+    }
+
+    return nextGroups;
   }
 
   async function createImportedVideoClip(filePath: string, index: number) {
@@ -3979,7 +4154,7 @@ END：4秒，收束行动指令和品牌露出`);
 
   useEffect(() => {
     let cancelled = false;
-    window.surgicol.store.get(FISSION_WORKSPACE_DRAFT_KEY)
+    readStoredValue<unknown>(FISSION_WORKSPACE_DRAFT_KEY, null)
       .then((value) => {
         if (cancelled) return;
         const draft = readFissionWorkspaceDraft(value);
@@ -4037,8 +4212,8 @@ END：4秒，收束行动指令和品牌露出`);
     } satisfies FissionWorkspaceDraft;
     props.onDraftStateChange(snapshot);
     const saveTimer = window.setTimeout(() => {
-      void window.surgicol.store.set(FISSION_WORKSPACE_DRAFT_KEY, snapshot).then(() => {
-        props.onDraftAutoSaved(snapshot);
+      void writeStoredValue(FISSION_WORKSPACE_DRAFT_KEY, snapshot).then((saved) => {
+        if (saved) props.onDraftAutoSaved(snapshot);
       });
     }, 250);
 
@@ -4328,7 +4503,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
 
   async function persistFinishedVideoGroup(nextGroup: FinishedVideoGroup, existingGroups: FinishedVideoGroup[], replaced: boolean) {
     const nextGroups = [nextGroup, ...existingGroups.filter((group) => group.id !== nextGroup.id)];
-    await window.surgicol.store.set(FINISHED_VIDEOS_KEY, nextGroups);
+    await writeStoredValue(FINISHED_VIDEOS_KEY, nextGroups);
     setUploadNotice(replaced ? `已替换“${nextGroup.draftName}”成片组，共 ${nextGroup.videos.length} 个视频。` : `已保存“${nextGroup.draftName}”成片组，共 ${nextGroup.videos.length} 个视频。`);
     props.onSavedToFinishedLibrary(nextGroup.videos.length);
   }
@@ -4337,7 +4512,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
     if (generatedVideos.length === 0) return;
     const videosToSave = generatedVideos.filter((video) => selectedGeneratedIds.length === 0 || isGeneratedVideoSelected(video));
     if (videosToSave.length === 0) return;
-    const storedLibrary = await window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY).catch(() => []);
+    const storedLibrary = await readStoredValue<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY, []);
     const existingGroups = readFinishedVideoGroups(storedLibrary);
     const draftName = props.projectName.trim() || '未命名裂变工作';
     const existingGroup = existingGroups.find((group) => sameFinishedGroup(group, props.projectId, draftName));
@@ -4669,7 +4844,8 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
           const localResult = await localRenderer({
             name: localName,
             scenes: localPlan.scenes,
-            bgmTracks: localPlan.bgmTracks
+            bgmTracks: localPlan.bgmTracks,
+            narrationSegments: localPlan.narrationSegments
           });
           const materialSummary = collectVariantMaterialSummary([mixGroup], mixAudioItems, index, 'segments');
           const nextVideo: GeneratedFissionVideo = {
@@ -4777,27 +4953,34 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
       setUploadNotice('');
       return;
     }
-    const waterfallSourceGroups = buildWaterfallSourceGroupsFromGeneratedSegments(groups, generatedVideos);
-    if (waterfallSourceGroups.length === 0) {
-      setGenerationError('请先点击“生成视频”，先为每个分镜生成一行分镜混剪候选结果后，再执行瀑布流合成。');
-      setUploadNotice('');
-      return;
-    }
 
     if (generationTimerRef.current) window.clearInterval(generationTimerRef.current);
     setIsGenerating(true);
     setGenerationProgress(8);
     setGenerationError('');
     setLastOutputMediaUrl('');
-    setUploadNotice('正在基于每个分镜混剪结果执行瀑布流二次合成...');
+    setUploadNotice('正在校准瀑布流候选的底层镜头和口播音频...');
     setFissionResultView('waterfall');
     setSelectedGeneratedIds([]);
     setSegmentCandidateRestoreState(null);
-
-    const resultBatchKey = buildGeneratedResultBatchKey('waterfall', waterfallSourceGroups);
-    const resultBatchMeta = describeGeneratedResultBatch('waterfall', waterfallSourceGroups, batchCount);
+    let resultBatchKey = '';
 
     try {
+      const preparedMix = await prepareFissionMediaForMix(groups, audioItems);
+      const preparedGroups = preparedMix.groups;
+      const preparedAudioItems = preparedMix.audioItems;
+      if (preparedMix.changed) {
+        setGroups(preparedGroups);
+        setAudioItems(preparedAudioItems);
+        setUploadNotice(`已校准 ${preparedMix.syncedCount} 个瀑布流相关素材，正在分析候选镜头和口播衔接...`);
+      }
+
+      const waterfallSourceGroups = buildWaterfallSourceGroupsFromGeneratedSegments(preparedGroups, generatedVideos);
+      if (waterfallSourceGroups.length === 0) {
+        throw new Error('请先点击“生成视频”，先为每个分镜生成一行分镜混剪候选结果后，再执行瀑布流合成。');
+      }
+      resultBatchKey = buildGeneratedResultBatchKey('waterfall', waterfallSourceGroups);
+      const resultBatchMeta = describeGeneratedResultBatch('waterfall', waterfallSourceGroups, batchCount);
       const localRenderer = window.surgicol?.media?.renderFissionMix;
       if (typeof localRenderer !== 'function') {
         throw new Error('本地瀑布流合成能力未加载，请重启 Electron 后再试。');
@@ -4806,18 +4989,20 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
       setGeneratedVideos((videos) => replaceGeneratedResultBatch(videos.filter((video) => video.resultBatchView !== 'waterfall'), resultBatchKey, []));
       const renderedVideos: GeneratedFissionVideo[] = [];
       const localFailedMessages: string[] = [];
+      const continuityReadyGroups = await enrichWaterfallGroupsWithAudioContinuity(waterfallSourceGroups);
 
       for (let index = 0; index < batchCount; index += 1) {
         setUploadNotice(`正在执行瀑布流二次混剪 ${index + 1}/${batchCount}...`);
         try {
           const localPlan = await buildLocalFissionMixPlan({
-            groups: waterfallSourceGroups,
+            groups: continuityReadyGroups,
             audioItems: [],
             settings: {
               ...soundSettings,
+              followAudioSpeed: true,
               compositionMode: 'waterfall',
               retainOriginalAudio: true,
-              ducking: false,
+              ducking: true,
               maskSubtitles: false
             },
             variantIndex: index,
@@ -4828,7 +5013,8 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
           const localResult = await localRenderer({
             name: localName,
             scenes: localPlan.scenes,
-            bgmTracks: []
+            bgmTracks: [],
+            narrationSegments: localPlan.narrationSegments
           });
           const selectedSegmentNames = localPlan.details
             .map((detail) => `${detail.groupName}:${detail.clipName || '混剪结果'}`)
@@ -5797,25 +5983,31 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
           <button type="button" onClick={() => void previewGeneratedVideoItem(selectedPreviewItem)} disabled={!selectedPreviewItem}>预览视频</button>
         </header>
         <div className="strategy-summary">
-          <span>可生成脚本: 1</span>
-          <span>可生成分镜: {selectedSceneCount}/{groups.length}</span>
-          <span>可用素材: {selectedClipCount}</span>
-          <span>预计组合: {generatedVideoCount}</span>
-          <span>每镜头候选: {plannedMixBatchCount}</span>
-          <span>时长: 22.07s~32.84s</span>
+          {strategySummaryItems.map((item) => (
+            <span key={item.label}>
+              <em>{item.label}</em>
+              <strong>{item.value}</strong>
+            </span>
+          ))}
         </div>
         <div className="strategy-selection-toolbar">
           <span>{selectedSceneCount > 0 ? '当前会按左侧选中的分镜分组里的全部素材直接组合生成结果。' : '先给分镜分组补充视频素材，系统会按当前选中的分组素材生成混剪结果。'}</span>
+          <small>{selectedSceneCount > 0 ? `已锁定 ${selectedSceneCount} 组分镜 · ${selectedClipCount} 个素材参与生成` : '先在左侧选择需要参与生成的分镜分组。'}</small>
         </div>
-        <div className="strategy-card-shell">
-          <button type="button" aria-label="向左滚动脚本策略" onClick={() => scrollStrategyCards('left')}>
-            <ChevronLeft size={14} />
-          </button>
+        <div className={clsx('strategy-card-shell', !showStrategyScrollControls && 'without-nav')}>
+          {showStrategyScrollControls ? (
+            <button type="button" aria-label="向左滚动脚本策略" onClick={() => scrollStrategyCards('left')}>
+              <ChevronLeft size={14} />
+            </button>
+          ) : null}
           <div className="strategy-card-row" ref={strategyCardsRef}>
-            {groups.map((group) => (
+            {groups.map((group, groupIndex) => (
               (() => {
                 const totalCount = group.clips.length || group.count;
                 const materialLabel = totalCount > 0 ? `${totalCount} 个素材` : '待补充素材';
+                const audioCount = group.groupAudios?.length || 0;
+                const groupModeLabel = totalCount <= 1 ? '单镜头' : '智能混剪';
+                const groupTitle = group.displayTitle || group.title;
                 return (
                   <article
                     className={clsx(group.id === activeGroupId && 'active', totalCount === 0 && 'muted')}
@@ -5825,13 +6017,22 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
                   >
                     <div className="strategy-card-topbar">
                       <div className="strategy-card-title">
-                        <strong title={`${group.title} (${totalCount})`}>{group.title}</strong>
-                        <em>{materialLabel}</em>
+                        <strong title={`${groupTitle} (${totalCount})`}>{groupTitle}</strong>
                       </div>
+                      {group.id === activeGroupId ? (
+                        <em className="strategy-card-state">当前选中</em>
+                      ) : null}
                     </div>
-                    <span>分组位置：固定 #{groups.findIndex((item) => item.id === group.id) + 1}</span>
-                    <span>镜头模式：{totalCount <= 1 ? '单镜头' : '智能混剪'} · {totalCount > 0 ? '按当前分镜分组生成' : '当前分组还没有可生成素材'}</span>
-                    <div className="strategy-card-clip-strip">
+                    <div className="strategy-card-meta">
+                      <em>{materialLabel}</em>
+                      {audioCount > 0 ? <em>{audioCount} 个音频</em> : null}
+                      <em>固定 #{groupIndex + 1}</em>
+                      <em>{groupModeLabel}</em>
+                    </div>
+                    <small className="strategy-card-note">
+                      {totalCount > 0 ? '按当前分镜分组直接生成候选结果。' : '当前分组还没有可生成素材。'}
+                    </small>
+                    <div className="strategy-card-clip-strip" aria-label={`${groupTitle} 的候选素材`}>
                       {group.clips.map((clip, clipIndex) => {
                         return (
                           <button
@@ -5858,9 +6059,11 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
               })()
             ))}
           </div>
-          <button type="button" aria-label="向右滚动脚本策略" onClick={() => scrollStrategyCards('right')}>
-            <ChevronRight size={14} />
-          </button>
+          {showStrategyScrollControls ? (
+            <button type="button" aria-label="向右滚动脚本策略" onClick={() => scrollStrategyCards('right')}>
+              <ChevronRight size={14} />
+            </button>
+          ) : null}
         </div>
         <div className="fission-result-shell">
           <div className="material-filter-row">
@@ -5882,10 +6085,21 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
             <button className="fission-filter-apply" type="button">应用筛选</button>
           </div>
           <div className="fission-preview-toolbar">
-            <div className="fission-preview-heading">
-              <span>视频合成</span>
-              <strong>{generatedVideos.length > 0 ? `混剪结果（${generatedResultBatchGroups.length}组）` : '等待生成混剪结果'}</strong>
-              <small>{generatedVideos.length > 0 ? '生成视频会先按分镜逐行产出候选，瀑布流合成再基于这些候选做二次混剪。' : '点击“生成视频”后，这里会先按分镜一行一行展示混剪候选结果。'}</small>
+            <div className="fission-preview-summary">
+              <div className="fission-preview-heading">
+                <span>视频合成</span>
+                <strong>{generatedVideos.length > 0 ? `混剪结果（${generatedResultBatchGroups.length}组）` : '等待生成混剪结果'}</strong>
+                {generatedVideos.length > 0 ? (
+                  <small className="fission-result-count">
+                    {selectedGeneratedCount > 0 ? `已选 ${selectedGeneratedCount} / ${selectableResultCount}` : `${generatedVideos.length} 个视频`}
+                  </small>
+                ) : null}
+              </div>
+              <small className="fission-preview-note">
+                {generatedVideos.length > 0
+                  ? '先按分镜逐行产出候选，再由瀑布流基于候选做二次混剪。'
+                  : '点击“生成视频”后，这里会按分镜逐行展示混剪候选结果。'}
+              </small>
             </div>
             {generatedVideos.length > 0 ? (
               <div className="fission-result-actions">
@@ -5894,20 +6108,19 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
                 <button type="button" onClick={() => void saveGeneratedVideosToFinishedLibrary()}>保存到成片库</button>
                 <button type="button" onClick={deleteSelectedGeneratedVideos} disabled={selectedGeneratedCount === 0}>批量删除</button>
                 <button className="danger-action" type="button" onClick={deleteAllGeneratedVideos}>全部删除</button>
-                <small className="fission-result-count">{selectedGeneratedCount > 0 ? `已选 ${selectedGeneratedCount} / ${selectableResultCount}` : `${generatedVideos.length} 个视频`}</small>
               </div>
             ) : (
               <small className="fission-result-hint">点击“生成视频”后会先按分镜分组生成候选行；点击“瀑布流合成”再把这些候选做二次组合。</small>
             )}
+            {resultStrategyTags.length > 0 ? (
+              <div className="fission-result-strategy-bar compact">
+                <span>当前策略</span>
+                {resultStrategyTags.map((tag) => (
+                  <em key={tag}>{tag}</em>
+                ))}
+              </div>
+            ) : null}
           </div>
-          {resultStrategyTags.length > 0 ? (
-            <div className="fission-result-strategy-bar">
-              <span>当前策略</span>
-              {resultStrategyTags.map((tag) => (
-                <em key={tag}>{tag}</em>
-              ))}
-            </div>
-          ) : null}
           <div
             className={clsx('fission-preview-grid', generatedVideos.length > 0 && 'generated')}
             key={generatedVideos[0]?.id || 'preview-default'}
@@ -6014,15 +6227,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
           <footer className="fission-pagination">
             <div className="fission-pagination-meta">
               <span>共 {generatedVideos.length} 条 · {generatedResultBatchGroups.length} 组结果</span>
-              <small>上方先展示各分镜候选行，底部瀑布流合成会基于这些候选做第二轮组合。</small>
-            </div>
-            <div className="fission-pagination-pager">
-              <button type="button">{'<'}</button>
-              <button className="active" type="button">1</button>
-              <button type="button">2</button>
-              <button type="button">3</button>
-              <button type="button">4</button>
-              <button type="button">5</button>
+              <small>上方先展示各分镜候选行，右侧可继续发起瀑布流做第二轮组合。</small>
             </div>
             <button className="waterfall-action" type="button" onClick={openWaterfallDialog} disabled={generatedSegmentBatchGroups.length === 0}>瀑布流合成</button>
           </footer>
@@ -7100,17 +7305,36 @@ function buildWaterfallSourceGroupsFromGeneratedSegments(
 
   const waterfallGroups: GeneratedSegmentWaterfallGroup[] = [];
   groups.forEach((group) => {
-    const candidates: GeneratedSegmentWaterfallClip[] = (segmentGroups.get(group.id) || [])
+    const seenSourceKeys = new Set<string>();
+    const candidates = (segmentGroups.get(group.id) || [])
       .slice()
       .sort((left, right) => (left.label || 0) - (right.label || 0))
       .filter((video) => Boolean(video.localPath || video.path))
-      .map((video) => ({
-        id: video.id,
-        name: video.name,
-        duration: video.duration || group.duration,
-        path: video.path,
-        localPath: video.localPath
-      }));
+      .reduce<GeneratedSegmentWaterfallClip[]>((result, video) => {
+        const detail = findGeneratedDetailForGroup(video, group);
+        const sourceClipName = detail?.clipName?.trim() || '';
+        const sourceAudioName = detail?.audioName?.trim() || '';
+        const sourceCoverPath = detail?.coverPath || video.coverPath;
+        const sourceKey = buildWaterfallSourceCandidateKey({
+          sourceClipName,
+          sourceCoverPath,
+          videoName: video.name,
+          videoPath: video.localPath || video.path
+        });
+        if (sourceKey && seenSourceKeys.has(sourceKey)) return result;
+        if (sourceKey) seenSourceKeys.add(sourceKey);
+        result.push({
+          id: video.id,
+          name: sourceClipName || video.name,
+          duration: video.duration || group.duration,
+          path: video.path,
+          localPath: video.localPath,
+          sourceClipName: sourceClipName || undefined,
+          sourceAudioName: sourceAudioName || undefined,
+          sourceCoverPath
+        } satisfies GeneratedSegmentWaterfallClip);
+        return result;
+      }, []);
     if (candidates.length === 0) return;
     waterfallGroups.push({
       id: group.id,
@@ -7122,10 +7346,37 @@ function buildWaterfallSourceGroupsFromGeneratedSegments(
       script: group.script,
       voiceover: group.voiceover,
       clips: candidates,
-      groupAudios: []
+      groupAudios: (group.groupAudios || []).filter((audio) => Boolean(previewPath(audio) || audio.path))
     });
   });
   return waterfallGroups;
+}
+
+function buildWaterfallSourceCandidateKey(input: {
+  sourceClipName?: string;
+  sourceCoverPath?: string;
+  videoName?: string;
+  videoPath?: string;
+}) {
+  const clipToken = normalizeWaterfallSourceToken(input.sourceClipName);
+  const coverToken = normalizeWaterfallSourceToken(input.sourceCoverPath);
+  const videoToken = normalizeWaterfallSourceToken(input.videoName);
+  const pathToken = normalizeWaterfallSourceToken(input.videoPath);
+  return clipToken || coverToken
+    ? [clipToken, coverToken].filter(Boolean).join('|')
+    : videoToken || pathToken;
+}
+
+function normalizeWaterfallSourceToken(value?: string) {
+  if (!value) return '';
+  const baseName = value.split(/[\\/]/).pop() || value;
+  return baseName
+    .replace(/\.[^.]+$/, '')
+    .replace(/_?分镜混剪_?\d+$/i, '')
+    .replace(/_?waterfall_?\d+$/i, '')
+    .replace(/\s+/g, '')
+    .trim()
+    .toLowerCase();
 }
 
 function selectVariantBackgroundAudioItem(audioItems: FissionAudioItem[], variantIndex: number) {
@@ -7310,7 +7561,7 @@ function FinishedVideosWorkspace(props: { refreshToken: number }) {
 
   useEffect(() => {
     let cancelled = false;
-    window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY)
+    readStoredValue<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY, [])
       .then((videos) => {
         if (cancelled) return;
         setLibraryGroups(readFinishedVideoGroups(videos));
@@ -7621,7 +7872,7 @@ function CombinationOptimizeWorkspace(props: { refreshToken: number }) {
 
   useEffect(() => {
     let cancelled = false;
-    window.surgicol.store.get<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY)
+    readStoredValue<FinishedVideoGroup[] | FinishedVideoItem[]>(FINISHED_VIDEOS_KEY, [])
       .then((videos) => {
         if (cancelled) return;
         const groups = readFinishedVideoGroups(videos);
@@ -9214,6 +9465,40 @@ function parseDurationSeconds(duration?: string) {
   }
   const numeric = Number.parseFloat(rangeStart.replace(/s$/i, ''));
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function buildFissionDurationRangeLabel(groups: Array<Pick<FissionShotGroup, 'duration'>>) {
+  if (groups.length === 0) return '--';
+  let minDuration = Number.POSITIVE_INFINITY;
+  let maxDuration = 0;
+  groups.forEach((group) => {
+    const bounds = parseDurationBounds(group.duration);
+    if (!bounds) return;
+    minDuration = Math.min(minDuration, bounds.start);
+    maxDuration = Math.max(maxDuration, bounds.end);
+  });
+  if (!Number.isFinite(minDuration) || maxDuration <= 0) return '--';
+  return `${formatCompactSeconds(minDuration)}~${formatCompactSeconds(maxDuration)}`;
+}
+
+function parseDurationBounds(duration?: string) {
+  if (!duration) return null;
+  const parts = duration
+    .split(/[-~]/)
+    .map((part) => parseDurationSeconds(part.trim()))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (parts.length === 0) return null;
+  const start = parts[0];
+  const end = parts.length > 1 ? parts[parts.length - 1] : start;
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end)
+  };
+}
+
+function formatCompactSeconds(value: number) {
+  const normalized = Number.isFinite(value) && value > 0 ? value : 0;
+  return `${normalized.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}s`;
 }
 
 function formatLibraryTimestamp(value: string) {

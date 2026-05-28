@@ -223,6 +223,11 @@ progress::-webkit-progress-value {
   text-decoration: none;
 }
 
+.titlebar-brand.route-lock-disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .titlebar-brand img {
   width: 22px;
   height: 22px;
@@ -299,6 +304,11 @@ progress::-webkit-progress-value {
   color: #ffffff;
   border-color: #343436;
   background: #242426;
+}
+
+.titlebar-nav a.route-lock-disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .app-nav {
@@ -406,6 +416,26 @@ progress::-webkit-progress-value {
   border-color: rgb(255 255 255 / 14%);
   background: rgb(255 255 255 / 7%);
   transform: scale(1.03);
+}
+
+.nav-item.route-lock-disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+  transform: none;
+}
+
+.nav-item.route-lock-disabled:hover {
+  color: #99a7ba;
+  border-color: transparent;
+  background: transparent;
+  transform: none;
+}
+
+.nav-item.route-lock-disabled:hover svg {
+  color: #9fb0c8;
+  border-color: rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 4%);
+  transform: none;
 }
 
 .app-main {
@@ -616,6 +646,32 @@ progress::-webkit-progress-value {
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / 12%), rgb(var(--accent-rgb) / 48%), transparent);
   animation: editor-loading-scan 1.9s ease-in-out infinite;
   animation-delay: var(--stage-delay, 0s);
+}
+
+.editor-route-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.editor-route-actions button {
+  min-width: 132px;
+}
+
+.editor-route-error-detail {
+  width: min(100%, 420px);
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 5%);
+  color: #ffb5b5;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @keyframes editor-loading-pulse {
@@ -5036,6 +5092,12 @@ progress::-webkit-progress-value {
   color: #64748b;
 }
 
+.theme-light .titlebar-brand.route-lock-disabled,
+.theme-light .titlebar-nav a.route-lock-disabled,
+.theme-light .nav-item.route-lock-disabled {
+  opacity: 0.52;
+}
+
 .theme-light .theme-toggle,
 .theme-light .logout-button {
   color: #17202e;
@@ -5118,6 +5180,18 @@ progress::-webkit-progress-value {
   background: #ecfdf5;
 }
 
+.theme-light .nav-item.route-lock-disabled:hover {
+  color: #526173;
+  border-color: transparent;
+  background: transparent;
+}
+
+.theme-light .nav-item.route-lock-disabled:hover svg {
+  color: #64748b;
+  border-color: #d8e3ef;
+  background: #f8fafc;
+}
+
 .theme-light .app-main,
 .theme-light .editor-page {
   background: #eef3f9;
@@ -5190,6 +5264,12 @@ progress::-webkit-progress-value {
 
 .theme-light .editor-route-loading-stages article span {
   background: rgb(197 209 224 / 78%);
+}
+
+.theme-light .editor-route-error-detail {
+  border-color: rgb(197 209 224 / 82%);
+  background: rgb(255 255 255 / 82%);
+  color: #b42318;
 }
 
 .theme-light .home-page {
@@ -6330,6 +6410,65 @@ progress::-webkit-progress-value {
     linear-gradient(180deg, rgb(142 162 255 / 22%), rgb(142 162 255 / 8%)),
     #1d1d1f;
   box-shadow: inset 0 -2px 0 #8ea2ff;
+}
+
+.editor-bootstrap-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #262626;
+  background: linear-gradient(90deg, rgb(142 162 255 / 14%), rgb(72 212 255 / 10%));
+  color: #dbe7ff;
+}
+
+.editor-bootstrap-notice span {
+  min-width: 0;
+  line-height: 1.5;
+  font-size: 12px;
+}
+
+.editor-bootstrap-notice button {
+  flex: none;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 12px;
+}
+
+.editor-workspace-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 24px;
+  background: #111111;
+}
+
+.editor-workspace-placeholder-card {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: min(100%, 440px);
+  padding: 28px 24px;
+  border: 1px solid #2e3238;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgb(24 26 32 / 96%), rgb(15 17 22 / 94%));
+  box-shadow: 0 22px 48px rgb(0 0 0 / 28%);
+  text-align: center;
+}
+
+.editor-workspace-placeholder-card strong {
+  color: #f3f7ff;
+  font-size: 20px;
+}
+
+.editor-workspace-placeholder-card span {
+  color: #98a3b5;
+  line-height: 1.7;
+}
+
+.editor-workspace-placeholder-card button {
+  margin-top: 4px;
 }
 
 .workflow-workspace {
@@ -13998,22 +14137,37 @@ progress::-webkit-progress-value {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 8px 10px 6px;
   color: #8ea2ff;
   font-size: 12px;
 }
 
 .strategy-summary span {
-  padding: 4px 7px;
-  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
   background: rgb(49 85 217 / 14%);
 }
 
+.strategy-summary span em {
+  color: inherit;
+  font-size: 11px;
+  font-style: normal;
+  opacity: 0.82;
+}
+
+.strategy-summary span strong {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .strategy-selection-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  gap: 5px;
   padding: 0 10px 10px;
   color: #9aa4b2;
   font-size: 12px;
@@ -14024,20 +14178,10 @@ progress::-webkit-progress-value {
   line-height: 1.5;
 }
 
-.strategy-selection-toolbar > div {
-  display: inline-flex;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.strategy-selection-toolbar button {
-  height: 28px;
-  min-height: 28px;
-  padding: 0 10px;
-  border-color: #343a42;
-  background: #1b1d22;
-  color: #dbe7ff;
-  font-size: 12px;
+.strategy-selection-toolbar > small {
+  color: #7d8ca0;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .strategy-card-shell {
@@ -14046,6 +14190,10 @@ progress::-webkit-progress-value {
   align-items: stretch;
   gap: 8px;
   padding: 0 10px 10px;
+}
+
+.strategy-card-shell.without-nav {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .strategy-card-shell > button {
@@ -14077,7 +14225,7 @@ progress::-webkit-progress-value {
   display: grid;
   align-content: start;
   gap: 5px;
-  min-height: 138px;
+  min-height: 132px;
   padding: 10px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -14116,8 +14264,9 @@ progress::-webkit-progress-value {
 }
 
 .strategy-card-topbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
   min-width: 0;
 }
@@ -14141,43 +14290,44 @@ progress::-webkit-progress-value {
   -webkit-line-clamp: 2;
 }
 
-.strategy-card-title em {
+.strategy-card-state {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: fit-content;
-  max-width: 100%;
   min-height: 20px;
   padding: 0 8px;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 999px;
-  background: rgb(10 13 20 / 18%);
+  background: rgb(255 255 255 / 14%);
+  color: #eef4ff;
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.strategy-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.strategy-card-meta em {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 999px;
+  background: rgb(10 13 20 / 26%);
   color: #eef4ff;
   font-size: 11px;
   font-style: normal;
 }
 
-.strategy-card-actions {
-  display: inline-flex;
-  gap: 6px;
-  flex: 0 0 auto;
-  justify-self: end;
-  flex-wrap: wrap;
-}
-
-.strategy-card-actions button {
-  height: 24px;
-  min-height: 24px;
-  padding: 0 8px;
-  border-color: rgb(255 255 255 / 18%);
-  background: rgb(10 13 20 / 26%);
-  color: #eef4ff;
-  font-size: 11px;
-}
-
-.strategy-card-row span {
+.strategy-card-note {
   color: #dbeafe;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .strategy-card-clip-strip {
@@ -14236,27 +14386,27 @@ progress::-webkit-progress-value {
 
 .fission-result-shell {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 8px;
   min-height: 0;
-  padding: 10px;
+  padding: 8px;
 }
 
 .material-filter-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid #303033;
-  border-radius: 16px;
+  border-radius: 14px;
   background: linear-gradient(180deg, rgb(255 255 255 / 2%), rgb(255 255 255 / 1%));
 }
 
 .fission-filter-label {
   display: grid;
-  gap: 3px;
-  min-width: 154px;
+  gap: 2px;
+  min-width: 136px;
 }
 
 .fission-filter-label span {
@@ -14283,28 +14433,35 @@ progress::-webkit-progress-value {
 }
 
 .fission-preview-toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 12px;
+  padding: 10px 12px;
   border: 1px solid #303033;
-  border-radius: 16px;
+  border-radius: 14px;
   background: linear-gradient(180deg, rgb(255 255 255 / 2.8%), rgb(255 255 255 / 1.2%));
   color: #8f9db0;
   font-size: 12px;
 }
 
-.fission-preview-toolbar div {
+.fission-preview-toolbar > div {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
+}
+
+.fission-preview-summary {
+  display: grid !important;
+  gap: 5px;
+  min-width: 0;
 }
 
 .fission-preview-heading {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -14323,6 +14480,12 @@ progress::-webkit-progress-value {
   width: fit-content;
   color: #f4f4f5;
   font-size: 14px;
+}
+
+.fission-preview-note {
+  color: #9aa4b5;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .fission-preview-toolbar small {
@@ -14378,9 +14541,9 @@ progress::-webkit-progress-value {
   grid-auto-rows: max-content;
   align-items: start;
   align-content: start;
-  padding: 4px;
+  padding: 8px;
   border: 1px solid #303033;
-  border-radius: 18px;
+  border-radius: 16px;
   background: linear-gradient(180deg, rgb(255 255 255 / 2%), rgb(255 255 255 / 0.6%));
 }
 
@@ -14389,26 +14552,27 @@ progress::-webkit-progress-value {
   align-self: start;
   align-content: start;
   height: max-content;
-  gap: 8px;
+  gap: 6px;
 }
 
 .fission-result-group-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
-  padding: 2px 2px 0;
+  gap: 8px;
+  padding: 0;
 }
 
 .fission-result-group-header > div:first-child {
-  display: grid;
-  gap: 2px;
+  display: flex;
   min-width: 0;
 }
 
 .fission-result-group-meta {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
   min-width: 0;
 }
 
@@ -14428,11 +14592,12 @@ progress::-webkit-progress-value {
 }
 
 .fission-result-group-header strong {
+  flex: 1 1 240px;
   padding: 0;
   background: transparent;
   color: #f4f4f5;
   font-size: 13px;
-  line-height: 20px;
+  line-height: 1.45;
   text-align: left;
   white-space: normal;
 }
@@ -14445,19 +14610,20 @@ progress::-webkit-progress-value {
 .fission-result-scene-titles {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  flex: 1 1 100%;
+  gap: 4px;
 }
 
 .fission-result-scene-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 0 10px;
+  min-height: 22px;
+  padding: 0 8px;
   border: 1px solid rgb(255 255 255 / 10%);
   border-radius: 999px;
   background: rgb(255 255 255 / 6%);
   color: #dbe7ff;
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
   line-height: 1.4;
 }
@@ -14466,13 +14632,13 @@ progress::-webkit-progress-value {
   display: inline-flex;
   width: fit-content;
   align-items: center;
-  min-height: 24px;
-  padding: 0 10px;
+  min-height: 22px;
+  padding: 0 8px;
   border: 1px solid rgb(142 162 255 / 16%);
   border-radius: 999px;
   background: rgb(49 85 217 / 14%);
   color: #9eb7ff;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .fission-result-group-grid {
@@ -14739,12 +14905,17 @@ progress::-webkit-progress-value {
   align-items: center;
   gap: 6px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid #303033;
-  border-radius: 16px;
+  border-radius: 12px;
   background:
     linear-gradient(180deg, rgb(255 255 255 / 3%), transparent 42%),
     #18191c;
+}
+
+.fission-preview-toolbar .fission-result-strategy-bar {
+  display: flex;
+  grid-column: 1 / -1;
 }
 
 .fission-result-strategy-bar > span {
@@ -14782,14 +14953,28 @@ progress::-webkit-progress-value {
 
 .fission-pagination {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-height: 42px;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid #303033;
   border-radius: 16px;
   background: linear-gradient(180deg, rgb(255 255 255 / 2.6%), rgb(255 255 255 / 1%));
+}
+
+@media (max-width: 1400px) {
+  .fission-preview-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fission-result-actions {
+    margin-left: 0;
+  }
+
+  .fission-pagination {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .fission-pagination-meta {
@@ -14809,16 +14994,6 @@ progress::-webkit-progress-value {
   color: #8b96a8;
   font-size: 11px;
   line-height: 1.45;
-}
-
-.fission-pagination-pager {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid #303033;
-  border-radius: 999px;
-  background: rgb(0 0 0 / 16%);
 }
 
 .fission-pagination button.active {
@@ -16962,6 +17137,12 @@ progress::-webkit-progress-value {
   background: #eef3f9;
 }
 
+.theme-light .titlebar-nav a.route-lock-disabled:hover {
+  color: #64748b;
+  border-color: transparent;
+  background: transparent;
+}
+
 .theme-light.editor-workbench .app-titlebar {
   background: #f8fafc;
   border-bottom-color: #d7e0ec;
@@ -17006,6 +17187,30 @@ progress::-webkit-progress-value {
 .theme-light .editor-tool-tabs button.active {
   color: #4f63d8;
   background: #eef3ff;
+}
+
+.theme-light .editor-bootstrap-notice {
+  border-bottom-color: #d7e0ec;
+  background: linear-gradient(90deg, rgb(91 126 255 / 12%), rgb(72 212 255 / 8%));
+  color: #1f2a44;
+}
+
+.theme-light .editor-workspace-placeholder {
+  background: #eef2f7;
+}
+
+.theme-light .editor-workspace-placeholder-card {
+  border-color: #d7e0ec;
+  background: linear-gradient(180deg, rgb(255 255 255 / 96%), rgb(247 250 255 / 94%));
+  box-shadow: 0 20px 44px rgb(148 163 184 / 20%);
+}
+
+.theme-light .editor-workspace-placeholder-card strong {
+  color: #17202e;
+}
+
+.theme-light .editor-workspace-placeholder-card span {
+  color: #64748b;
 }
 
 .theme-light .workflow-workspace {
@@ -19401,21 +19606,16 @@ progress::-webkit-progress-value {
   color: #526173;
 }
 
+.theme-light.editor-workbench .fission-board .strategy-summary span strong {
+  color: #17202e;
+}
+
 .theme-light.editor-workbench .fission-board .strategy-selection-toolbar {
-  background: #ffffff;
   color: #64748b;
 }
 
-.theme-light.editor-workbench .fission-board .strategy-selection-toolbar button {
-  border-color: #d2dce8;
-  background: linear-gradient(180deg, #ffffff, #f3f6fa);
-  color: #334155;
-}
-
-.theme-light.editor-workbench .fission-board .strategy-selection-toolbar button:hover {
-  border-color: rgb(91 126 255 / 36%);
-  background: #eef3ff;
-  color: #4f63d8;
+.theme-light.editor-workbench .fission-board .strategy-selection-toolbar > small {
+  color: #64748b;
 }
 
 .theme-light.editor-workbench .fission-board .strategy-card-shell {
@@ -19464,26 +19664,20 @@ progress::-webkit-progress-value {
   color: #17202e;
 }
 
-.theme-light.editor-workbench .fission-board .strategy-card-title em {
+.theme-light.editor-workbench .fission-board .strategy-card-state {
+  border-color: rgb(91 126 255 / 18%);
+  background: #eef4ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-card-meta em {
   border-color: #d2dce8;
   background: #f8fbff;
   color: #526173;
 }
 
-.theme-light.editor-workbench .fission-board .strategy-card-row span {
+.theme-light.editor-workbench .fission-board .strategy-card-note {
   color: #64748b;
-}
-
-.theme-light.editor-workbench .fission-board .strategy-card-actions button {
-  border-color: #d2dce8;
-  background: #ffffff;
-  color: #334155;
-}
-
-.theme-light.editor-workbench .fission-board .strategy-card-actions button:hover {
-  border-color: rgb(91 126 255 / 34%);
-  background: #eef3ff;
-  color: #4f63d8;
 }
 
 .theme-light.editor-workbench .fission-board .strategy-card-clip-strip button {
@@ -20125,8 +20319,8 @@ progress::-webkit-progress-value {
 }
 
 .theme-light.editor-workbench .fission-board .fission-result-shell {
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
 }
 
 .theme-light.editor-workbench .fission-board .fission-result-group-grid,
@@ -20222,12 +20416,6 @@ progress::-webkit-progress-value {
   color: #64748b;
 }
 
-.theme-light.editor-workbench .fission-board .fission-pagination-pager {
-  border-color: #d7e0eb;
-  background: #f8fbff;
-  box-shadow: inset 0 1px 0 #ffffff;
-}
-
 .theme-light.editor-workbench .fission-board .fission-pagination button {
   border-color: #d2dce8;
   background: linear-gradient(180deg, #ffffff, #f4f7fb);
@@ -20249,8 +20437,7 @@ progress::-webkit-progress-value {
 
 /* White-mode polish for the generated-result panel. */
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar {
-  flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 10px 12px;
   border: 1px solid #e2e8f0;
   border-radius: 14px;
@@ -20263,7 +20450,7 @@ progress::-webkit-progress-value {
 .theme-light.editor-workbench .fission-board .fission-preview-heading {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -20271,11 +20458,15 @@ progress::-webkit-progress-value {
   color: #64748b;
 }
 
+.theme-light.editor-workbench .fission-board .fission-preview-note {
+  color: #64748b;
+}
+
 .theme-light.editor-workbench .fission-board .fission-preview-toolbar strong {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 12px;
+  min-height: 28px;
+  padding: 0 10px;
   border: 1px solid rgb(91 126 255 / 18%);
   border-radius: 999px;
   background: linear-gradient(180deg, #ffffff 0%, #f5f8ff 100%);
@@ -20286,8 +20477,7 @@ progress::-webkit-progress-value {
 }
 
 .theme-light.editor-workbench .fission-board .fission-result-actions {
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -20304,8 +20494,8 @@ progress::-webkit-progress-value {
 .theme-light.editor-workbench .fission-board .fission-result-hint {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 11px;
+  min-height: 26px;
+  padding: 0 10px;
   border: 1px solid #dce4ee;
   border-radius: 999px;
   background: rgb(255 255 255 / 86%);
@@ -20315,13 +20505,13 @@ progress::-webkit-progress-value {
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated {
-  gap: 12px;
+  gap: 10px;
   grid-auto-rows: max-content;
   align-items: start;
   align-content: start;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid #e3ebf5;
-  border-radius: 18px;
+  border-radius: 16px;
   background:
     radial-gradient(circle at 50% 0%, rgb(91 126 255 / 7%), transparent 24%),
     linear-gradient(180deg, #fcfdff 0%, #f6f9fc 100%);
@@ -20333,10 +20523,10 @@ progress::-webkit-progress-value {
   align-self: start;
   align-content: start;
   height: max-content;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
   border: 1px solid #dde6f1;
-  border-radius: 18px;
+  border-radius: 16px;
   background:
     linear-gradient(180deg, rgb(255 255 255 / 98%), rgb(248 251 255 / 96%));
   box-shadow: 0 14px 32px rgb(15 23 42 / 6%);
@@ -20344,13 +20534,15 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .fission-board .fission-result-group-header,
 .theme-light.editor-workbench .fission-board .fission-waterfall-results > header {
-  gap: 14px;
+  gap: 10px;
   padding: 0;
 }
 
 .theme-light.editor-workbench .fission-board .fission-result-group-meta,
 .theme-light.editor-workbench .fission-board .fission-waterfall-results > header > div {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   min-height: auto;
   background: transparent;
@@ -20359,7 +20551,7 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .fission-board .fission-result-group-header strong,
 .theme-light.editor-workbench .fission-board .fission-waterfall-results > header strong {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: #0f172a;
 }
@@ -20375,8 +20567,8 @@ progress::-webkit-progress-value {
   display: inline-flex;
   width: fit-content;
   align-items: center;
-  min-height: 24px;
-  padding: 0 10px;
+  min-height: 22px;
+  padding: 0 8px;
   border: 1px solid rgb(91 126 255 / 16%);
   border-radius: 999px;
   background: #eef4ff;
@@ -20386,7 +20578,7 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .fission-board .fission-result-group-actions {
   gap: 4px;
-  padding: 3px;
+  padding: 2px;
   border: 1px solid #e2e8f0;
   border-radius: 999px;
   background: rgb(255 255 255 / 82%);
@@ -20397,7 +20589,7 @@ progress::-webkit-progress-value {
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid {
   align-self: start;
   height: max-content;
-  gap: 12px;
+  gap: 10px;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated .fission-result-group-grid {

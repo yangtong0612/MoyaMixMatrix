@@ -67,6 +67,8 @@ interface EditorState {
   activeMaterialId?: string;
   selectedSegmentId?: string;
   currentTime: number;
+  isNavigationLocked: boolean;
+  navigationLockReason: string;
   setMode: (mode: EditorMode) => void;
   setDraftName: (name: string) => void;
   addMaterials: (items: MaterialItem[]) => void;
@@ -85,6 +87,7 @@ interface EditorState {
   setActiveMaterial: (id?: string) => void;
   setCurrentTime: (time: number) => void;
   selectSegment: (id?: string) => void;
+  setNavigationLock: (locked: boolean, reason?: string) => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -96,6 +99,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   redoStack: [],
   clipSettings: {},
   currentTime: 0,
+  isNavigationLocked: false,
+  navigationLockReason: '',
   setMode: (mode) => set({ mode }),
   setDraftName: (draftName) => set({ draftName }),
   addMaterials: (items) => set((state) => ({ materials: [...items, ...state.materials] })),
@@ -282,5 +287,9 @@ export const useEditorStore = create<EditorState>((set) => ({
     }),
   setActiveMaterial: (activeMaterialId) => set({ activeMaterialId }),
   setCurrentTime: (currentTime) => set({ currentTime: Math.max(0, currentTime) }),
-  selectSegment: (selectedSegmentId) => set({ selectedSegmentId })
+  selectSegment: (selectedSegmentId) => set({ selectedSegmentId }),
+  setNavigationLock: (locked, reason = '') => set({
+    isNavigationLocked: locked,
+    navigationLockReason: locked ? reason : ''
+  })
 }));

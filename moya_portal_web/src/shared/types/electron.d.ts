@@ -88,6 +88,24 @@ export interface MediaSpeechAnalysisResult {
   hasSpeech: boolean;
 }
 
+export interface MediaAudioContinuityEdge {
+  meanVolumeDb: number;
+  peakVolumeDb: number;
+  silenceRatio: number;
+  activeRatio: number;
+  leadingSilence: number;
+  trailingSilence: number;
+  duration: number;
+}
+
+export interface MediaAudioContinuityResult {
+  duration: number;
+  hasAudio: boolean;
+  analysisWindow: number;
+  head: MediaAudioContinuityEdge;
+  tail: MediaAudioContinuityEdge;
+}
+
 export interface LocalFissionMixScene {
   id: string;
   groupId: string;
@@ -115,6 +133,11 @@ export interface LocalFissionMixScene {
   contentProfile: 'standard' | 'human_presenter' | 'digital_human';
   audioSelectionSource?: 'group' | 'global' | 'ai';
   audioUsageType?: 'ai_voice' | 'voice' | 'music' | 'effect' | 'unknown';
+  transitionMode?: 'default' | 'waterfall';
+  leadingTrim?: number;
+  trailingTrim?: number;
+  audioFadeInDuration?: number;
+  audioFadeOutDuration?: number;
 }
 
 export interface LocalFissionMixBackgroundTrack {
@@ -126,10 +149,28 @@ export interface LocalFissionMixBackgroundTrack {
   fadeInOut: boolean;
 }
 
+export interface LocalFissionMixNarrationSegment {
+  id: string;
+  sceneId: string;
+  groupId: string;
+  groupName: string;
+  name: string;
+  source: string;
+  audioIn: number;
+  audioOut: number;
+  timelineIn: number;
+  timelineOut: number;
+  gain: number;
+  fadeInDuration: number;
+  fadeOutDuration: number;
+  usageType?: 'ai_voice' | 'voice' | 'music' | 'effect' | 'unknown';
+}
+
 export interface LocalFissionMixRequest {
   name?: string;
   scenes: LocalFissionMixScene[];
   bgmTracks?: LocalFissionMixBackgroundTrack[];
+  narrationSegments?: LocalFissionMixNarrationSegment[];
 }
 
 export interface LocalFissionMixResult {
@@ -251,6 +292,7 @@ declare global {
         readAsDataUrl(filePath: string, options?: MediaDataUrlOptions): Promise<MediaDataUrlResult>;
         probeFile(filePath: string): Promise<MediaProbeResult>;
         analyzeSpeech(filePath: string): Promise<MediaSpeechAnalysisResult>;
+        analyzeAudioContinuity(filePath: string): Promise<MediaAudioContinuityResult>;
         renderFissionMix(request: LocalFissionMixRequest): Promise<LocalFissionMixResult>;
         onUploadToOssProgress(callback: (progress: OssUploadProgress) => void): () => void;
       };
