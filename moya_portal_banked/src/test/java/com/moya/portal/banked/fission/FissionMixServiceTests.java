@@ -49,7 +49,7 @@ class FissionMixServiceTests {
 				List.of(
 						new FissionMixRequest.AudioAsset("audio-bgm", "bgm_opening", "5.00s", 100, "https://example.com/bgm_opening.mp3", "music", "bgm opening", null, null, null)
 				),
-				new FissionMixRequest.MixSettings(true, true, true, true, 100, 720, 1280, 6000),
+				new FissionMixRequest.MixSettings(true, true, true, true, 100, false, 720, 1280, 6000),
 				1,
 				"https://example.com/output.mp4",
 				true
@@ -96,7 +96,7 @@ class FissionMixServiceTests {
 					),
 					List.of(),
 					List.of(),
-					new FissionMixRequest.MixSettings(true, true, true, true, 100, 720, 1280, 6000),
+					new FissionMixRequest.MixSettings(true, true, true, true, 100, false, 720, 1280, 6000),
 					variantIndex,
 					"https://example.com/output-" + variantIndex + ".mp4",
 					true
@@ -106,5 +106,39 @@ class FissionMixServiceTests {
 			JsonNode audioClip = timeline.path("AudioTracks").get(0).path("AudioTrackClips").get(0);
 			assertEquals("https://example.com/scene02_v" + (variantIndex + 1) + ".mp3", audioClip.path("MediaURL").asText());
 		}
+	}
+
+	@Test
+	void buildTimeline_addsCropEffectWhenSubtitleMaskEnabled() {
+		FissionMixService service = new FissionMixService(new AliyunIceProperties(), new ObjectMapper());
+		FissionMixRequest request = new FissionMixRequest(
+				List.of(
+						new FissionMixRequest.ShotGroup(
+								"group-3",
+								3,
+								"门店字幕分镜",
+								"4.00s",
+								"底部有原片字幕",
+								"先把底部字幕挡掉。",
+								"standard",
+								List.of(
+										new FissionMixRequest.VideoAsset("clip-3", "scene03", "4.00s", "https://example.com/scene03.mp4", "scene03")
+								),
+								List.of()
+						)
+				),
+				List.of(),
+				List.of(),
+				new FissionMixRequest.MixSettings(true, true, true, true, 100, true, 720, 1280, 6000),
+				0,
+				"https://example.com/output-mask.mp4",
+				true
+		);
+
+		JsonNode timeline = service.buildTimeline(request);
+		JsonNode cropEffect = timeline.path("VideoTracks").get(0).path("VideoTrackClips").get(0).path("Effects").get(0);
+
+		assertEquals("Crop", cropEffect.path("Type").asText());
+		assertEquals(0.86, cropEffect.path("Height").asDouble(), 0.0001);
 	}
 }

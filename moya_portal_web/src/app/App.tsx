@@ -59,6 +59,12 @@ const navItems = [
   { to: '/settings', label: '设置', icon: Settings }
 ];
 
+const editorLoadingStages = [
+  '正在预热资源引擎',
+  '正在装配时间线布局',
+  '正在连接素材与预览面板'
+];
+
 const LazyEditorPage = lazy(async () => {
   const module = await import('@/features/editor/EditorPage');
   return { default: module.EditorPage };
@@ -1056,8 +1062,34 @@ export function App() {
 function EditorRouteLoading() {
   return (
     <section className="editor-route-loading" aria-live="polite">
-      <strong>正在加载剪辑工作台</strong>
-      <span>首次进入会稍慢一些，资源加载完成后会更流畅。</span>
+      <div className="editor-route-loading-shell" role="status" aria-label="正在加载剪辑工作台">
+        <div className="editor-route-loading-orbit" aria-hidden="true">
+          <span className="editor-route-loading-halo" />
+          <img src={moyaMatrixLogo} alt="" />
+          <i className="editor-route-loading-dot dot-a" />
+          <i className="editor-route-loading-dot dot-b" />
+          <i className="editor-route-loading-dot dot-c" />
+        </div>
+        <div className="editor-route-loading-copy">
+          <small>moya matrix editor</small>
+          <strong>正在加载剪辑工作台</strong>
+          <span>首次进入会稍慢一些，资源加载完成后会更流畅。</span>
+        </div>
+        <div className="editor-route-loading-track" aria-hidden="true">
+          <div className="editor-route-loading-track-bar" />
+        </div>
+        <div className="editor-route-loading-stages" aria-hidden="true">
+          {editorLoadingStages.map((stage, index) => (
+            <article key={stage} style={{ '--stage-delay': `${index * 0.16}s` } as CSSProperties}>
+              <em>{`0${index + 1}`}</em>
+              <div>
+                <strong>{stage}</strong>
+                <span />
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }

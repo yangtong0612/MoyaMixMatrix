@@ -58,6 +58,7 @@ public record FissionMixRequest(
 			Boolean ducking,
 			Boolean fadeInOut,
 			Integer volume,
+			Boolean maskSubtitles,
 			Integer width,
 			Integer height,
 			Integer bitrate

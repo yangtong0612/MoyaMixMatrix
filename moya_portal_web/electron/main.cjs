@@ -962,6 +962,8 @@ async function renderFissionMix(request = {}) {
   }
 }
 
+const FISSION_SUBTITLE_MASK_CROP_RATIO = 0.86;
+
 async function renderFissionMixScene(scene, outputPath, sourceCache) {
   const videoSource = await prepareFissionMixSource(scene.videoSource, {
     folder: 'fission/render-inputs',
@@ -1011,8 +1013,11 @@ async function renderFissionMixScene(scene, outputPath, sourceCache) {
     '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'
   );
 
+  const subtitleMaskFilter = scene.maskSubtitles
+    ? `,crop=iw:trunc(ih*${FISSION_SUBTITLE_MASK_CROP_RATIO.toFixed(4)}/2)*2:0:0`
+    : '';
   const filters = [
-    `[0:v]trim=start=${formatFfmpegSeconds(videoIn)}:end=${formatFfmpegSeconds(videoOut)},setpts=PTS-STARTPTS,scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=${fps},format=yuv420p[v]`,
+    `[0:v]trim=start=${formatFfmpegSeconds(videoIn)}:end=${formatFfmpegSeconds(videoOut)},setpts=PTS-STARTPTS${subtitleMaskFilter},scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=${fps},format=yuv420p[v]`,
     `[${silenceInputIndex}:a]atrim=duration=${formatFfmpegSeconds(sceneDuration)},asetpts=PTS-STARTPTS[sil]`
   ];
   const audioMixLabels = ['[sil]'];
@@ -1217,6 +1222,7 @@ function normalizeFissionMixScene(scene, index) {
     bitrate: positiveNumberOr(scene.bitrate, 6000),
     fps: positiveNumberOr(scene.fps, 30),
     fadeInOut: Boolean(scene.fadeInOut),
+    maskSubtitles: Boolean(scene.maskSubtitles),
     voiceLocked: Boolean(scene.voiceLocked),
     contentProfile: typeof scene.contentProfile === 'string' ? scene.contentProfile : 'standard',
     audioSelectionSource: typeof scene.audioSelectionSource === 'string' ? scene.audioSelectionSource : undefined,
@@ -2068,6 +2074,7 @@ function putFileToSignedUrl(uploadUrl, filePath, options) {
   return new Promise((resolve, reject) => {
     const targetUrl = new URL(uploadUrl);
     const client = targetUrl.protocol === 'https:' ? https : http;
+    const timeoutMs = Math.max(30000, Number(options.timeoutMs) || ossUploadTimeoutMs);
     let uploaded = 0;
     const request = client.request(
       targetUrl,
@@ -2093,13 +2100,10 @@ function putFileToSignedUrl(uploadUrl, filePath, options) {
         });
       }
     );
-    request.setTimeout(ossUploadTimeoutMs, () => {
-      request.destroy(new Error('OSS upload timed out'));
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`OSS upload timed out after ${Math.round(timeoutMs / 1000)}s`));
     });
     request.on('error', reject);
-    request.setTimeout(120000, () => {
-      request.destroy(new Error('OSS upload timeout, please check network or signed URL'));
-    });
     const stream = fsSync.createReadStream(filePath);
     stream.on('data', (chunk) => {
       uploaded += chunk.length;

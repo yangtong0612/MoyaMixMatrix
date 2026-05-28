@@ -52,6 +52,7 @@ export interface AliyunMixSettings {
   ducking: boolean;
   fadeInOut: boolean;
   volume: number;
+  maskSubtitles: boolean;
   compositionMode?: 'segments' | 'waterfall';
   width?: number;
   height?: number;
@@ -99,7 +100,7 @@ export interface AliyunMixRequest {
     speechEnd?: number;
     speechDuration?: number;
   }>;
-  settings: Required<Pick<AliyunMixSettings, 'followAudioSpeed' | 'retainOriginalAudio' | 'ducking' | 'fadeInOut' | 'volume'>> & {
+  settings: Required<Pick<AliyunMixSettings, 'followAudioSpeed' | 'retainOriginalAudio' | 'ducking' | 'fadeInOut' | 'volume' | 'maskSubtitles'>> & {
     width: number;
     height: number;
     bitrate: number;
@@ -335,6 +336,7 @@ export function buildAliyunMixRequest(input: {
       ducking: input.settings.ducking,
       fadeInOut: input.settings.fadeInOut,
       volume: input.settings.volume,
+      maskSubtitles: input.settings.maskSubtitles,
       width: input.settings.width || 720,
       height: input.settings.height || 1280,
       bitrate: input.settings.bitrate || 6000

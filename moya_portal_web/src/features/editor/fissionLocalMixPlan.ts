@@ -47,6 +47,7 @@ export interface LocalFissionMixSettings {
   ducking: boolean;
   fadeInOut: boolean;
   volume: number;
+  maskSubtitles: boolean;
   compositionMode?: 'segments' | 'waterfall';
   width?: number;
   height?: number;
@@ -76,6 +77,7 @@ export interface LocalFissionMixScene {
   bitrate: number;
   fps: number;
   fadeInOut: boolean;
+  maskSubtitles: boolean;
   voiceLocked: boolean;
   contentProfile: FissionMixSelectionProfile;
   audioSelectionSource?: FissionMixAudioSource;
@@ -257,6 +259,7 @@ export async function buildLocalFissionMixPlan<
       bitrate: positiveOr(input.settings.bitrate, DEFAULT_BITRATE),
       fps: positiveOr(input.settings.fps, DEFAULT_FPS),
       fadeInOut: input.settings.fadeInOut,
+      maskSubtitles: input.settings.maskSubtitles,
       voiceLocked: lockSceneToAudio,
       contentProfile: selection.selectionProfile,
       audioSelectionSource: selection.audioSource,

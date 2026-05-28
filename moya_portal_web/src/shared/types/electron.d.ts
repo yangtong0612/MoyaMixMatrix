@@ -110,6 +110,7 @@ export interface LocalFissionMixScene {
   bitrate: number;
   fps: number;
   fadeInOut: boolean;
+  maskSubtitles: boolean;
   voiceLocked: boolean;
   contentProfile: 'standard' | 'human_presenter' | 'digital_human';
   audioSelectionSource?: 'group' | 'global' | 'ai';

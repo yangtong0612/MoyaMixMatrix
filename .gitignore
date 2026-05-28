@@ -1,4 +1,6 @@
 .sixth/
+.codex/
+.codex-run-logs/
 .DS_Store
 Thumbs.db
 *.log

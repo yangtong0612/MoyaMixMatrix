@@ -33,6 +33,7 @@ public class FissionMixService {
 	private static final int DEFAULT_HEIGHT = 1280;
 	private static final int DEFAULT_BITRATE = 6000;
 	private static final double DEFAULT_SCENE_DURATION = 3.0;
+	private static final double SUBTITLE_MASK_CROP_HEIGHT_RATIO = 0.86;
 	private static final double PRESENTER_MIN_EFFECTIVE_SPEECH_SECONDS = 0.45;
 	private static final double PRESENTER_OVERLONG_CLIP_THRESHOLD_SECONDS = 0.55;
 	private static final double PRESENTER_OVERLONG_AUDIO_THRESHOLD_SECONDS = 1.15;
@@ -169,10 +170,23 @@ public class FissionMixService {
 			videoClip.put("Height", 0.9999);
 			videoClip.put("X", 0);
 			videoClip.put("Y", 0);
+			List<Map<String, Object>> videoEffects = new ArrayList<>();
+			if (Boolean.TRUE.equals(settings(request).maskSubtitles())) {
+				videoEffects.add(Map.of(
+						"Type", "Crop",
+						"X", 0,
+						"Y", 0,
+						"Width", 1,
+						"Height", SUBTITLE_MASK_CROP_HEIGHT_RATIO
+				));
+			}
 			if (Boolean.FALSE.equals(settings(request).retainOriginalAudio()) || lockSceneToAudio) {
-				videoClip.put("Effects", List.of(Map.of("Type", "Volume", "Gain", 0)));
+				videoEffects.add(Map.of("Type", "Volume", "Gain", 0));
 			} else if (Boolean.TRUE.equals(settings(request).ducking()) && audio != null) {
-				videoClip.put("Effects", List.of(Map.of("Type", "Volume", "Gain", 0.2)));
+				videoEffects.add(Map.of("Type", "Volume", "Gain", 0.2));
+			}
+			if (!videoEffects.isEmpty()) {
+				videoClip.put("Effects", videoEffects);
 			}
 			videoClips.add(videoClip);
 
@@ -531,7 +545,7 @@ public class FissionMixService {
 	private FissionMixRequest.MixSettings settings(FissionMixRequest request) {
 		FissionMixRequest.MixSettings settings = request.settings();
 		return settings == null
-				? new FissionMixRequest.MixSettings(true, true, true, true, 100, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_BITRATE)
+				? new FissionMixRequest.MixSettings(true, true, true, true, 100, false, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_BITRATE)
 				: settings;
 	}
 
