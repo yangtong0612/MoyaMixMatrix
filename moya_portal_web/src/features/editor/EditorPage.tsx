@@ -4078,7 +4078,7 @@ function FissionWorkspace(props: {
 }) {
   const setNavigationLock = useEditorStore((state) => state.setNavigationLock);
   const draftLoadedRef = useRef(false);
-  const generationTimerRef = useRef<number>();
+  const generationTimerRef = useRef<number | undefined>(undefined);
   const protectedMediaUrlCacheRef = useRef(new Map<string, string>());
   const protectedMediaUrlPendingRef = useRef(new Map<string, Promise<string | undefined>>());
   const localMixSourceCacheRef = useRef(new Map<string, string | null>());
@@ -4133,7 +4133,7 @@ END：4秒，收束行动指令和品牌露出`);
   const statusStackRef = useRef<HTMLDivElement>(null);
   const strategyCardsRef = useRef<HTMLDivElement>(null);
   const previewGridRef = useRef<HTMLDivElement>(null);
-  const previewGridScrollTimerRef = useRef<number>();
+  const previewGridScrollTimerRef = useRef<number | undefined>(undefined);
   const previewGridScrollingRef = useRef(false);
   const generatedThumbnailQueueRef = useRef<string[]>([]);
   const generatedThumbnailPendingRef = useRef(new Set<string>());
