@@ -14092,6 +14092,18 @@ progress::-webkit-progress-value {
   min-height: 0;
 }
 
+.fission-right.result-expanded > .fission-section-title,
+.fission-right.result-expanded > .strategy-summary,
+.fission-right.result-expanded > .strategy-selection-toolbar,
+.fission-right.result-expanded > .strategy-card-shell {
+  display: none;
+}
+
+.fission-right.result-expanded .fission-result-shell {
+  flex: 1 1 auto;
+  height: 100%;
+}
+
 .fission-right .fission-section-title {
   display: flex;
   align-items: center;
@@ -14152,11 +14164,9 @@ progress::-webkit-progress-value {
   background: rgb(49 85 217 / 14%);
 }
 
-.strategy-summary span em {
-  color: inherit;
-  font-size: 11px;
-  font-style: normal;
-  opacity: 0.82;
+.strategy-summary span svg {
+  flex: 0 0 auto;
+  opacity: 0.88;
 }
 
 .strategy-summary span strong {
@@ -14308,20 +14318,31 @@ progress::-webkit-progress-value {
 .strategy-card-meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
 }
 
-.strategy-card-meta em {
+.strategy-icon-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
+  gap: 5px;
+  min-height: 24px;
   padding: 0 8px;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 999px;
   background: rgb(10 13 20 / 26%);
   color: #eef4ff;
   font-size: 11px;
-  font-style: normal;
+}
+
+.strategy-icon-chip svg {
+  flex: 0 0 auto;
+}
+
+.strategy-icon-chip b {
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .strategy-card-note {
@@ -14390,6 +14411,22 @@ progress::-webkit-progress-value {
   gap: 8px;
   min-height: 0;
   padding: 8px;
+}
+
+.fission-result-shell.is-immersive {
+  gap: 10px;
+  height: 100%;
+  max-height: 100%;
+  padding: 10px;
+  overscroll-behavior: contain;
+}
+
+.fission-result-shell.is-immersive .fission-preview-grid {
+  min-height: 0;
+}
+
+.fission-result-shell.is-immersive .fission-preview-grid.generated {
+  padding: 10px;
 }
 
 .material-filter-row {
@@ -14482,6 +14519,44 @@ progress::-webkit-progress-value {
   font-size: 14px;
 }
 
+.fission-panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: #e2e8f0;
+  border-color: #3a3a3d;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 6%), transparent),
+    #16181d;
+  white-space: nowrap;
+}
+
+.fission-panel-toggle:hover {
+  border-color: rgb(99 102 241 / 36%);
+  background:
+    linear-gradient(180deg, rgb(99 102 241 / 10%), transparent),
+    #1a1d24;
+  color: #ffffff;
+}
+
+.fission-panel-toggle[aria-pressed="true"] {
+  border-color: rgb(99 102 241 / 40%);
+  background:
+    linear-gradient(180deg, rgb(99 102 241 / 16%), transparent),
+    #1c2233;
+  color: #ffffff;
+}
+
+.fission-panel-toggle span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .fission-preview-note {
   color: #9aa4b5;
   font-size: 11px;
@@ -14553,6 +14628,8 @@ progress::-webkit-progress-value {
   align-content: start;
   height: max-content;
   gap: 6px;
+  content-visibility: auto;
+  contain-intrinsic-size: 260px;
 }
 
 .fission-result-group-header {
@@ -14569,10 +14646,11 @@ progress::-webkit-progress-value {
 }
 
 .fission-result-group-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 10px;
+  width: 100%;
   min-width: 0;
 }
 
@@ -14592,7 +14670,7 @@ progress::-webkit-progress-value {
 }
 
 .fission-result-group-header strong {
-  flex: 1 1 240px;
+  min-width: 0;
   padding: 0;
   background: transparent;
   color: #f4f4f5;
@@ -14607,31 +14685,18 @@ progress::-webkit-progress-value {
   font-size: 12px;
 }
 
-.fission-result-scene-titles {
+.fission-result-group-stat-row {
   display: flex;
   flex-wrap: wrap;
-  flex: 1 1 100%;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
 }
 
-.fission-result-scene-chip {
+.fission-result-group-stat-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 999px;
-  background: rgb(255 255 255 / 6%);
-  color: #dbe7ff;
-  font-size: 11px;
-  font-style: normal;
-  line-height: 1.4;
-}
-
-.fission-result-group-count {
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
+  gap: 5px;
   min-height: 22px;
   padding: 0 8px;
   border: 1px solid rgb(142 162 255 / 16%);
@@ -14639,6 +14704,29 @@ progress::-webkit-progress-value {
   background: rgb(49 85 217 / 14%);
   color: #9eb7ff;
   font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.fission-result-group-stat-chip svg {
+  flex: 0 0 auto;
+  opacity: 0.9;
+}
+
+.fission-result-group-stat-chip b {
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@media (max-width: 1500px) {
+  .fission-result-group-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fission-result-group-stat-row {
+    justify-content: flex-start;
+  }
 }
 
 .fission-result-group-grid {
@@ -14651,7 +14739,7 @@ progress::-webkit-progress-value {
 
 .fission-preview-grid.generated .fission-result-group-grid {
   grid-auto-flow: column;
-  grid-auto-columns: minmax(168px, 180px);
+  grid-auto-columns: minmax(112px, 124px);
   grid-template-columns: none;
   grid-auto-rows: max-content;
   overflow-x: auto;
@@ -14703,7 +14791,8 @@ progress::-webkit-progress-value {
 
 .fission-waterfall-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(112px, 124px));
+  justify-content: start;
   align-self: start;
   height: max-content;
   align-items: start;
@@ -14728,7 +14817,9 @@ progress::-webkit-progress-value {
 .fission-preview-grid.generated article {
   align-self: start;
   height: auto;
-  min-height: 178px;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  contain: layout paint style;
 }
 
 .fission-preview-grid article > span {
@@ -14802,6 +14893,34 @@ progress::-webkit-progress-value {
 .fission-card-cover {
   position: relative;
   overflow: hidden;
+}
+
+.fission-preview-grid.generated .fission-card-cover,
+.fission-waterfall-grid .fission-card-cover {
+  aspect-ratio: 9 / 16;
+}
+
+.fission-preview-grid.generated strong,
+.fission-waterfall-grid strong {
+  height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 24px;
+  text-align: left;
+}
+
+.fission-card-cover.pending {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 10%), transparent 36%),
+    linear-gradient(135deg, #2a3446, #14181f);
+}
+
+.fission-card-cover-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: rgb(219 234 254 / 78%);
 }
 
 .fission-card-cover video {
@@ -15008,6 +15127,138 @@ progress::-webkit-progress-value {
   color: #ffffff;
   border-color: #4a4a4d;
   background: linear-gradient(180deg, #3a3a3d, #202124);
+}
+
+.fission-composition-info {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #303033;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 2.6%), rgb(255 255 255 / 1%));
+}
+
+.fission-composition-chip-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.fission-composition-chip-row::-webkit-scrollbar {
+  display: none;
+}
+
+.fission-composition-chip-row > span,
+.fission-composition-chip-row > em {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 20px;
+  font-style: normal;
+}
+
+.fission-composition-chip-row > span {
+  gap: 5px;
+  background: rgb(49 85 217 / 14%);
+  color: #8ea2ff;
+}
+
+.fission-composition-chip-row > span svg {
+  flex: 0 0 auto;
+  opacity: 0.88;
+}
+
+.fission-composition-chip-row > span strong {
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fission-composition-chip-row > b {
+  flex: 0 0 auto;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.fission-composition-chip-row > em {
+  border: 1px solid rgb(99 102 241 / 28%);
+  background: rgb(49 83 217 / 12%);
+  color: #dbeafe;
+}
+
+.fission-composition-copy {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  color: #9aa4b2;
+  font-size: 11px;
+}
+
+.fission-composition-copy-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+  min-height: 24px;
+  max-width: 230px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid rgb(99 102 241 / 22%);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgb(99 102 241 / 12%), rgb(99 102 241 / 5%)),
+    rgb(15 23 42 / 18%);
+  color: #c7d2fe;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.fission-composition-copy-chip svg {
+  flex: 0 0 auto;
+  color: #93c5fd;
+}
+
+.fission-composition-copy-chip strong,
+.fission-composition-copy-chip em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fission-composition-copy-chip strong {
+  color: #eef2ff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fission-composition-copy-chip em {
+  color: #a5b4fc;
+  font-size: 10px;
+  font-style: normal;
+}
+
+@media (max-width: 1400px) {
+  .fission-composition-info {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fission-composition-copy {
+    justify-content: flex-start;
+  }
 }
 
 /* Refined fission workbench theme */
@@ -16028,6 +16279,11 @@ progress::-webkit-progress-value {
   box-shadow: 0 28px 80px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
+.media-preview-dialog.with-details {
+  width: min(1120px, calc(100vw - 64px));
+  max-height: min(760px, calc(100vh - 84px));
+}
+
 .media-preview-dialog header {
   display: flex;
   align-items: center;
@@ -16082,6 +16338,20 @@ progress::-webkit-progress-value {
   min-height: 320px;
   padding: 16px;
   background: #101112;
+}
+
+.media-preview-body.has-sidebar {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  align-items: stretch;
+  gap: 16px;
+  place-items: stretch;
+}
+
+.media-preview-stage-shell {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
 }
 
 .media-preview-body video {
@@ -16149,6 +16419,138 @@ progress::-webkit-progress-value {
   width: min(640px, 100%);
 }
 
+.media-preview-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  max-height: min(620px, calc(100vh - 190px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.media-preview-info-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #343a42;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 4%), transparent 72%),
+    #15181d;
+}
+
+.media-preview-info-card header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+}
+
+.media-preview-info-card strong,
+.media-preview-scene-head strong {
+  overflow: visible;
+  text-overflow: initial;
+  white-space: normal;
+}
+
+.media-preview-info-card header strong {
+  font-size: 13px;
+}
+
+.media-preview-info-card p {
+  margin: 0;
+  color: #d6dde7;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.media-preview-scene-list {
+  display: grid;
+  gap: 10px;
+}
+
+.media-preview-scene-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #30343a;
+  border-radius: 12px;
+  background: #101318;
+}
+
+.media-preview-scene-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.media-preview-scene-chip {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 0 10px;
+  border: 1px solid rgb(96 165 250 / 20%);
+  border-radius: 999px;
+  background: rgb(30 41 59 / 82%);
+  color: #dbeafe;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.media-preview-scene-row {
+  display: grid;
+  gap: 4px;
+}
+
+.media-preview-scene-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.media-preview-scene-row p {
+  margin: 0;
+  color: #e4e8ef;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.media-preview-scene-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.media-preview-scene-inline em,
+.media-preview-scene-strategy {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 11px;
+  line-height: 22px;
+}
+
+.media-preview-scene-inline em {
+  border: 1px solid #334155;
+  color: #d6dde7;
+  background: rgb(15 23 42 / 68%);
+}
+
+.media-preview-scene-strategy {
+  justify-self: flex-start;
+  border: 1px solid rgb(99 102 241 / 18%);
+  color: #c7d2fe;
+  background: rgb(49 46 129 / 24%);
+}
+
 .media-preview-empty {
   display: grid;
   place-items: center;
@@ -16157,6 +16559,22 @@ progress::-webkit-progress-value {
   color: #a1a1aa;
   border: 1px dashed #343a42;
   border-radius: 6px;
+}
+
+@media (max-width: 980px) {
+  .media-preview-dialog.with-details {
+    width: min(880px, calc(100vw - 32px));
+    max-height: min(880px, calc(100vh - 36px));
+  }
+
+  .media-preview-body.has-sidebar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .media-preview-sidebar {
+    max-height: none;
+    padding-right: 0;
+  }
 }
 
 .fission-preview-grid article:hover {
@@ -18455,6 +18873,49 @@ progress::-webkit-progress-value {
   box-shadow: 0 10px 24px rgb(15 23 42 / 8%);
 }
 
+.theme-light.editor-workbench .media-preview-info-card {
+  border-color: #d7e0ec;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 94%), transparent 72%),
+    #ffffff;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 8%);
+}
+
+.theme-light.editor-workbench .media-preview-info-card p {
+  color: #475569;
+}
+
+.theme-light.editor-workbench .media-preview-scene-card {
+  border-color: #d7e0ec;
+  background: #f8fafc;
+}
+
+.theme-light.editor-workbench .media-preview-scene-chip {
+  border-color: rgb(91 126 255 / 18%);
+  background: #eef4ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .media-preview-scene-row span {
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .media-preview-scene-row p {
+  color: #1e293b;
+}
+
+.theme-light.editor-workbench .media-preview-scene-inline em {
+  border-color: #cfd9e7;
+  background: #ffffff;
+  color: #334155;
+}
+
+.theme-light.editor-workbench .media-preview-scene-strategy {
+  border-color: rgb(91 126 255 / 18%);
+  background: #eef4ff;
+  color: #4f63d8;
+}
+
 .theme-light.editor-workbench .media-preview-empty {
   color: #64748b;
   border-color: #d7e0ec;
@@ -19606,6 +20067,11 @@ progress::-webkit-progress-value {
   color: #526173;
 }
 
+.theme-light.editor-workbench .fission-board .strategy-summary span svg,
+.theme-light.editor-workbench .fission-board .strategy-icon-chip svg {
+  color: #4f63d8;
+}
+
 .theme-light.editor-workbench .fission-board .strategy-summary span strong {
   color: #17202e;
 }
@@ -19670,10 +20136,14 @@ progress::-webkit-progress-value {
   color: #4f63d8;
 }
 
-.theme-light.editor-workbench .fission-board .strategy-card-meta em {
+.theme-light.editor-workbench .fission-board .strategy-icon-chip {
   border-color: #d2dce8;
   background: #f8fbff;
   color: #526173;
+}
+
+.theme-light.editor-workbench .fission-board .strategy-icon-chip b {
+  color: #17202e;
 }
 
 .theme-light.editor-workbench .fission-board .strategy-card-note {
@@ -20323,6 +20793,12 @@ progress::-webkit-progress-value {
   padding: 10px;
 }
 
+.theme-light.editor-workbench .fission-board .fission-right.result-expanded {
+  background:
+    radial-gradient(circle at top right, rgb(91 126 255 / 8%), transparent 24%),
+    linear-gradient(180deg, #ffffff 0%, #f6f9fc 100%);
+}
+
 .theme-light.editor-workbench .fission-board .fission-result-group-grid,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid {
   scrollbar-color: #aebfd4 #eef3f9;
@@ -20391,6 +20867,16 @@ progress::-webkit-progress-value {
   backdrop-filter: blur(8px);
 }
 
+.theme-light.editor-workbench .fission-board .fission-card-cover.pending {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 62%), transparent 34%),
+    linear-gradient(135deg, #eef3f9, #dbe5f1);
+}
+
+.theme-light.editor-workbench .fission-board .fission-card-cover-placeholder {
+  color: #6b7fa5;
+}
+
 .theme-light.editor-workbench .fission-board .fission-result-actions .danger-action:hover,
 .theme-light.editor-workbench .fission-board .danger-action:hover {
   border-color: #fda4af;
@@ -20399,6 +20885,7 @@ progress::-webkit-progress-value {
 }
 
 .theme-light.editor-workbench .fission-board .fission-result-strategy-bar,
+.theme-light.editor-workbench .fission-board .fission-composition-info,
 .theme-light.editor-workbench .fission-board .fission-pagination {
   border-color: #dbe4ef;
   background:
@@ -20412,6 +20899,53 @@ progress::-webkit-progress-value {
   color: #0f172a;
 }
 
+.theme-light.editor-workbench .fission-board .fission-composition-chip-row > span {
+  background: #eef3ff;
+  color: #526173;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-chip-row > span svg {
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-chip-row > span strong {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-chip-row > b {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-chip-row > em {
+  border-color: rgb(91 126 255 / 18%);
+  background: #eef4ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-copy {
+  color: #64748b;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-copy-chip {
+  border-color: rgb(91 126 255 / 18%);
+  background:
+    linear-gradient(180deg, #ffffff 0%, #eef4ff 100%),
+    #ffffff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-copy-chip svg {
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-copy-chip strong {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .fission-composition-copy-chip em {
+  color: #526173;
+}
+
 .theme-light.editor-workbench .fission-board .fission-pagination-meta small {
   color: #64748b;
 }
@@ -20420,6 +20954,25 @@ progress::-webkit-progress-value {
   border-color: #d2dce8;
   background: linear-gradient(180deg, #ffffff, #f4f7fb);
   color: #334155;
+}
+
+.theme-light.editor-workbench .fission-board .fission-panel-toggle {
+  border-color: #d2dce8;
+  background: linear-gradient(180deg, #ffffff, #f4f7fb);
+  color: #334155;
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+
+.theme-light.editor-workbench .fission-board .fission-panel-toggle:hover {
+  border-color: rgb(91 126 255 / 34%);
+  background: #eef3ff;
+  color: #4f63d8;
+}
+
+.theme-light.editor-workbench .fission-board .fission-panel-toggle[aria-pressed="true"] {
+  border-color: rgb(91 126 255 / 26%);
+  background: #eef3ff;
+  color: #4f63d8;
 }
 
 .theme-light.editor-workbench .fission-board .fission-pagination button:hover {
@@ -20540,10 +21093,7 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .fission-board .fission-result-group-meta,
 .theme-light.editor-workbench .fission-board .fission-waterfall-results > header > div {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  gap: 8px 10px;
   min-height: auto;
   background: transparent;
   box-shadow: none;
@@ -20556,24 +21106,18 @@ progress::-webkit-progress-value {
   color: #0f172a;
 }
 
-.theme-light.editor-workbench .fission-board .fission-result-scene-chip {
+.theme-light.editor-workbench .fission-board .fission-result-group-stat-chip {
   border-color: rgb(91 126 255 / 16%);
   background: #f8fbff;
-  color: #334155;
+  color: #4f63d8;
 }
 
-.theme-light.editor-workbench .fission-board .fission-result-group-count,
-.theme-light.editor-workbench .fission-board .fission-waterfall-results > header span {
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border: 1px solid rgb(91 126 255 / 16%);
-  border-radius: 999px;
-  background: #eef4ff;
-  color: #4860d4;
-  font-weight: 600;
+.theme-light.editor-workbench .fission-board .fission-result-group-stat-chip b {
+  color: #17202e;
+}
+
+.theme-light.editor-workbench .fission-board .fission-result-group-stat-chip svg {
+  color: #4f63d8;
 }
 
 .theme-light.editor-workbench .fission-board .fission-result-group-actions {
@@ -20589,31 +21133,31 @@ progress::-webkit-progress-value {
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid {
   align-self: start;
   height: max-content;
-  gap: 10px;
+  gap: 8px;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated .fission-result-group-grid {
-  grid-auto-columns: minmax(176px, 188px);
+  grid-auto-columns: minmax(112px, 124px);
   grid-auto-rows: max-content;
   padding: 2px 2px 8px;
-  scroll-snap-type: x proximity;
+  scroll-snap-type: none;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated article,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid article {
   align-self: start;
   height: auto;
-  grid-template-rows: minmax(0, 1fr) 34px 26px;
-  border-radius: 16px;
-  box-shadow: 0 14px 30px rgb(15 23 42 / 8%);
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-  scroll-snap-align: start;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  border-radius: 12px;
+  box-shadow: 0 8px 18px rgb(15 23 42 / 6%);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+  scroll-snap-align: none;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated article:hover,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid article:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 18px 34px rgb(15 23 42 / 10%);
+  box-shadow: 0 10px 20px rgb(15 23 42 / 7%);
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated article.selected,
@@ -20621,17 +21165,16 @@ progress::-webkit-progress-value {
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid article.selected,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid article.batch-selected {
   background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
-  box-shadow: inset 0 0 0 1px rgb(91 126 255 / 24%), 0 18px 36px rgb(91 126 255 / 14%);
-  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px rgb(91 126 255 / 24%), 0 10px 22px rgb(91 126 255 / 10%);
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated article > span,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid article > span {
-  left: 8px;
-  top: 8px;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 8px;
+  left: 6px;
+  top: 6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
   border: 1px solid rgb(255 255 255 / 72%);
   border-radius: 999px;
   background: rgb(255 255 255 / 92%);
@@ -20643,22 +21186,22 @@ progress::-webkit-progress-value {
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated .preview-card-play,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid .preview-card-select,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid .preview-card-play {
-  top: 8px;
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
   border-radius: 999px;
   box-shadow: 0 8px 18px rgb(15 23 42 / 12%);
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated .preview-card-select,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid .preview-card-select {
-  right: 40px;
+  right: 32px;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated .preview-card-play,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid .preview-card-play {
-  right: 8px;
+  right: 6px;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated .fission-card-cover,
@@ -20670,18 +21213,18 @@ progress::-webkit-progress-value {
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated strong,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid strong {
-  height: 34px;
-  padding: 0 10px;
+  height: 24px;
+  padding: 0 6px;
   background: #ffffff;
-  line-height: 34px;
+  line-height: 24px;
   text-align: left;
 }
 
 .theme-light.editor-workbench .fission-board .fission-preview-grid.generated .fission-preview-meta,
 .theme-light.editor-workbench .fission-board .fission-waterfall-grid .fission-preview-meta {
-  height: 26px;
-  padding: 0 10px;
+  height: 20px;
+  padding: 0 6px;
   background: #f8fafc;
-  line-height: 26px;
+  line-height: 20px;
   text-align: left;
 }

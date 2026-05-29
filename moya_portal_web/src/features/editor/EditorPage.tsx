@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type PointerEvent, type SyntheticEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type PointerEvent, type SyntheticEvent } from 'react';
 import {
   CheckCircle2,
+  Clock3,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -20,6 +21,7 @@ import {
   Maximize2,
   Menu,
   Mic,
+  Minimize2,
   MousePointer2,
   Music,
   Pause,
@@ -117,7 +119,7 @@ export function EditorPage() {
   const editor = useEditorStore();
   const [searchParams] = useSearchParams();
   const [lastSavedAt, setLastSavedAt] = useState<string>('-');
-  const [activeWorkflow, setActiveWorkflow] = useState<EditorWorkflow>('materials');
+  const [activeWorkflow, setActiveWorkflow] = useState<EditorWorkflow>(() => readInitialEditorWorkflow());
   const [menuOpen, setMenuOpen] = useState(false);
   const [workspaceBootstrapped, setWorkspaceBootstrapped] = useState(false);
   const [workspaceBootstrapPending, setWorkspaceBootstrapPending] = useState(false);
@@ -138,6 +140,14 @@ export function EditorPage() {
       setActiveWorkflow(workflow);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EDITOR_ACTIVE_WORKFLOW_KEY, activeWorkflow);
+    } catch {
+      // Ignore storage failures and keep the current in-memory workflow.
+    }
+  }, [activeWorkflow]);
 
   async function importLocalFiles() {
     const files = await window.surgicol.dialog.openFiles({
@@ -520,6 +530,18 @@ function isEditorWorkflow(value: string | null): value is EditorWorkflow {
   return value === 'materials' || value === 'viral' || value === 'fission' || value === 'finished' || value === 'optimize' || value === 'publish';
 }
 
+const EDITOR_ACTIVE_WORKFLOW_KEY = 'editor:active-workflow';
+
+function readInitialEditorWorkflow(): EditorWorkflow {
+  if (typeof window === 'undefined') return 'materials';
+  try {
+    const stored = window.localStorage.getItem(EDITOR_ACTIVE_WORKFLOW_KEY);
+    return isEditorWorkflow(stored) ? stored : 'materials';
+  } catch {
+    return 'materials';
+  }
+}
+
 const fissionSteps = [
   { title: '开头', count: 8, duration: '2.10s-8.20s', active: false },
   { title: '平台引入', count: 1, duration: '3.32s', active: false },
@@ -595,6 +617,7 @@ type GeneratedFissionVideo = FissionPreviewItem & {
   bgmName?: string;
   subtitleMaskApplied?: boolean;
   coverPath?: string;
+  descriptionText?: string;
   groupDetails?: GeneratedFissionGroupDetail[];
   jobId?: string;
   jobStatus?: FissionJobStatus;
@@ -645,6 +668,17 @@ interface GeneratedSegmentWaterfallGroup {
 
 type FissionJobStatus = 'preparing' | 'submitted' | 'running' | 'success' | 'failed';
 
+type PreviewMediaSceneDetail = {
+  id: string;
+  title: string;
+  sceneLabel?: string;
+  script?: string;
+  voiceover?: string;
+  clipName?: string;
+  audioName?: string;
+  strategyText?: string;
+};
+
 type PreviewMediaState = {
   type: 'video' | 'audio';
   name: string;
@@ -652,6 +686,8 @@ type PreviewMediaState = {
   muted?: boolean;
   badge?: string;
   note?: string;
+  descriptionText?: string;
+  sceneDetails?: PreviewMediaSceneDetail[];
   loading?: boolean;
   helperText?: string;
   error?: string;
@@ -688,6 +724,110 @@ interface GeneratedResultBatchGroup {
   view: 'segments' | 'waterfall';
   videos: GeneratedFissionVideo[];
 }
+
+interface FissionResultThumbnailProps {
+  src?: string;
+  active?: boolean;
+}
+
+const FissionResultThumbnail = memo(function FissionResultThumbnail({ src, active = false }: FissionResultThumbnailProps) {
+  const shouldLoad = Boolean(src && active);
+
+  return (
+    <div className={clsx('fission-card-cover', !shouldLoad && 'pending')}>
+      {shouldLoad && src ? (
+        <video src={src} muted playsInline preload="metadata" />
+      ) : (
+        <div className="fission-card-cover-placeholder" aria-hidden="true">
+          <Film size={16} />
+        </div>
+      )}
+    </div>
+  );
+});
+
+interface GeneratedResultVideoCardProps {
+  video: GeneratedFissionVideo;
+  coverUrl?: string;
+  selected: boolean;
+  previewSelected: boolean;
+  eagerPreview?: boolean;
+  onToggleSelection: (selectionKey: string) => void;
+  onSetSelectedPreviewId: (videoId: string) => void;
+  onPreview: (video: GeneratedFissionVideo) => void | Promise<void>;
+}
+
+const GeneratedResultVideoCard = memo(function GeneratedResultVideoCard({
+  video,
+  coverUrl,
+  selected,
+  previewSelected,
+  eagerPreview = false,
+  onToggleSelection,
+  onSetSelectedPreviewId,
+  onPreview
+}: GeneratedResultVideoCardProps) {
+  const [thumbnailActive, setThumbnailActive] = useState(false);
+  const shouldLoadThumbnail = eagerPreview || previewSelected || thumbnailActive;
+
+  return (
+    <article
+      className={clsx(previewSelected && 'selected', selected && 'batch-selected')}
+      role="button"
+      tabIndex={0}
+      onMouseEnter={() => setThumbnailActive(true)}
+      onMouseLeave={() => setThumbnailActive(false)}
+      onFocus={() => setThumbnailActive(true)}
+      onBlur={() => setThumbnailActive(false)}
+      onClick={() => {
+        onToggleSelection(video.id);
+        onSetSelectedPreviewId(video.id);
+      }}
+      onDoubleClick={() => void onPreview(video)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') void onPreview(video);
+        if (event.key === ' ') {
+          event.preventDefault();
+          onToggleSelection(video.id);
+          onSetSelectedPreviewId(video.id);
+        }
+      }}
+    >
+      <span>{video.label}</span>
+      <button
+        className="preview-card-select"
+        type="button"
+        title={selected ? '取消选择' : '选择该结果'}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleSelection(video.id);
+          onSetSelectedPreviewId(video.id);
+        }}
+      >
+        {selected ? <CheckCircle2 size={13} /> : null}
+      </button>
+      <button
+        className="preview-card-play"
+        type="button"
+        title="预览视频"
+        onClick={(event) => {
+          event.stopPropagation();
+          void onPreview(video);
+        }}
+      >
+        <Play size={13} />
+      </button>
+      <FissionResultThumbnail src={coverUrl} active={shouldLoadThumbnail} />
+      <strong>{video.name}</strong>
+    </article>
+  );
+}, (prevProps, nextProps) => (
+  prevProps.video === nextProps.video
+  && prevProps.coverUrl === nextProps.coverUrl
+  && prevProps.selected === nextProps.selected
+  && prevProps.previewSelected === nextProps.previewSelected
+  && prevProps.eagerPreview === nextProps.eagerPreview
+));
 
 type FissionPreviewItem = {
   id: string;
@@ -917,6 +1057,47 @@ function buildGeneratedResultBatchGroups(videos: GeneratedFissionVideo[]): Gener
   return Array.from(batches.values());
 }
 
+function readGeneratedBatchMetric(summary: string, pattern: RegExp) {
+  const match = summary.match(pattern);
+  return match ? Number(match[1]) : undefined;
+}
+
+function buildGeneratedResultHeaderStats(batch: GeneratedResultBatchGroup) {
+  const sceneCount = batch.sceneTitles.length || readGeneratedBatchMetric(batch.summary, /(\d+)\s*个分镜/);
+  const materialCount = readGeneratedBatchMetric(batch.summary, /(\d+)\s*个素材/);
+  const resultCount = readGeneratedBatchMetric(batch.summary, /(\d+)\s*条(?:分镜候选|结果)/);
+  const stats = [];
+
+  if (sceneCount && sceneCount > 0) {
+    stats.push({
+      key: 'scenes',
+      icon: SplitSquareHorizontal,
+      value: String(sceneCount),
+      title: batch.sceneTitles.length > 0 ? batch.sceneTitles.join(' / ') : `${sceneCount} 个分镜`
+    });
+  }
+
+  if (materialCount && materialCount > 0) {
+    stats.push({
+      key: 'materials',
+      icon: ImagePlus,
+      value: String(materialCount),
+      title: `${materialCount} 个素材`
+    });
+  }
+
+  if (resultCount && resultCount > 0) {
+    stats.push({
+      key: 'results',
+      icon: batch.view === 'waterfall' ? Shuffle : Film,
+      value: String(resultCount),
+      title: batch.view === 'waterfall' ? `${resultCount} 条结果` : `${resultCount} 条分镜候选`
+    });
+  }
+
+  return stats;
+}
+
 type FissionAudioScope = 'global' | 'group';
 
 function formatFissionMediaDuration(durationSeconds: number, fallback: string) {
@@ -1031,6 +1212,7 @@ interface FinishedVideoItem {
   draftName?: string;
   batchName?: string;
   coverPath?: string;
+  descriptionText?: string;
   groupDetails?: GeneratedFissionGroupDetail[];
   viralOverlay?: ViralRecentTask;
 }
@@ -3739,6 +3921,7 @@ function FissionWorkspace(props: {
   const [selectedGeneratedIds, setSelectedGeneratedIds] = useState<string[]>([]);
   const [waterfallDialogOpen, setWaterfallDialogOpen] = useState(false);
   const [waterfallCountDraft, setWaterfallCountDraft] = useState(DEFAULT_MIX_BATCH_COUNT);
+  const [isFissionResultExpanded, setIsFissionResultExpanded] = useState(false);
   const [mixBatchCount, setMixBatchCount] = useState(DEFAULT_MIX_BATCH_COUNT);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
@@ -3775,8 +3958,11 @@ END：4秒，收束行动指令和品牌露出`);
   const selectedClipCount = countMixableFissionClips(groups);
   const selectedSceneCount = selectedMixGroups.length;
   const estimatedSelectedCombinationCount = estimateFissionCombinationCount(groups);
-  const generatedResultBatchGroups = buildGeneratedResultBatchGroups(generatedVideos);
-  const generatedSegmentBatchGroups = generatedResultBatchGroups.filter((batch) => batch.view === 'segments');
+  const generatedResultBatchGroups = useMemo(() => buildGeneratedResultBatchGroups(generatedVideos), [generatedVideos]);
+  const generatedSegmentBatchGroups = useMemo(
+    () => generatedResultBatchGroups.filter((batch) => batch.view === 'segments'),
+    [generatedResultBatchGroups]
+  );
   const scriptImportNoticeTone = /失败|没有识别|为空/i.test(scriptImportNotice)
     ? 'error'
     : /已识别|已解析|已载入/i.test(scriptImportNotice)
@@ -3787,10 +3973,16 @@ END：4秒，收束行动指令和品牌露出`);
     : scriptDraft.trim()
       ? '暂未识别可用分镜'
       : '等待输入脚本';
-  const selectedPreviewItem = generatedVideos.find((item) => item.id === selectedPreviewId) || generatedVideos[0];
+  const selectedPreviewItem = useMemo(
+    () => generatedVideos.find((item) => item.id === selectedPreviewId) || generatedVideos[0],
+    [generatedVideos, selectedPreviewId]
+  );
   const plannedMixBatchCount = normalizeFissionBatchCount(mixBatchCount, DEFAULT_MIX_BATCH_COUNT);
   const generatedVideoCount = estimatedSelectedCombinationCount;
-  const resultStrategyTags = buildFissionResultStrategyTags(generatedVideos, soundSettings.retainOriginalAudio);
+  const resultStrategyTags = useMemo(
+    () => buildFissionResultStrategyTags(generatedVideos, soundSettings.retainOriginalAudio),
+    [generatedVideos, soundSettings.retainOriginalAudio]
+  );
   const uploadNoticeMeta = uploadNotice ? describeFissionStatusNotice(uploadNotice) : null;
   const pendingCloudUploadCount = countPendingCloudUploads(groups, audioItems);
   const canReturnToSegmentCandidates = fissionResultView === 'waterfall' && Boolean(segmentCandidateRestoreState?.videos.length);
@@ -3802,11 +3994,52 @@ END：4秒，收束行动指令和品牌露出`);
         : '重试前检查'
     : '';
   const selectableResultCount = generatedVideos.length;
-  const selectedGeneratedCount = selectedGeneratedIds.filter((id) => generatedVideos.some((video) => video.id === id)).length;
+  const selectedGeneratedIdSet = useMemo(() => new Set(selectedGeneratedIds), [selectedGeneratedIds]);
+  const selectedGeneratedCount = useMemo(
+    () => selectedGeneratedIds.filter((id) => generatedVideos.some((video) => video.id === id)).length,
+    [generatedVideos, selectedGeneratedIds]
+  );
   const strategyScriptCount = groups.length > 0
     ? new Set(groups.map((group) => group.sourceDocumentTitle || '__current__')).size
     : 0;
   const strategyDurationLabel = buildFissionDurationRangeLabel(selectedMixGroups.length > 0 ? selectedMixGroups : groups);
+  const compositionInfoText = selectedSceneCount > 0
+    ? '当前会按左侧选中的分镜分组里的全部素材直接组合生成结果。'
+    : '先给分镜分组补充视频素材，系统会按当前选中的分组素材生成混剪结果。';
+  const compositionInfoDetailText = selectedSceneCount > 0
+    ? `已锁定 ${selectedSceneCount} 组分镜 · ${selectedClipCount} 个素材参与生成`
+    : '先在左侧选择需要参与生成的分镜分组。';
+  const compositionInfoSummaryText = `${compositionInfoText.replace(/。$/, '')} · ${compositionInfoDetailText}`;
+  const compositionInfoItems = selectedSceneCount > 0
+    ? [
+      {
+        label: '组合方式',
+        value: '直接组合',
+        detail: compositionInfoText,
+        icon: Shuffle
+      },
+      {
+        label: '已锁定',
+        value: `${selectedSceneCount}组 / ${selectedClipCount}素材`,
+        detail: compositionInfoDetailText,
+        icon: Lock
+      }
+    ]
+    : [
+      {
+        label: '素材状态',
+        value: '待补齐',
+        detail: compositionInfoText,
+        icon: ImagePlus
+      },
+      {
+        label: '分镜选择',
+        value: '待选择',
+        detail: compositionInfoDetailText,
+        icon: MousePointer2
+      }
+    ];
+  const isFissionResultImmersive = isFissionResultExpanded;
 
   useEffect(() => {
     if (isGenerating) {
@@ -3819,13 +4052,26 @@ END：4秒，收束行动指令和品牌露出`);
     return undefined;
   }, [isGenerating, setNavigationLock]);
 
+  useEffect(() => {
+    if (!isFissionResultExpanded) return undefined;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsFissionResultExpanded(false);
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isFissionResultExpanded]);
+
   const strategySummaryItems = [
-    { label: '脚本', value: String(strategyScriptCount) },
-    { label: '分镜', value: `${selectedSceneCount}/${groups.length}` },
-    { label: '素材', value: String(selectedClipCount) },
-    { label: '组合', value: String(generatedVideoCount) },
-    { label: '每镜候选', value: String(plannedMixBatchCount) },
-    { label: '时长', value: strategyDurationLabel }
+    { label: '脚本', value: String(strategyScriptCount), icon: FileText },
+    { label: '分镜', value: `${selectedSceneCount}/${groups.length}`, icon: SplitSquareHorizontal },
+    { label: '素材', value: String(selectedClipCount), icon: ImagePlus },
+    { label: '组合', value: String(generatedVideoCount), icon: Shuffle },
+    { label: '每镜候选', value: String(plannedMixBatchCount), icon: Copy },
+    { label: '时长', value: strategyDurationLabel, icon: Clock3 }
   ];
   const showStrategyScrollControls = groups.length > 1;
 
@@ -4326,6 +4572,10 @@ END：4秒，收束行动指令和品牌露出`);
     });
   }
 
+  function toggleFissionResultFullscreen() {
+    setIsFissionResultExpanded((expanded) => !expanded);
+  }
+
   function getFallbackPreviewPath() {
     const clip = groups.flatMap((group) => group.clips).find((item) => Boolean(item.localPath || item.path));
     return previewPath(clip);
@@ -4344,9 +4594,21 @@ END：4秒，收束行动指令和品牌露出`);
     const proxyPreview = isProxyGeneratedVideo(item);
     const previewNote = buildGeneratedPreviewNote(item, soundSettings.retainOriginalAudio);
     const previewBadge = proxyPreview ? '本地混剪静音预览' : !soundSettings.retainOriginalAudio ? '已关闭原声' : undefined;
+    const descriptionText = readGeneratedDescriptionText(item);
+    const sceneDetails = buildGeneratedPreviewSceneDetails(item, groups, soundSettings.retainOriginalAudio);
     const requestKey = `generated:${item.id}:${rawPath || 'empty'}`;
     if (!rawPath) {
-      setPreviewMedia({ type: 'video', name: item.name, path: undefined, muted: proxyPreview, badge: previewBadge, note: previewNote, requestKey });
+      setPreviewMedia({
+        type: 'video',
+        name: item.name,
+        path: undefined,
+        muted: proxyPreview,
+        badge: previewBadge,
+        note: previewNote,
+        descriptionText,
+        sceneDetails,
+        requestKey
+      });
       return;
     }
     const requiresProtectedResolve = shouldRequestProtectedPreview(rawPath);
@@ -4358,6 +4620,8 @@ END：4秒，收束行动指令和品牌露出`);
       muted: proxyPreview,
       badge: previewBadge,
       note: previewNote,
+      descriptionText,
+      sceneDetails,
       loading: requiresProtectedResolve && !cachedPreviewPath,
       helperText: requiresProtectedResolve && !cachedPreviewPath ? '正在获取可播放地址，首次打开会稍慢一点，后续会直接命中缓存。' : undefined,
       requestKey
@@ -4493,12 +4757,12 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
   }
 
   function isGeneratedVideoSelected(video: GeneratedFissionVideo) {
-    return selectedGeneratedIds.includes(video.id);
+    return selectedGeneratedIdSet.has(video.id);
   }
 
   function isFissionDetailSelected(groupId: string, videoId: string) {
     void groupId;
-    return selectedGeneratedIds.includes(videoId);
+    return selectedGeneratedIdSet.has(videoId);
   }
 
   async function persistFinishedVideoGroup(nextGroup: FinishedVideoGroup, existingGroups: FinishedVideoGroup[], replaced: boolean) {
@@ -4531,6 +4795,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
         draftName,
         batchName: `${draftName} · 第 ${video.label} 条`,
         coverPath: video.coverPath || video.groupDetails?.find((detail) => detail.coverPath)?.coverPath,
+        descriptionText: video.descriptionText,
         groupDetails: video.groupDetails
       }));
     const now = new Date().toISOString();
@@ -4862,6 +5127,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
             audioName: localPlan.audioNames || materialSummary.audioNames,
             bgmName: localPlan.bgmName || materialSummary.bgmName,
             subtitleMaskApplied: soundSettings.maskSubtitles,
+            descriptionText: materialSummary.text,
             groupDetails: localPlan.details,
             jobStatus: cloudReady ? 'preparing' : 'success',
             jobStatusText: cloudReady ? '本地分镜混剪完成 · 云端提交中' : '本地分镜混剪完成',
@@ -5034,6 +5300,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
             audioName: localPlan.audioNames,
             bgmName: undefined,
             subtitleMaskApplied: false,
+            descriptionText: selectedSegmentNames || '已基于分镜混剪候选完成组合',
             groupDetails: localPlan.details,
             jobStatus: 'success',
             jobStatusText: '本地瀑布流合成完成',
@@ -5977,23 +6244,11 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
         ) : null}
       </section>
 
-      <section className="fission-column fission-right">
+      <section className={clsx('fission-column fission-right', isFissionResultExpanded && 'result-expanded')}>
         <header className="fission-section-title">
           <strong>脚本策略概览</strong>
           <button type="button" onClick={() => void previewGeneratedVideoItem(selectedPreviewItem)} disabled={!selectedPreviewItem}>预览视频</button>
         </header>
-        <div className="strategy-summary">
-          {strategySummaryItems.map((item) => (
-            <span key={item.label}>
-              <em>{item.label}</em>
-              <strong>{item.value}</strong>
-            </span>
-          ))}
-        </div>
-        <div className="strategy-selection-toolbar">
-          <span>{selectedSceneCount > 0 ? '当前会按左侧选中的分镜分组里的全部素材直接组合生成结果。' : '先给分镜分组补充视频素材，系统会按当前选中的分组素材生成混剪结果。'}</span>
-          <small>{selectedSceneCount > 0 ? `已锁定 ${selectedSceneCount} 组分镜 · ${selectedClipCount} 个素材参与生成` : '先在左侧选择需要参与生成的分镜分组。'}</small>
-        </div>
         <div className={clsx('strategy-card-shell', !showStrategyScrollControls && 'without-nav')}>
           {showStrategyScrollControls ? (
             <button type="button" aria-label="向左滚动脚本策略" onClick={() => scrollStrategyCards('left')}>
@@ -6008,6 +6263,17 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
                 const audioCount = group.groupAudios?.length || 0;
                 const groupModeLabel = totalCount <= 1 ? '单镜头' : '智能混剪';
                 const groupTitle = group.displayTitle || group.title;
+                const groupMetaItems = [
+                  { key: 'materials', title: materialLabel, value: String(totalCount), icon: ImagePlus },
+                  ...(audioCount > 0 ? [{ key: 'audio', title: `${audioCount} 个音频`, value: String(audioCount), icon: Music }] : []),
+                  { key: 'fixed', title: `固定位置 #${groupIndex + 1}`, value: String(groupIndex + 1), icon: Lock },
+                  { key: 'mode', title: groupModeLabel, value: totalCount <= 1 ? '1' : 'AI', icon: totalCount <= 1 ? Film : Shuffle },
+                  {
+                    key: 'status',
+                    title: totalCount > 0 ? '按当前分镜分组直接生成候选结果。' : '当前分组还没有可生成素材。',
+                    icon: totalCount > 0 ? Sparkles : Shield
+                  }
+                ];
                 return (
                   <article
                     className={clsx(group.id === activeGroupId && 'active', totalCount === 0 && 'muted')}
@@ -6020,18 +6286,19 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
                         <strong title={`${groupTitle} (${totalCount})`}>{groupTitle}</strong>
                       </div>
                       {group.id === activeGroupId ? (
-                        <em className="strategy-card-state">当前选中</em>
+                        <em className="strategy-card-state" title="当前选中" aria-label="当前选中">
+                          <CheckCircle2 size={12} />
+                        </em>
                       ) : null}
                     </div>
                     <div className="strategy-card-meta">
-                      <em>{materialLabel}</em>
-                      {audioCount > 0 ? <em>{audioCount} 个音频</em> : null}
-                      <em>固定 #{groupIndex + 1}</em>
-                      <em>{groupModeLabel}</em>
+                      {groupMetaItems.map((item) => (
+                        <span key={item.key} className="strategy-icon-chip" title={item.title} aria-label={item.title}>
+                          <item.icon size={12} />
+                          {'value' in item && item.value ? <b>{item.value}</b> : null}
+                        </span>
+                      ))}
                     </div>
-                    <small className="strategy-card-note">
-                      {totalCount > 0 ? '按当前分镜分组直接生成候选结果。' : '当前分组还没有可生成素材。'}
-                    </small>
                     <div className="strategy-card-clip-strip" aria-label={`${groupTitle} 的候选素材`}>
                       {group.clips.map((clip, clipIndex) => {
                         return (
@@ -6065,7 +6332,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
             </button>
           ) : null}
         </div>
-        <div className="fission-result-shell">
+        <div className={clsx('fission-result-shell', isFissionResultImmersive && 'is-immersive')}>
           <div className="material-filter-row">
             <div className="fission-filter-label">
               <span>结果筛选</span>
@@ -6094,6 +6361,16 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
                     {selectedGeneratedCount > 0 ? `已选 ${selectedGeneratedCount} / ${selectableResultCount}` : `${generatedVideos.length} 个视频`}
                   </small>
                 ) : null}
+                <button
+                  className="fission-panel-toggle"
+                  type="button"
+                  title={isFissionResultImmersive ? '还原右侧生成视频区域' : '让生成视频区域占满右侧'}
+                  aria-pressed={isFissionResultImmersive}
+                  onClick={toggleFissionResultFullscreen}
+                >
+                  {isFissionResultImmersive ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  <span>{isFissionResultImmersive ? '还原' : '全屏'}</span>
+                </button>
               </div>
               <small className="fission-preview-note">
                 {generatedVideos.length > 0
@@ -6112,14 +6389,6 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
             ) : (
               <small className="fission-result-hint">点击“生成视频”后会先按分镜分组生成候选行；点击“瀑布流合成”再把这些候选做二次组合。</small>
             )}
-            {resultStrategyTags.length > 0 ? (
-              <div className="fission-result-strategy-bar compact">
-                <span>当前策略</span>
-                {resultStrategyTags.map((tag) => (
-                  <em key={tag}>{tag}</em>
-                ))}
-              </div>
-            ) : null}
           </div>
           <div
             className={clsx('fission-preview-grid', generatedVideos.length > 0 && 'generated')}
@@ -6134,93 +6403,51 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
               </section>
             ) : (
               <section className="fission-waterfall-results">
-                {generatedResultBatchGroups.map((batch) => (
-                  <section className="fission-result-group" key={batch.key}>
-                    <header className="fission-result-group-header">
-                      <div className="fission-result-group-meta">
-                        <strong>{batch.name}</strong>
-                        {batch.sceneTitles.length > 0 ? (
-                          <div className="fission-result-scene-titles">
-                            {batch.sceneTitles.map((title) => (
-                              <em className="fission-result-scene-chip" key={title}>{title}</em>
-                            ))}
-                          </div>
-                        ) : null}
-                        <span className="fission-result-group-count">{batch.summary}</span>
-                      </div>
-                      <div className="fission-result-group-actions">
-                        <button type="button" onClick={() => selectGeneratedResultBatch(batch.key)}>全选本组</button>
-                        <button type="button" onClick={() => clearGeneratedResultBatchSelection(batch.key)}>清空本组</button>
-                      </div>
-                    </header>
-                    <div className="fission-result-group-grid">
-                      {batch.videos.map((video) => {
-                        const coverUrl = toMediaUrl(video.coverPath || previewPath(video));
-                        const selected = isGeneratedVideoSelected(video);
-                        const primaryDetail = video.groupDetails?.find((detail) => detail.audioName || detail.clipName || detail.coverPath);
-                        const strategyText = buildGeneratedAudioStrategyText(primaryDetail, video, soundSettings.retainOriginalAudio);
-                        return (
-                          <article
-                            className={clsx(selectedPreviewItem?.id === video.id && 'selected', selected && 'batch-selected')}
-                            key={video.id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => {
-                              toggleGeneratedSelection(video.id);
-                              setSelectedPreviewId(video.id);
-                            }}
-                            onDoubleClick={() => void previewGeneratedVideoItem(video)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') void previewGeneratedVideoItem(video);
-                              if (event.key === ' ') {
-                                event.preventDefault();
-                                toggleGeneratedSelection(video.id);
-                                setSelectedPreviewId(video.id);
-                              }
-                            }}
-                          >
-                            <span>{video.label}</span>
-                            <button
-                              className="preview-card-select"
-                              type="button"
-                              title={selected ? '取消选择' : '选择该结果'}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleGeneratedSelection(video.id);
-                                setSelectedPreviewId(video.id);
-                              }}
-                            >
-                              {selected ? <CheckCircle2 size={13} /> : null}
-                            </button>
-                            <button
-                              className="preview-card-play"
-                              type="button"
-                              title="预览视频"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void previewGeneratedVideoItem(video);
-                              }}
-                            >
-                              <Play size={13} />
-                            </button>
-                            <div className="fission-card-cover">
-                              {coverUrl ? <video src={coverUrl} muted preload="metadata" /> : null}
+                {generatedResultBatchGroups.map((batch) => {
+                  const headerStats = buildGeneratedResultHeaderStats(batch);
+                  return (
+                    <section className="fission-result-group" key={batch.key}>
+                      <header className="fission-result-group-header">
+                        <div className="fission-result-group-meta">
+                          <strong title={batch.name}>{batch.name}</strong>
+                          {headerStats.length > 0 ? (
+                            <div className="fission-result-group-stat-row">
+                              {headerStats.map((item) => (
+                                <span className="fission-result-group-stat-chip" key={item.key} title={item.title} aria-label={item.title}>
+                                  <item.icon size={12} />
+                                  <b>{item.value}</b>
+                                </span>
+                              ))}
                             </div>
-                            <strong>{video.name}</strong>
-                            <small className="fission-preview-meta">
-                              {buildGeneratedAudioMeta(primaryDetail, video)}
-                              {video.jobStatusText ? ` · ${video.jobStatusText}` : ''}
-                            </small>
-                            {strategyText ? <em className="fission-result-strategy">{strategyText}</em> : null}
-                            {video.jobMessage ? (
-                              <em className="fission-result-message">{video.jobMessage}</em>
-                            ) : null}
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
+                          ) : null}
+                        </div>
+                        <div className="fission-result-group-actions">
+                          <button type="button" onClick={() => selectGeneratedResultBatch(batch.key)}>全选本组</button>
+                          <button type="button" onClick={() => clearGeneratedResultBatchSelection(batch.key)}>清空本组</button>
+                        </div>
+                      </header>
+                      <div className="fission-result-group-grid">
+                        {batch.videos.map((video, videoIndex) => {
+                          const coverUrl = toMediaUrl(video.coverPath || previewPath(video));
+                          const selected = isGeneratedVideoSelected(video);
+                          return (
+                            <GeneratedResultVideoCard
+                              key={video.id}
+                              video={video}
+                              coverUrl={coverUrl}
+                              selected={selected}
+                              previewSelected={selectedPreviewItem?.id === video.id}
+                              eagerPreview={videoIndex === 0}
+                              onToggleSelection={toggleGeneratedSelection}
+                              onSetSelectedPreviewId={setSelectedPreviewId}
+                              onPreview={previewGeneratedVideoItem}
+                            />
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
               </section>
             )}
           </div>
@@ -6231,6 +6458,29 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
             </div>
             <button className="waterfall-action" type="button" onClick={openWaterfallDialog} disabled={generatedSegmentBatchGroups.length === 0}>瀑布流合成</button>
           </footer>
+          <section className="fission-composition-info" aria-label="合成信息说明">
+            <div className="fission-composition-chip-row">
+              {strategySummaryItems.map((item) => (
+                <span key={item.label} title={`${item.label}: ${item.value}`} aria-label={`${item.label}: ${item.value}`}>
+                  <item.icon size={13} />
+                  <strong>{item.value}</strong>
+                </span>
+              ))}
+              {resultStrategyTags.length > 0 ? <b>当前策略</b> : null}
+              {resultStrategyTags.map((tag) => (
+                <em key={tag}>{tag}</em>
+              ))}
+            </div>
+            <div className="fission-composition-copy" aria-label={compositionInfoSummaryText}>
+              {compositionInfoItems.map((item) => (
+                <span className="fission-composition-copy-chip" key={item.label} title={item.detail} aria-label={`${item.label}: ${item.detail}`}>
+                  <item.icon size={13} />
+                  <strong>{item.label}</strong>
+                  <em>{item.value}</em>
+                </span>
+              ))}
+            </div>
+          </section>
         </div>
       </section>
       {isGenerating ? (
@@ -6483,7 +6733,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
       ) : null}
       {previewMedia ? (
         <div className="script-import-backdrop">
-          <section className="media-preview-dialog">
+          <section className={clsx('media-preview-dialog', (previewMedia.descriptionText || previewMedia.sceneDetails?.length) && 'with-details')}>
             <header>
               <div className="media-preview-heading-stack">
                 <div className="media-preview-heading-main">
@@ -6494,31 +6744,83 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
               </div>
               <button type="button" onClick={() => setPreviewMedia(null)}>关闭</button>
             </header>
-            <div className="media-preview-body">
-              {previewMedia.loading && !previewMedia.path ? (
-                <div className="media-preview-loading">
-                  <div className="generation-spinner">
-                    <Sparkles size={22} />
-                  </div>
-                  <strong>正在加载视频预览...</strong>
-                  <span>{previewMedia.helperText || '正在准备可播放地址，请稍候。'}</span>
-                </div>
-              ) : previewMedia.path ? (
-                previewMedia.type === 'video' ? (
-                  previewMedia.muted ? (
-                    <div className="media-preview-stage is-muted">
-                      <video src={toMediaUrl(previewMedia.path)} autoPlay loop muted playsInline />
-                      {previewMedia.note ? <div className="media-preview-stage-note">{previewMedia.note}</div> : null}
+            <div className={clsx('media-preview-body', (previewMedia.descriptionText || previewMedia.sceneDetails?.length) && 'has-sidebar')}>
+              <div className="media-preview-stage-shell">
+                {previewMedia.loading && !previewMedia.path ? (
+                  <div className="media-preview-loading">
+                    <div className="generation-spinner">
+                      <Sparkles size={22} />
                     </div>
+                    <strong>正在加载视频预览...</strong>
+                    <span>{previewMedia.helperText || '正在准备可播放地址，请稍候。'}</span>
+                  </div>
+                ) : previewMedia.path ? (
+                  previewMedia.type === 'video' ? (
+                    previewMedia.muted ? (
+                      <div className="media-preview-stage is-muted">
+                        <video src={toMediaUrl(previewMedia.path)} autoPlay loop muted playsInline />
+                        {previewMedia.note ? <div className="media-preview-stage-note">{previewMedia.note}</div> : null}
+                      </div>
+                    ) : (
+                      <video src={toMediaUrl(previewMedia.path)} controls autoPlay />
+                    )
                   ) : (
-                    <video src={toMediaUrl(previewMedia.path)} controls autoPlay />
+                    <audio src={toMediaUrl(previewMedia.path)} controls autoPlay />
                   )
                 ) : (
-                  <audio src={toMediaUrl(previewMedia.path)} controls autoPlay />
-                )
-              ) : (
-                <div className="media-preview-empty">{previewMedia.error || '当前演示素材没有真实文件路径，请导入本地文件后预览。'}</div>
-              )}
+                  <div className="media-preview-empty">{previewMedia.error || '当前演示素材没有真实文件路径，请导入本地文件后预览。'}</div>
+                )}
+              </div>
+              {previewMedia.descriptionText || previewMedia.sceneDetails?.length ? (
+                <aside className="media-preview-sidebar">
+                  {previewMedia.descriptionText ? (
+                    <section className="media-preview-info-card">
+                      <header>
+                        <FileText size={14} />
+                        <strong>生成描述</strong>
+                      </header>
+                      <p>{previewMedia.descriptionText}</p>
+                    </section>
+                  ) : null}
+                  {previewMedia.sceneDetails?.length ? (
+                    <section className="media-preview-info-card">
+                      <header>
+                        <SplitSquareHorizontal size={14} />
+                        <strong>对应详情</strong>
+                      </header>
+                      <div className="media-preview-scene-list">
+                        {previewMedia.sceneDetails.map((detail) => (
+                          <article className="media-preview-scene-card" key={detail.id}>
+                            <div className="media-preview-scene-head">
+                              <strong>{detail.title}</strong>
+                              {detail.sceneLabel ? <span className="media-preview-scene-chip">{detail.sceneLabel}</span> : null}
+                            </div>
+                            {detail.script ? (
+                              <div className="media-preview-scene-row">
+                                <span><Film size={12} />画面描述</span>
+                                <p>{detail.script}</p>
+                              </div>
+                            ) : null}
+                            {detail.voiceover ? (
+                              <div className="media-preview-scene-row">
+                                <span><Mic size={12} />口播文案</span>
+                                <p>{detail.voiceover}</p>
+                              </div>
+                            ) : null}
+                            {detail.clipName || detail.audioName ? (
+                              <div className="media-preview-scene-inline">
+                                {detail.clipName ? <em>素材：{detail.clipName}</em> : null}
+                                {detail.audioName ? <em>音频：{detail.audioName}</em> : null}
+                              </div>
+                            ) : null}
+                            {detail.strategyText ? <small className="media-preview-scene-strategy">{detail.strategyText}</small> : null}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                </aside>
+              ) : null}
             </div>
           </section>
         </div>
@@ -6758,17 +7060,6 @@ function buildGeneratedPreviewNote(video: GeneratedFissionVideo | undefined, ret
   return undefined;
 }
 
-function buildGeneratedAudioMeta(detail?: GeneratedFissionGroupDetail, video?: GeneratedFissionVideo) {
-  if (!detail?.audioName) {
-    if (video?.bgmName) return `BGM：${video.bgmName}`;
-    return video?.duration || '云端合成';
-  }
-  const labels: string[] = [];
-  if (detail.audioSource === 'ai') labels.push('AI口播优先');
-  else if (detail.audioSource === 'group') labels.push('组内优先');
-  return `音频：${detail.audioName}${labels.length > 0 ? `（${labels.join(' / ')}）` : ''}${video?.bgmName ? ` · BGM：${video.bgmName}` : ''}`;
-}
-
 function buildGeneratedAudioStrategyTags(detail: GeneratedFissionGroupDetail | undefined, video: GeneratedFissionVideo | undefined, retainOriginalAudio: boolean) {
   const tags: string[] = [];
   if (detail?.contentProfile === 'digital_human') tags.push('数字人口播优先匹配');
@@ -6785,6 +7076,54 @@ function buildGeneratedAudioStrategyTags(detail: GeneratedFissionGroupDetail | u
 function buildGeneratedAudioStrategyText(detail: GeneratedFissionGroupDetail | undefined, video: GeneratedFissionVideo | undefined, retainOriginalAudio: boolean) {
   const tags = buildGeneratedAudioStrategyTags(detail, video, retainOriginalAudio);
   return tags.length > 0 ? `策略：${tags.join(' · ')}` : undefined;
+}
+
+function readGeneratedDescriptionText(video?: GeneratedFissionVideo) {
+  if (!video) return undefined;
+  if (video.descriptionText?.trim()) return video.descriptionText.trim();
+  const message = video.jobMessage?.trim();
+  if (!message) return undefined;
+  const normalized = message
+    .replace(/\s*·\s*当前(?:分镜混剪|瀑布流合成|结果).*$/u, '')
+    .replace(/\s*云端未提交[:：].*$/u, '')
+    .trim();
+  return normalized || message;
+}
+
+function findFissionGroupForGeneratedDetail(groups: FissionShotGroup[], detail: GeneratedFissionGroupDetail) {
+  const exactMatch = groups.find((group) => group.id === detail.groupId);
+  if (exactMatch) return exactMatch;
+
+  const normalizedTitle = normalizeGeneratedGroupName(detail.groupName);
+  if (normalizedTitle) {
+    const nameMatch = groups.find((group) => normalizeGeneratedGroupName(group.title) === normalizedTitle);
+    if (nameMatch) return nameMatch;
+  }
+
+  return groups.find((group) => detail.groupName?.includes(`分镜${group.sceneNo}`));
+}
+
+function buildGeneratedPreviewSceneDetails(
+  video: GeneratedFissionVideo | undefined,
+  groups: FissionShotGroup[],
+  retainOriginalAudio: boolean
+): PreviewMediaSceneDetail[] {
+  if (!video?.groupDetails?.length) return [];
+  return video.groupDetails.map((detail, index) => {
+    const sourceGroup = findFissionGroupForGeneratedDetail(groups, detail);
+    return {
+      id: `${video.id}-${detail.groupId || index}`,
+      title: sourceGroup?.title || detail.groupName || `分镜 ${index + 1}`,
+      sceneLabel: sourceGroup?.sceneNo ? `分镜 ${sourceGroup.sceneNo}` : undefined,
+      script: sourceGroup?.script,
+      voiceover: sourceGroup?.voiceover,
+      clipName: detail.clipName,
+      audioName: detail.audioName,
+      strategyText: buildGeneratedAudioStrategyText(detail, video, retainOriginalAudio)
+    };
+  }).filter((detail) => (
+    Boolean(detail.script || detail.voiceover || detail.clipName || detail.audioName || detail.strategyText)
+  ));
 }
 
 function buildFissionResultStrategyTags(videos: GeneratedFissionVideo[], retainOriginalAudio: boolean) {
