@@ -42,6 +42,23 @@ protocol.registerSchemesAsPrivileged([
   }
 ]);
 
+let mainWindow = null;
+let rendererRetryTimer = null;
+let storeWriteQueue = Promise.resolve();
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 const store = new Store({ name: 'moya-matrix' });
 const isDev = !app.isPackaged;
 const devRendererUrl = process.env.MOYA_RENDERER_URL || 'http://127.0.0.1:5174';
@@ -49,8 +66,6 @@ const prodRendererPath = path.join(__dirname, '../dist/index.html');
 const prodRendererUrl = pathToFileURL(prodRendererPath).toString();
 const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://127.0.0.1:8081/api').replace(/\/+$/, '');
 const ossUploadTimeoutMs = Number(process.env.MOYA_OSS_UPLOAD_TIMEOUT_MS || 10 * 60 * 1000);
-let mainWindow = null;
-let rendererRetryTimer = null;
 const appIconPath = path.join(__dirname, 'assets', process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png');
 
 function createWindow() {
@@ -443,21 +458,68 @@ function resolveMediaToolPath(envName, candidates) {
 }
 
 function isExecutableUsable(command) {
-  try {
-    execFileSync(command, ['-version'], {
-      stdio: 'ignore',
-      windowsHide: true,
-      timeout: 5000
-    });
-    return true;
-  } catch {
-    return false;
+  for (const versionArg of ['-version', '--version']) {
+    try {
+      execFileSync(command, [versionArg], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 5000
+      });
+      return true;
+    } catch {
+      // Try the next common version flag. Node uses --version; ffmpeg uses -version.
+    }
   }
+  return false;
 }
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+function setStoredValue(key, value) {
+  return enqueueStoreWrite(() => store.set(key, value));
+}
+
+function updateStoredValue(key, updater) {
+  return enqueueStoreWrite(() => {
+    const current = store.get(key);
+    const next = updater(current);
+    store.set(key, next);
+    return next;
+  });
+}
+
+function enqueueStoreWrite(action) {
+  const nextWrite = storeWriteQueue.then(
+    () => retryStoreWrite(action),
+    () => retryStoreWrite(action)
+  );
+  storeWriteQueue = nextWrite.catch(() => undefined);
+  return nextWrite;
+}
+
+async function retryStoreWrite(action) {
+  let lastError;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      return action();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableStoreWriteError(error) || attempt === 5) break;
+      await delay(80 + attempt * 80);
+    }
+  }
+  throw lastError;
+}
+
+function isRetryableStoreWriteError(error) {
+  return error?.code === 'EPERM' || error?.code === 'EBUSY' || error?.code === 'EACCES';
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function registerIpc() {
   ipcMain.handle('app:get-version', () => app.getVersion());
@@ -473,8 +535,8 @@ function registerIpc() {
   });
 
   ipcMain.handle('store:get', (_event, key) => store.get(key));
-  ipcMain.handle('store:set', (_event, key, value) => {
-    store.set(key, value);
+  ipcMain.handle('store:set', async (_event, key, value) => {
+    await setStoredValue(key, value);
     return true;
   });
 
@@ -516,7 +578,6 @@ function registerIpc() {
   });
 
   ipcMain.handle('editor:create-draft', async (_event, payload = {}) => {
-    const drafts = store.get('editor.drafts', []);
     const now = new Date().toISOString();
     const draft = {
       id: randomUUID(),
@@ -528,14 +589,13 @@ function registerIpc() {
       workflow: payload.workflow || 'materials',
       fissionWorkspace: payload.fissionWorkspace || null
     };
-    store.set('editor.drafts', [draft, ...drafts]);
+    await updateStoredValue('editor.drafts', (drafts = []) => [draft, ...drafts]);
     return draft;
   });
 
   ipcMain.handle('editor:list-drafts', () => store.get('editor.drafts', []));
 
-  ipcMain.handle('cloud:add-transfer-task', (_event, task) => {
-    const tasks = store.get('cloud.transfers', []);
+  ipcMain.handle('cloud:add-transfer-task', async (_event, task) => {
     const nextTask = {
       id: randomUUID(),
       status: 'queued',
@@ -543,7 +603,7 @@ function registerIpc() {
       createdAt: new Date().toISOString(),
       ...task
     };
-    store.set('cloud.transfers', [nextTask, ...tasks]);
+    await updateStoredValue('cloud.transfers', (tasks = []) => [nextTask, ...tasks]);
     return nextTask;
   });
 
@@ -685,6 +745,11 @@ function registerIpc() {
   ipcMain.handle('media:cache-remote-file', async (_event, source, options = {}) => {
     if (!source || typeof source !== 'string') throw new Error('缺少可缓存的视频地址');
     return cacheMediaSourceLocally(source, options);
+  });
+
+  ipcMain.handle('media:create-thumbnail', async (_event, source, options = {}) => {
+    if (!source || typeof source !== 'string') throw new Error('缺少可生成封面的媒体地址');
+    return createMediaThumbnail(source, options);
   });
 
   ipcMain.handle('media:read-as-data-url', async (_event, filePath, options = {}) => {
@@ -834,6 +899,130 @@ function inferMediaCacheKey(source) {
   } catch {
     return createHash('sha1').update(source).digest('hex').slice(0, 12);
   }
+}
+
+async function createMediaThumbnail(source, options = {}) {
+  if (!ffmpegPath) {
+    throw new Error('未找到可用的 ffmpeg，无法生成视频封面');
+  }
+
+  const normalizedSource = decodeMediaProtocolSource(source);
+  const width = Math.max(48, Math.min(320, Math.round(Number(options.width) || 96)));
+  const height = Math.max(72, Math.min(480, Math.round(Number(options.height) || 170)));
+  const time = Math.max(0, Math.min(30, Number(options.time) || 0.8));
+  const cacheKey = createHash('sha1')
+    .update(`${normalizedSource}|${width}x${height}|${time}`)
+    .digest('hex')
+    .slice(0, 24);
+  const cacheDir = path.join(app.getPath('userData'), 'media-cache', 'thumbnails');
+  const outputPath = path.join(cacheDir, `${cacheKey}.jpg`);
+  await fs.mkdir(cacheDir, { recursive: true });
+
+  const existing = await fs.stat(outputPath).catch(() => null);
+  if (existing?.isFile() && existing.size > 0 && !isLikelyDarkThumbnail(outputPath)) {
+    return {
+      cached: true,
+      localPath: outputPath,
+      name: path.basename(outputPath),
+      size: existing.size
+    };
+  }
+
+  const prepared = await prepareRenderableSource(normalizedSource);
+  try {
+    const candidateTimes = Array.from(new Set([time, 1.2, 2.0, 0.45, 0].map((value) => Math.max(0, Math.min(30, Number(value) || 0)))));
+    let rendered = false;
+    let lastError = null;
+    for (const candidateTime of candidateTimes) {
+      try {
+        await renderMediaThumbnail(prepared.filePath, outputPath, { width, height, time: candidateTime });
+        rendered = true;
+        if (!isLikelyDarkThumbnail(outputPath)) break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!rendered && lastError) throw lastError;
+  } finally {
+    await prepared.cleanup?.();
+  }
+
+  const stat = await fs.stat(outputPath);
+  return {
+    cached: true,
+    localPath: outputPath,
+    name: path.basename(outputPath),
+    size: stat.size
+  };
+}
+
+function isLikelyDarkThumbnail(filePath) {
+  try {
+    const image = nativeImage.createFromPath(filePath);
+    if (!image || image.isEmpty()) return false;
+    const sample = image.resize({ width: 18, height: 18, quality: 'good' }).toBitmap();
+    if (!sample || sample.length < 4) return false;
+    let total = 0;
+    let brightPixels = 0;
+    let pixels = 0;
+    for (let index = 0; index < sample.length; index += 4) {
+      const b = sample[index] || 0;
+      const g = sample[index + 1] || 0;
+      const r = sample[index + 2] || 0;
+      const luminance = (r * 0.2126) + (g * 0.7152) + (b * 0.0722);
+      total += luminance;
+      if (luminance > 45) brightPixels += 1;
+      pixels += 1;
+    }
+    const average = total / Math.max(1, pixels);
+    const brightRatio = brightPixels / Math.max(1, pixels);
+    return average < 24 && brightRatio < 0.025;
+  } catch {
+    return false;
+  }
+}
+
+async function renderMediaThumbnail(inputPath, outputPath, options) {
+  const args = [
+    '-y',
+    '-ss', String(options.time),
+    '-i', inputPath,
+    '-frames:v', '1',
+    '-vf', `scale=${options.width}:${options.height}:force_original_aspect_ratio=increase,crop=${options.width}:${options.height}`,
+    '-q:v', '4',
+    outputPath
+  ];
+  try {
+    await runProcess(ffmpegPath, args, { timeout: 30000 });
+  } catch (error) {
+    await runProcess(ffmpegPath, [
+      '-y',
+      '-i', inputPath,
+      '-frames:v', '1',
+      '-vf', `scale=${options.width}:${options.height}:force_original_aspect_ratio=increase,crop=${options.width}:${options.height}`,
+      '-q:v', '4',
+      outputPath
+    ], { timeout: 30000 });
+  }
+  const stat = await fs.stat(outputPath).catch(() => null);
+  if (!stat?.isFile() || stat.size <= 0) {
+    throw new Error('视频封面生成失败');
+  }
+}
+
+function decodeMediaProtocolSource(source) {
+  if (/^moya-media:\/\//i.test(source)) {
+    try {
+      const targetUrl = new URL(source);
+      return targetUrl.searchParams.get('path') || source;
+    } catch {
+      return source;
+    }
+  }
+  if (/^file:\/\//i.test(source)) {
+    return fileURLToPath(source);
+  }
+  return source;
 }
 
 async function prepareRenderableSource(source) {
@@ -1395,7 +1584,7 @@ async function renderFissionMixNarrationAudio(inputPath, outputPath, request, so
     let filter = `[${inputIndex}:a]atrim=start=${formatFfmpegSeconds(segment.audioIn)}:end=${formatFfmpegSeconds(segment.audioIn + segmentDuration)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(segment.gain)}`;
     filter += buildFissionSceneAudioEdgeFadeFilter(
       segmentDuration,
-      isFissionVoiceLikeAudioUsage(segment.usageType) ? 'voice' : 'scene-external',
+      isFissionVoiceLikeAudioUsage(segment.usageType) ? 'waterfall-voice' : 'scene-external',
       {
         fadeInDuration: segment.fadeInDuration,
         fadeOutDuration: segment.fadeOutDuration
@@ -1437,6 +1626,8 @@ function buildFissionSceneAudioEdgeFadeFilter(duration, profile = 'scene-video',
   let fadeDuration = 0;
   if (profile === 'voice') {
     fadeDuration = Math.min(0.035, Math.max(0.014, clipDuration / 80));
+  } else if (profile === 'waterfall-voice') {
+    fadeDuration = Math.min(0.018, Math.max(0.008, clipDuration / 160));
   } else if (profile === 'waterfall-video') {
     fadeDuration = Math.min(0.09, Math.max(0.024, clipDuration / 28));
   } else if (profile === 'scene-video') {

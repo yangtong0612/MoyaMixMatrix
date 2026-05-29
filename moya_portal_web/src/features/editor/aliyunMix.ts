@@ -3,11 +3,13 @@ import {
   buildFissionMixMatchKey,
   inferFissionMixAudioUsageType,
   inferFissionMixContentProfile,
+  resolveFissionMixVariantStyle,
   selectFissionMixVariantMedia,
   type FissionMixAudioSource,
   type FissionMixAudioUsageType,
   type FissionMixContentProfile,
-  type FissionMixSelectionProfile
+  type FissionMixSelectionProfile,
+  type FissionMixVariantStyle
 } from './fissionMixMatcher';
 import { buildWaterfallMixSelections } from './fissionWaterfallComposer';
 
@@ -226,6 +228,7 @@ export function selectAliyunMixVariantMedia<TClip extends MixClipLike, TAudio ex
   globalAudios?: TAudio[];
   variantIndex: number;
   groupIndex?: number;
+  variantStyle?: FissionMixVariantStyle;
 }) {
   return selectFissionMixVariantMedia(input);
 }
@@ -258,6 +261,7 @@ export function buildAliyunMixRequest(input: {
   }
 
   const variantIndex = input.variantIndex || 0;
+  const variantStyle = resolveFissionMixVariantStyle(variantIndex);
   const compositionMode = input.compositionMode || input.settings.compositionMode || 'segments';
   const waterfallSelections = compositionMode === 'waterfall'
     ? buildWaterfallMixSelections({
@@ -267,7 +271,8 @@ export function buildAliyunMixRequest(input: {
         groupAudios: (group.groupAudios || []).filter(isUsableCloudMedia)
       })),
       globalAudios: [],
-      variantIndex
+      variantIndex,
+      variantStyle
     })
     : null;
   const groups = (waterfallSelections || eligibleSourceGroups.map((group, groupIndex) => {
@@ -279,7 +284,8 @@ export function buildAliyunMixRequest(input: {
       groupAudios: uploadedGroupAudios,
       globalAudios: [],
       variantIndex,
-      groupIndex
+      groupIndex,
+      variantStyle
     });
     return {
       orderIndex: groupIndex,

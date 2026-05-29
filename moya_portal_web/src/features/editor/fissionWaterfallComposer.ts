@@ -7,11 +7,13 @@ import {
 } from './fissionPresenterMixAlgorithm';
 import {
   inferFissionMixAudioUsageType,
+  resolveFissionMixVariantStyle,
   selectFissionMixVariantMedia,
   type FissionMixAudioSource,
   type FissionMixAudioUsageType,
   type FissionMixContentProfile,
-  type FissionMixSelectionProfile
+  type FissionMixSelectionProfile,
+  type FissionMixVariantStyle
 } from './fissionMixMatcher';
 
 export interface WaterfallMixClipLike {
@@ -110,6 +112,18 @@ interface BaselineSelection<
   voiceLocked: boolean;
 }
 
+interface WaterfallVariantStyleBias {
+  baselineClipBonus: number;
+  desiredIndexMax: number;
+  desiredIndexPenalty: number;
+  durationFitWeight: number;
+  visualDiversityWeight: number;
+  audioSafetyWeight: number;
+  breathPenaltyWeight: number;
+  compactRhythmWeight: number;
+  beamWidth: number;
+}
+
 const VOICE_PROFILE_STOPWORDS = new Set([
   'scene', 'clip', 'audio', 'video', 'mix', 'group', 'voice', 'speech', 'dub', 'narration', 'narrat',
   'ai', 'tts', 'bgm', 'music', 'effect', 'sound', 'track',
@@ -128,11 +142,103 @@ const ACCENT_PATTERN_ENTRIES = [
   ['child', /童声|儿童|宝宝|child/i]
 ] as const;
 
-const WATERFALL_CLIP_BEAM_WIDTH = 6;
+const WATERFALL_CLIP_BEAM_WIDTH = 8;
 const WATERFALL_EDGE_QUIET_RATIO = 0.72;
 const WATERFALL_EDGE_RELAXED_QUIET_RATIO = 0.24;
 const WATERFALL_MAX_EDGE_HANDLE_SECONDS = 0.14;
 const WATERFALL_HOT_EDGE_THRESHOLD = 0.7;
+const WATERFALL_BREATH_EDGE_MIN_SECONDS = 0.025;
+const WATERFALL_BREATH_EDGE_MAX_SECONDS = 0.18;
+
+function getWaterfallVariantStyleBias(style: FissionMixVariantStyle): WaterfallVariantStyleBias {
+  switch (style) {
+    case 'visual_diversity':
+      return {
+        baselineClipBonus: 8,
+        desiredIndexMax: 17,
+        desiredIndexPenalty: 6,
+        durationFitWeight: 0,
+        visualDiversityWeight: 1.55,
+        audioSafetyWeight: 1,
+        breathPenaltyWeight: 1,
+        compactRhythmWeight: 0,
+        beamWidth: 12
+      };
+    case 'audio_smooth':
+      return {
+        baselineClipBonus: 16,
+        desiredIndexMax: 20,
+        desiredIndexPenalty: 8,
+        durationFitWeight: 0.15,
+        visualDiversityWeight: 0.9,
+        audioSafetyWeight: 1.35,
+        breathPenaltyWeight: 1.5,
+        compactRhythmWeight: 0,
+        beamWidth: 8
+      };
+    case 'rhythm_compact':
+      return {
+        baselineClipBonus: 12,
+        desiredIndexMax: 22,
+        desiredIndexPenalty: 7,
+        durationFitWeight: 0.25,
+        visualDiversityWeight: 1.08,
+        audioSafetyWeight: 1.05,
+        breathPenaltyWeight: 1.08,
+        compactRhythmWeight: 1,
+        beamWidth: 9
+      };
+    case 'duration_fit':
+      return {
+        baselineClipBonus: 14,
+        desiredIndexMax: 18,
+        desiredIndexPenalty: 7,
+        durationFitWeight: 0.75,
+        visualDiversityWeight: 0.95,
+        audioSafetyWeight: 1.08,
+        breathPenaltyWeight: 1.12,
+        compactRhythmWeight: 0,
+        beamWidth: 8
+      };
+    case 'freshness':
+      return {
+        baselineClipBonus: 6,
+        desiredIndexMax: 15,
+        desiredIndexPenalty: 5,
+        durationFitWeight: 0,
+        visualDiversityWeight: 1.85,
+        audioSafetyWeight: 0.95,
+        breathPenaltyWeight: 1,
+        compactRhythmWeight: 0,
+        beamWidth: 14
+      };
+    case 'presenter_safe':
+      return {
+        baselineClipBonus: 18,
+        desiredIndexMax: 18,
+        desiredIndexPenalty: 8,
+        durationFitWeight: 0.35,
+        visualDiversityWeight: 1,
+        audioSafetyWeight: 1.55,
+        breathPenaltyWeight: 1.8,
+        compactRhythmWeight: 0,
+        beamWidth: 8
+      };
+    case 'balanced':
+    default:
+      return {
+        baselineClipBonus: 18,
+        desiredIndexMax: 20,
+        desiredIndexPenalty: 8,
+        durationFitWeight: 0,
+        visualDiversityWeight: 1,
+        audioSafetyWeight: 1,
+        breathPenaltyWeight: 1,
+        compactRhythmWeight: 0,
+        beamWidth: WATERFALL_CLIP_BEAM_WIDTH
+      };
+  }
+}
 
 export function buildWaterfallMixSelections<
   TClip extends WaterfallMixClipLike,
@@ -141,7 +247,9 @@ export function buildWaterfallMixSelections<
   groups: WaterfallMixGroupLike<TClip, TAudio>[];
   globalAudios: TAudio[];
   variantIndex: number;
+  variantStyle?: FissionMixVariantStyle;
 }) {
+  const variantStyle = input.variantStyle || resolveFissionMixVariantStyle(input.variantIndex);
   const orderedGroups = input.groups
     .map((group, originalIndex) => ({ group, originalIndex }))
     .sort((left, right) => compareGroupsBySceneOrder(left.group, left.originalIndex, right.group, right.originalIndex));
@@ -153,7 +261,8 @@ export function buildWaterfallMixSelections<
       groupAudios: group.groupAudios || [],
       globalAudios: dedupedGlobalAudios,
       variantIndex: input.variantIndex,
-      groupIndex: orderIndex
+      groupIndex: orderIndex,
+      variantStyle
     });
     return {
       orderIndex,
@@ -170,7 +279,8 @@ export function buildWaterfallMixSelections<
   const selectedClips = selectWaterfallClipSequence(
     orderedGroups.map((item) => item.group),
     baselineSelections,
-    input.variantIndex
+    input.variantIndex,
+    variantStyle
   );
 
   let lockedVoiceProfileKey = resolvePreferredDigitalHumanVoiceProfileKey(baselineSelections, dedupedGlobalAudios);
@@ -193,7 +303,8 @@ export function buildWaterfallMixSelections<
       baseline,
       clip,
       lockedVoiceProfileKey,
-      previousDigitalHumanAudioDuration
+      previousDigitalHumanAudioDuration,
+      variantStyle
     );
     const selectedCandidate = orderedCandidates[0];
     const selectedAudio = selectedCandidate?.audio || baseline.audio;
@@ -237,8 +348,10 @@ function selectWaterfallClipSequence<
 >(
   groups: Array<WaterfallMixGroupLike<TClip, TAudio>>,
   baselineSelections: Array<BaselineSelection<TClip, TAudio>>,
-  variantIndex: number
+  variantIndex: number,
+  variantStyle: FissionMixVariantStyle
 ) {
+  const styleBias = getWaterfallVariantStyleBias(variantStyle);
   type BeamState = {
     score: number;
     clips: TClip[];
@@ -254,13 +367,13 @@ function selectWaterfallClipSequence<
     const desiredIndex = resolveWaterfallDesiredClipIndex(candidates, baseline.clip, variantIndex, orderIndex);
     const nextBeam: BeamState[] = [];
     candidates.forEach((clip, candidateIndex) => {
-      const clipScore = scoreWaterfallClipCandidate(clip, candidateIndex, desiredIndex, baseline);
+      const clipScore = scoreWaterfallClipCandidate(clip, candidateIndex, desiredIndex, baseline, variantStyle);
       beam.forEach((state) => {
         nextBeam.push({
           score: state.score
             + clipScore
-            + scoreWaterfallClipHistoryDiversity(state.clips, clip)
-            + (state.lastClip ? scoreWaterfallClipTransition(state.lastClip, clip) : 0),
+            + scoreWaterfallClipHistoryDiversity(state.clips, clip, variantStyle)
+            + (state.lastClip ? scoreWaterfallClipTransition(state.lastClip, clip, variantStyle) : 0),
           clips: [...state.clips, clip],
           lastClip: clip
         });
@@ -269,7 +382,7 @@ function selectWaterfallClipSequence<
 
     beam = nextBeam
       .sort((left, right) => right.score - left.score)
-      .slice(0, Math.max(1, WATERFALL_CLIP_BEAM_WIDTH));
+      .slice(0, Math.max(1, styleBias.beamWidth));
   });
 
   return beam[0]?.clips || baselineSelections.map((selection) => selection.clip || selection.group.clips[0]).filter(Boolean) as TClip[];
@@ -294,13 +407,15 @@ function scoreWaterfallClipCandidate<
   clip: TClip,
   candidateIndex: number,
   desiredIndex: number,
-  baseline: BaselineSelection<TClip, TAudio>
+  baseline: BaselineSelection<TClip, TAudio>,
+  variantStyle: FissionMixVariantStyle
 ) {
+  const styleBias = getWaterfallVariantStyleBias(variantStyle);
   let score = 40;
-  if (baseline.clip?.id === clip.id) score += 18;
+  if (baseline.clip?.id === clip.id) score += styleBias.baselineClipBonus;
 
   const candidateDistance = circularDistance(candidateIndex, desiredIndex, Math.max(1, baseline.group.clips.length));
-  score += Math.max(0, 20 - candidateDistance * 8);
+  score += Math.max(0, styleBias.desiredIndexMax - candidateDistance * styleBias.desiredIndexPenalty);
 
   const targetDuration = firstPositive(
     parsePresenterDurationSeconds(baseline.group.duration),
@@ -308,7 +423,16 @@ function scoreWaterfallClipCandidate<
   );
   const clipDuration = parsePresenterDurationSeconds(clip.duration);
   if (clipDuration > 0 && targetDuration > 0) {
-    score += durationAlignmentScore(clipDuration, targetDuration, baseline.selectionProfile);
+    const durationScore = durationAlignmentScore(clipDuration, targetDuration, baseline.selectionProfile);
+    score += durationScore + Math.round(durationScore * styleBias.durationFitWeight);
+    if (styleBias.compactRhythmWeight > 0) {
+      const overrun = clipDuration - targetDuration;
+      if (overrun <= 0.12 && clipDuration >= targetDuration * 0.72) {
+        score += Math.round(12 * styleBias.compactRhythmWeight);
+      } else if (overrun > 0.7) {
+        score -= Math.round(Math.min(14, overrun * 5) * styleBias.compactRhythmWeight);
+      }
+    }
   }
 
   const continuityProfile = extractClipAudioContinuityProfile(clip);
@@ -317,6 +441,8 @@ function scoreWaterfallClipCandidate<
     const tailHandle = continuityEdgeHandleSeconds(continuityProfile.tail, 'tail');
     const headHotness = continuityEdgeHotness(continuityProfile.head);
     const tailHotness = continuityEdgeHotness(continuityProfile.tail);
+    const headBreathRisk = continuityEdgeBreathRisk(continuityProfile.head, 'head');
+    const tailBreathRisk = continuityEdgeBreathRisk(continuityProfile.tail, 'tail');
 
     if (continuityProfile.head.leadingSilence >= 0.03) score += 4;
     if (continuityProfile.tail.trailingSilence >= 0.03) score += 4;
@@ -338,6 +464,24 @@ function scoreWaterfallClipCandidate<
 
     if (continuityProfile.head.leadingSilence > 0.16) score -= 4;
     if (continuityProfile.tail.trailingSilence > 0.16) score -= 4;
+    if (Math.max(headBreathRisk, tailBreathRisk) >= 0.62) {
+      score -= Math.round(Math.max(headBreathRisk, tailBreathRisk) * 10);
+    }
+    if (styleBias.audioSafetyWeight > 1) {
+      const safetyExtra = styleBias.audioSafetyWeight - 1;
+      if (isQuietContinuityEdge(continuityProfile.head) && isQuietContinuityEdge(continuityProfile.tail)) {
+        score += Math.round(8 * safetyExtra);
+      }
+      score += Math.round((headHandle + tailHandle) * 24 * safetyExtra);
+      if (Math.max(headHotness, tailHotness) >= 0.82 && Math.min(headHandle, tailHandle) < 0.012) {
+        score -= Math.round(12 * safetyExtra);
+      }
+    }
+    if (styleBias.breathPenaltyWeight > 1) {
+      const breathExtra = styleBias.breathPenaltyWeight - 1;
+      const breathRisk = Math.max(headBreathRisk, tailBreathRisk);
+      if (breathRisk >= 0.48) score -= Math.round(breathRisk * 18 * breathExtra);
+    }
   }
 
   if (clip.sourceClipName || clip.sourceCoverPath) {
@@ -348,10 +492,41 @@ function scoreWaterfallClipCandidate<
   return score;
 }
 
-function scoreWaterfallClipTransition<TClip extends WaterfallMixClipLike>(leftClip: TClip, rightClip: TClip) {
+function scoreWaterfallVisualTransitionDiversity<TClip extends WaterfallMixClipLike>(
+  leftClip: TClip,
+  rightClip: TClip,
+  styleBias: WaterfallVariantStyleBias
+) {
+  const visualOverlap = waterfallClipOverlapRatio(leftClip, rightClip);
+  const visualWeight = styleBias.visualDiversityWeight;
+  let score = 0;
+
+  if (waterfallClipIdentityKey(leftClip) && waterfallClipIdentityKey(leftClip) === waterfallClipIdentityKey(rightClip)) {
+    score -= Math.round(78 * visualWeight);
+  } else if (visualOverlap >= 0.82) {
+    score -= Math.round(30 * visualWeight);
+  } else if (visualOverlap >= 0.58) {
+    score -= Math.round(14 * visualWeight);
+  } else if (visualOverlap <= 0.16) {
+    score += Math.round(6 * visualWeight);
+  }
+
+  if (visualWeight > 1 && visualOverlap <= 0.22) {
+    score += Math.round(5 * (visualWeight - 1));
+  }
+  return score;
+}
+
+function scoreWaterfallClipTransition<TClip extends WaterfallMixClipLike>(
+  leftClip: TClip,
+  rightClip: TClip,
+  variantStyle: FissionMixVariantStyle
+) {
+  const styleBias = getWaterfallVariantStyleBias(variantStyle);
+  let score = scoreWaterfallVisualTransitionDiversity(leftClip, rightClip, styleBias);
   const leftProfile = extractClipAudioContinuityProfile(leftClip);
   const rightProfile = extractClipAudioContinuityProfile(rightClip);
-  if (!leftProfile?.hasAudio || !rightProfile?.hasAudio) return 0;
+  if (!leftProfile?.hasAudio || !rightProfile?.hasAudio) return score;
 
   const tail = leftProfile.tail;
   const head = rightProfile.head;
@@ -361,22 +536,13 @@ function scoreWaterfallClipTransition<TClip extends WaterfallMixClipLike>(leftCl
   const headHotness = continuityEdgeHotness(head);
   const tailHandle = continuityEdgeHandleSeconds(tail, 'tail');
   const headHandle = continuityEdgeHandleSeconds(head, 'head');
+  const tailBreathRisk = continuityEdgeBreathRisk(tail, 'tail');
+  const headBreathRisk = continuityEdgeBreathRisk(head, 'head');
   const meanDiff = Math.abs(normalizeContinuityDb(tail.meanVolumeDb) - normalizeContinuityDb(head.meanVolumeDb));
   const peakDiff = Math.abs(normalizeContinuityDb(tail.peakVolumeDb) - normalizeContinuityDb(head.peakVolumeDb));
   const activeDiff = Math.abs(clampContinuityRatio(tail.activeRatio) - clampContinuityRatio(head.activeRatio));
   const combinedHandle = tailHandle + headHandle;
-  const visualOverlap = waterfallClipOverlapRatio(leftClip, rightClip);
-  let score = 0;
-
-  if (waterfallClipIdentityKey(leftClip) && waterfallClipIdentityKey(leftClip) === waterfallClipIdentityKey(rightClip)) {
-    score -= 78;
-  } else if (visualOverlap >= 0.82) {
-    score -= 30;
-  } else if (visualOverlap >= 0.58) {
-    score -= 14;
-  } else if (visualOverlap <= 0.16) {
-    score += 6;
-  }
+  const combinedBreathSilence = Math.max(0, tail.trailingSilence || 0) + Math.max(0, head.leadingSilence || 0);
 
   if (tailQuiet && headQuiet) {
     score += 36;
@@ -402,6 +568,22 @@ function scoreWaterfallClipTransition<TClip extends WaterfallMixClipLike>(leftCl
   else if (combinedHandle >= 0.04) score += 8;
   else if (combinedHandle < 0.012 && (tailHotness + headHotness) / 2 >= 0.7) score -= 12;
 
+  const breathBoundaryRisk = Math.max(tailBreathRisk, headBreathRisk);
+  if (breathBoundaryRisk >= 0.64 && combinedHandle < 0.18) {
+    score -= Math.round(34 * breathBoundaryRisk);
+  } else if (breathBoundaryRisk >= 0.48 && combinedHandle < 0.12) {
+    score -= Math.round(18 * breathBoundaryRisk);
+  }
+
+  if (
+    combinedBreathSilence >= WATERFALL_BREATH_EDGE_MIN_SECONDS * 1.6
+    && combinedBreathSilence <= WATERFALL_BREATH_EDGE_MAX_SECONDS * 1.35
+    && Math.max(tailHotness, headHotness) >= 0.42
+    && !(tailQuiet && headQuiet)
+  ) {
+    score -= 12;
+  }
+
   if (activeDiff <= 0.14) score += 12;
   else if (activeDiff <= 0.28) score += 5;
   else if (activeDiff >= 0.5) score -= 10;
@@ -411,6 +593,23 @@ function scoreWaterfallClipTransition<TClip extends WaterfallMixClipLike>(leftCl
     score -= 30;
   } else if (hotBoundary) {
     score -= 10;
+  }
+
+  if (styleBias.audioSafetyWeight > 1) {
+    const safetyExtra = styleBias.audioSafetyWeight - 1;
+    if (tailQuiet && headQuiet) {
+      score += Math.round(14 * safetyExtra);
+    }
+    if (combinedHandle >= 0.08) {
+      score += Math.round(12 * safetyExtra);
+    } else if (combinedHandle < 0.018 && Math.max(tailHotness, headHotness) >= 0.58) {
+      score -= Math.round(18 * safetyExtra);
+    }
+    if (hotBoundary) score -= Math.round(16 * safetyExtra);
+  }
+
+  if (styleBias.breathPenaltyWeight > 1 && breathBoundaryRisk >= 0.42) {
+    score -= Math.round(24 * breathBoundaryRisk * (styleBias.breathPenaltyWeight - 1));
   }
 
   if (Math.abs(tailHotness - headHotness) <= 0.18 && meanDiff <= 4.5) {
@@ -426,16 +625,25 @@ function scoreWaterfallClipTransition<TClip extends WaterfallMixClipLike>(leftCl
     : 0;
   if (durationDiff > 0 && durationDiff <= 0.6) score += 6;
   else if (durationDiff >= 2.4) score -= 6;
+  if (styleBias.compactRhythmWeight > 0 && durationDiff > 0) {
+    if (durationDiff <= 0.35) score += Math.round(8 * styleBias.compactRhythmWeight);
+    else if (durationDiff >= 1.4) score -= Math.round(8 * styleBias.compactRhythmWeight);
+  }
 
   if (tail.trailingSilence >= 0.04) score += 8;
   if (head.leadingSilence >= 0.04) score += 8;
   return score;
 }
 
-function scoreWaterfallClipHistoryDiversity<TClip extends WaterfallMixClipLike>(previousClips: TClip[], candidate: TClip) {
+function scoreWaterfallClipHistoryDiversity<TClip extends WaterfallMixClipLike>(
+  previousClips: TClip[],
+  candidate: TClip,
+  variantStyle: FissionMixVariantStyle
+) {
   if (previousClips.length === 0) return 0;
+  const styleBias = getWaterfallVariantStyleBias(variantStyle);
   const recentClips = previousClips.slice(-3).reverse();
-  return recentClips.reduce((score, previousClip, historyIndex) => {
+  const baseScore = recentClips.reduce((score, previousClip, historyIndex) => {
     const weight = historyIndex === 0 ? 1 : historyIndex === 1 ? 0.62 : 0.36;
     const sameIdentity = waterfallClipIdentityKey(previousClip)
       && waterfallClipIdentityKey(previousClip) === waterfallClipIdentityKey(candidate);
@@ -449,6 +657,7 @@ function scoreWaterfallClipHistoryDiversity<TClip extends WaterfallMixClipLike>(
     if (overlap <= 0.14) return score + Math.round(5 * weight);
     return score;
   }, 0);
+  return Math.round(baseScore * styleBias.visualDiversityWeight);
 }
 
 function collectWaterfallAudioCandidates<
@@ -483,7 +692,8 @@ function orderWaterfallAudioCandidates<
   baseline: BaselineSelection<TClip, TAudio>,
   clip: TClip | undefined,
   lockedVoiceProfileKey: string,
-  previousDigitalHumanAudioDuration: number
+  previousDigitalHumanAudioDuration: number,
+  variantStyle: FissionMixVariantStyle
 ) {
   const filtered = filterPresenterWaterfallCandidates(candidates, baseline.selectionProfile);
   return filtered
@@ -494,7 +704,8 @@ function orderWaterfallAudioCandidates<
         baseline,
         clip,
         lockedVoiceProfileKey,
-        previousDigitalHumanAudioDuration
+        previousDigitalHumanAudioDuration,
+        variantStyle
       )
     }))
     .sort((left, right) => {
@@ -525,8 +736,10 @@ function scoreWaterfallPresenterAudioCandidate<
   baseline: BaselineSelection<TClip, TAudio>,
   clip: TClip | undefined,
   lockedVoiceProfileKey: string,
-  previousDigitalHumanAudioDuration: number
+  previousDigitalHumanAudioDuration: number,
+  variantStyle: FissionMixVariantStyle
 ) {
+  const styleBias = getWaterfallVariantStyleBias(variantStyle);
   let score = presenterUsageBaseScore(candidate.usageType, baseline.selectionProfile);
   if (baseline.audio && baseline.audio.id === candidate.audio.id) score += 32;
   if (candidate.source === 'group') score += baseline.selectionProfile === 'human_presenter' ? 14 : 10;
@@ -541,12 +754,22 @@ function scoreWaterfallPresenterAudioCandidate<
   );
   const effectiveAudioDuration = effectiveAudioDurationSeconds(candidate.audio);
   const voiceProfileKey = extractVoiceProfileKey(candidate.audio);
+  const speechWindow = normalizePresenterSpeechWindow(candidate.audio);
+  const safetyExtra = Math.max(0, styleBias.audioSafetyWeight - 1);
+  const sourceAudioAffinity = sourceAudioAffinityScore(clip, candidate.audio);
+  if (sourceAudioAffinity > 0) {
+    score += sourceAudioAffinity;
+  } else if (clip?.sourceAudioName && isPresenterVoiceLikeUsage(candidate.usageType)) {
+    score -= baseline.selectionProfile === 'digital_human' ? 28 : 18;
+  }
 
   if (lockedVoiceProfileKey && voiceProfileKey) {
     if (voiceProfileKey === lockedVoiceProfileKey) {
       score += baseline.selectionProfile === 'digital_human' ? 68 : 24;
+      score += Math.round((baseline.selectionProfile === 'digital_human' ? 24 : 12) * safetyExtra);
     } else {
       score -= baseline.selectionProfile === 'digital_human' ? 22 : 10;
+      score -= Math.round((baseline.selectionProfile === 'digital_human' ? 16 : 8) * safetyExtra);
     }
   } else if (baseline.selectionProfile === 'digital_human' && voiceProfileKey) {
     score += 10;
@@ -557,10 +780,14 @@ function scoreWaterfallPresenterAudioCandidate<
     if (diff <= 0.35) score += 18;
     else if (diff <= 0.85) score += 10;
     else if (diff > 2) score -= Math.min(12, Math.round(diff * 2));
+    if (styleBias.durationFitWeight > 0) {
+      score += Math.round(durationAlignmentScore(effectiveAudioDuration, previousDigitalHumanAudioDuration, baseline.selectionProfile) * styleBias.durationFitWeight * 0.35);
+    }
   }
 
   if (preferredSceneDuration > 0 && effectiveAudioDuration > 0) {
-    score += durationAlignmentScore(effectiveAudioDuration, preferredSceneDuration, baseline.selectionProfile);
+    const durationScore = durationAlignmentScore(effectiveAudioDuration, preferredSceneDuration, baseline.selectionProfile);
+    score += durationScore + Math.round(durationScore * styleBias.durationFitWeight);
     score += presenterSpeechAlignmentPenalty(
       preferredSceneDuration,
       candidate.audio,
@@ -570,7 +797,27 @@ function scoreWaterfallPresenterAudioCandidate<
   }
 
   if (estimatedVoiceoverDuration > 0 && effectiveAudioDuration > 0) {
-    score += durationAlignmentScore(effectiveAudioDuration, estimatedVoiceoverDuration, baseline.selectionProfile);
+    const voiceoverDurationScore = durationAlignmentScore(effectiveAudioDuration, estimatedVoiceoverDuration, baseline.selectionProfile);
+    score += voiceoverDurationScore + Math.round(voiceoverDurationScore * styleBias.durationFitWeight * 0.5);
+  }
+
+  if (styleBias.compactRhythmWeight > 0 && preferredSceneDuration > 0 && effectiveAudioDuration > 0) {
+    const overrun = effectiveAudioDuration - preferredSceneDuration;
+    if (overrun <= 0.12 && effectiveAudioDuration >= preferredSceneDuration * 0.72) {
+      score += Math.round(8 * styleBias.compactRhythmWeight);
+    } else if (overrun > 0.65) {
+      score -= Math.round(Math.min(14, overrun * 5) * styleBias.compactRhythmWeight);
+    }
+  }
+
+  if (safetyExtra > 0 && isPresenterVoiceLikeUsage(candidate.usageType)) {
+    if (!speechWindow.hasSpeech || speechWindow.effectiveDuration <= 0.12) {
+      score -= Math.round(18 * safetyExtra);
+    } else {
+      score += Math.round(8 * safetyExtra);
+    }
+    if (speechWindow.trimmedLeading > 0.55) score -= Math.round(8 * safetyExtra);
+    if (speechWindow.trimmedTrailing > 0.55) score -= Math.round(8 * safetyExtra);
   }
 
   const clipStem = mediaStem(clip?.name);
@@ -579,6 +826,36 @@ function scoreWaterfallPresenterAudioCandidate<
 
   score += sceneTokenAlignmentScore(candidate.audio.name, baseline.group.sceneNo, baseline.group.title, baseline.group.voiceover, clip?.name);
   return score;
+}
+
+function sourceAudioAffinityScore<TClip extends WaterfallMixClipLike>(
+  clip: TClip | undefined,
+  audio: Pick<WaterfallMixAudioLike, 'name' | 'path' | 'localPath'>
+) {
+  const sourceName = mediaStem(clip?.sourceAudioName);
+  if (!sourceName) return 0;
+
+  const audioNames = [
+    audio.name,
+    audio.localPath,
+    audio.path
+  ].map((value) => mediaStem(value)).filter(Boolean);
+
+  if (audioNames.some((name) => name === sourceName)) return 180;
+  if (audioNames.some((name) => name.includes(sourceName) || sourceName.includes(name))) return 120;
+
+  const sourceTokens = mediaTokens(sourceName).filter((token) => !VOICE_PROFILE_STOPWORDS.has(token));
+  if (sourceTokens.length === 0) return 0;
+  const audioTokens = new Set(
+    mediaTokens(audioNames.join(' '))
+      .filter((token) => !VOICE_PROFILE_STOPWORDS.has(token))
+  );
+  const matched = sourceTokens.filter((token) => audioTokens.has(token)).length;
+  if (matched === 0) return 0;
+  const ratio = matched / Math.max(sourceTokens.length, 1);
+  if (ratio >= 0.75) return 84;
+  if (ratio >= 0.45) return 42;
+  return 18;
 }
 
 function presenterUsageBaseScore(usageType: FissionMixAudioUsageType, selectionProfile: FissionMixSelectionProfile) {
@@ -691,6 +968,28 @@ function continuityEdgeHotness(edge?: WaterfallClipAudioContinuityEdge) {
     + peakEnergy * 0.16
     + silencePressure * 0.1
     - handleRelief * 0.2
+  );
+}
+
+function continuityEdgeBreathRisk(edge: WaterfallClipAudioContinuityEdge | undefined, side: 'head' | 'tail') {
+  if (!edge) return 0;
+  const silence = side === 'head' ? edge.leadingSilence : edge.trailingSilence;
+  if (silence < WATERFALL_BREATH_EDGE_MIN_SECONDS || silence > WATERFALL_BREATH_EDGE_MAX_SECONDS) return 0;
+  const center = (WATERFALL_BREATH_EDGE_MIN_SECONDS + WATERFALL_BREATH_EDGE_MAX_SECONDS) / 2;
+  const halfRange = (WATERFALL_BREATH_EDGE_MAX_SECONDS - WATERFALL_BREATH_EDGE_MIN_SECONDS) / 2;
+  const silenceBand = clampContinuityRatio(1 - Math.abs(silence - center) / Math.max(0.001, halfRange));
+  const active = clampContinuityRatio(edge.activeRatio);
+  const meanEnergy = normalizeContinuityUnit(edge.meanVolumeDb, -46, -22);
+  const peakEnergy = normalizeContinuityUnit(edge.peakVolumeDb, -30, -8);
+  const notFullyQuiet = isQuietContinuityEdge(edge) ? 0.42 : 1;
+  return clampContinuityRatio(
+    notFullyQuiet
+    * (
+      silenceBand * 0.38
+      + active * 0.24
+      + meanEnergy * 0.22
+      + peakEnergy * 0.16
+    )
   );
 }
 

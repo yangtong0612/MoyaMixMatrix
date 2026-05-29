@@ -74,6 +74,7 @@ import {
 import {
   inferFissionMixAudioUsageType,
   inferFissionMixSelectionProfile,
+  resolveFissionMixVariantStyle,
   type FissionMixAudioUsageType,
   type FissionMixSelectionProfile
 } from './fissionMixMatcher';
@@ -728,15 +729,181 @@ interface GeneratedResultBatchGroup {
 interface FissionResultThumbnailProps {
   src?: string;
   active?: boolean;
+  thumbnailUrl?: string;
+  onRequestThumbnail?: (src: string) => void;
+  onThumbnailVisibilityChange?: (src: string, visible: boolean) => void;
 }
 
-const FissionResultThumbnail = memo(function FissionResultThumbnail({ src, active = false }: FissionResultThumbnailProps) {
-  const shouldLoad = Boolean(src && active);
+const IMAGE_THUMBNAIL_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|webp)(?:[?#]|$)/i;
+const GENERATED_RESULT_THUMB_WIDTH = 96;
+const GENERATED_RESULT_THUMB_HEIGHT = 170;
+const GENERATED_THUMBNAIL_IDLE_DELAY = 80;
+const GENERATED_THUMBNAIL_CONCURRENCY = 2;
+
+function isImageThumbnailSource(src?: string) {
+  if (!src) return false;
+  if (/^data:image\//i.test(src) || /^blob:/i.test(src)) return true;
+  try {
+    return IMAGE_THUMBNAIL_PATTERN.test(decodeURIComponent(src));
+  } catch {
+    return IMAGE_THUMBNAIL_PATTERN.test(src);
+  }
+}
+
+async function captureGeneratedResultThumbnail(src: string) {
+  const bridgeThumbnailer = window.surgicol?.media?.createThumbnail;
+  if (typeof bridgeThumbnailer === 'function') {
+    try {
+      const thumbnail = await bridgeThumbnailer(src, {
+        width: GENERATED_RESULT_THUMB_WIDTH,
+        height: GENERATED_RESULT_THUMB_HEIGHT,
+        time: 0.8
+      });
+      const thumbnailUrl = toMediaUrl(thumbnail.localPath);
+      if (thumbnailUrl) return thumbnailUrl;
+    } catch {
+      // Fall back to in-renderer extraction when the desktop bridge cannot create a cached thumbnail.
+    }
+  }
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.preload = 'metadata';
+  video.playsInline = true;
+  video.style.position = 'fixed';
+  video.style.left = '-9999px';
+  video.style.top = '-9999px';
+  video.style.width = '1px';
+  video.style.height = '1px';
+  document.body.appendChild(video);
+
+  return new Promise<string>((resolve) => {
+    let settled = false;
+    const finish = (value = '') => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      video.remove();
+      resolve(value);
+    };
+    const drawFrame = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = GENERATED_RESULT_THUMB_WIDTH;
+      canvas.height = GENERATED_RESULT_THUMB_HEIGHT;
+      const context = canvas.getContext('2d');
+      if (!context || !video.videoWidth || !video.videoHeight) {
+        finish('');
+        return;
+      }
+
+      const targetRatio = GENERATED_RESULT_THUMB_WIDTH / GENERATED_RESULT_THUMB_HEIGHT;
+      const sourceRatio = video.videoWidth / video.videoHeight;
+      let sx = 0;
+      let sy = 0;
+      let sw = video.videoWidth;
+      let sh = video.videoHeight;
+      if (sourceRatio > targetRatio) {
+        sw = Math.max(1, Math.round(video.videoHeight * targetRatio));
+        sx = Math.max(0, Math.round((video.videoWidth - sw) / 2));
+      } else if (sourceRatio < targetRatio) {
+        sh = Math.max(1, Math.round(video.videoWidth / targetRatio));
+        sy = Math.max(0, Math.round((video.videoHeight - sh) / 2));
+      }
+
+      try {
+        context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL('image/jpeg', 0.72));
+      } catch {
+        finish('');
+      }
+    };
+
+    const timeout = window.setTimeout(() => finish(''), 8000);
+    video.onerror = () => finish('');
+    video.onloadedmetadata = () => {
+      const targetTime = Number.isFinite(video.duration) && video.duration > 1 ? Math.min(0.8, Math.max(video.duration - 0.08, 0)) : 0;
+      if (targetTime > 0) {
+        video.currentTime = targetTime;
+      } else {
+        drawFrame();
+      }
+    };
+    video.onseeked = drawFrame;
+    video.src = src;
+  });
+}
+
+function runWhenBrowserIdle(task: () => void, timeout = 1200) {
+  const requestIdleCallback = (window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+  }).requestIdleCallback;
+
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(task, { timeout });
+    return;
+  }
+
+  window.setTimeout(task, 0);
+}
+
+const FissionResultThumbnail = memo(function FissionResultThumbnail({
+  src,
+  active = false,
+  thumbnailUrl,
+  onRequestThumbnail,
+  onThumbnailVisibilityChange
+}: FissionResultThumbnailProps) {
+  const coverRef = useRef<HTMLDivElement | null>(null);
+  const [nearViewport, setNearViewport] = useState(false);
+  const isImageSource = isImageThumbnailSource(src);
+  const imageSrc = isImageSource ? src : thumbnailUrl;
+  const thumbnailEligible = Boolean(src && !isImageSource && (active || nearViewport));
+  const shouldShowImage = Boolean(imageSrc && (active || nearViewport));
+
+  useEffect(() => {
+    setNearViewport(false);
+  }, [src]);
+
+  useEffect(() => {
+    if (!src || active) return undefined;
+    const element = coverRef.current;
+    if (!element) return undefined;
+    if (typeof IntersectionObserver === 'undefined') {
+      setNearViewport(true);
+      return undefined;
+    }
+
+    let observer: IntersectionObserver | undefined;
+    observer = new IntersectionObserver(([entry]) => {
+      setNearViewport(Boolean(entry?.isIntersecting));
+    }, {
+      root: null,
+      rootMargin: '80px 160px',
+      threshold: 0.01
+    });
+    observer.observe(element);
+
+    return () => observer?.disconnect();
+  }, [active, src]);
+
+  useEffect(() => {
+    if (!src || isImageSource) return undefined;
+    onThumbnailVisibilityChange?.(src, thumbnailEligible);
+    return () => onThumbnailVisibilityChange?.(src, false);
+  }, [isImageSource, onThumbnailVisibilityChange, src, thumbnailEligible]);
+
+  useEffect(() => {
+    if (!src || isImageSource || thumbnailUrl || !thumbnailEligible) return;
+    onRequestThumbnail?.(src);
+  }, [isImageSource, onRequestThumbnail, src, thumbnailEligible, thumbnailUrl]);
 
   return (
-    <div className={clsx('fission-card-cover', !shouldLoad && 'pending')}>
-      {shouldLoad && src ? (
-        <video src={src} muted playsInline preload="metadata" />
+    <div ref={coverRef} className={clsx('fission-card-cover', !shouldShowImage && 'pending')}>
+      {shouldShowImage && imageSrc ? (
+        <img src={imageSrc} alt="" loading="lazy" decoding="async" draggable={false} />
       ) : (
         <div className="fission-card-cover-placeholder" aria-hidden="true">
           <Film size={16} />
@@ -749,9 +916,12 @@ const FissionResultThumbnail = memo(function FissionResultThumbnail({ src, activ
 interface GeneratedResultVideoCardProps {
   video: GeneratedFissionVideo;
   coverUrl?: string;
+  thumbnailUrl?: string;
   selected: boolean;
   previewSelected: boolean;
   eagerPreview?: boolean;
+  onRequestThumbnail?: (src: string) => void;
+  onThumbnailVisibilityChange?: (src: string, visible: boolean) => void;
   onToggleSelection: (selectionKey: string) => void;
   onSetSelectedPreviewId: (videoId: string) => void;
   onPreview: (video: GeneratedFissionVideo) => void | Promise<void>;
@@ -760,9 +930,12 @@ interface GeneratedResultVideoCardProps {
 const GeneratedResultVideoCard = memo(function GeneratedResultVideoCard({
   video,
   coverUrl,
+  thumbnailUrl,
   selected,
   previewSelected,
   eagerPreview = false,
+  onRequestThumbnail,
+  onThumbnailVisibilityChange,
   onToggleSelection,
   onSetSelectedPreviewId,
   onPreview
@@ -773,6 +946,7 @@ const GeneratedResultVideoCard = memo(function GeneratedResultVideoCard({
   return (
     <article
       className={clsx(previewSelected && 'selected', selected && 'batch-selected')}
+      data-thumbnail-src={coverUrl && !isImageThumbnailSource(coverUrl) ? coverUrl : undefined}
       role="button"
       tabIndex={0}
       onMouseEnter={() => setThumbnailActive(true)}
@@ -817,13 +991,20 @@ const GeneratedResultVideoCard = memo(function GeneratedResultVideoCard({
       >
         <Play size={13} />
       </button>
-      <FissionResultThumbnail src={coverUrl} active={shouldLoadThumbnail} />
+      <FissionResultThumbnail
+        src={coverUrl}
+        active={shouldLoadThumbnail}
+        thumbnailUrl={thumbnailUrl}
+        onRequestThumbnail={onRequestThumbnail}
+        onThumbnailVisibilityChange={onThumbnailVisibilityChange}
+      />
       <strong>{video.name}</strong>
     </article>
   );
 }, (prevProps, nextProps) => (
   prevProps.video === nextProps.video
   && prevProps.coverUrl === nextProps.coverUrl
+  && prevProps.thumbnailUrl === nextProps.thumbnailUrl
   && prevProps.selected === nextProps.selected
   && prevProps.previewSelected === nextProps.previewSelected
   && prevProps.eagerPreview === nextProps.eagerPreview
@@ -3912,6 +4093,7 @@ function FissionWorkspace(props: {
   const [comboMode, setComboMode] = useState<FissionComboMode>('single');
   const [soundSettings, setSoundSettings] = useState<FissionSoundSettings>(defaultFissionSoundSettings);
   const [generatedVideos, setGeneratedVideos] = useState<GeneratedFissionVideo[]>([]);
+  const [generatedThumbnailUrls, setGeneratedThumbnailUrls] = useState<Record<string, string>>({});
   const [segmentCandidateRestoreState, setSegmentCandidateRestoreState] = useState<{
     segmentBatchKey: string;
     waterfallBatchKey: string;
@@ -3951,6 +4133,13 @@ END：4秒，收束行动指令和品牌露出`);
   const statusStackRef = useRef<HTMLDivElement>(null);
   const strategyCardsRef = useRef<HTMLDivElement>(null);
   const previewGridRef = useRef<HTMLDivElement>(null);
+  const previewGridScrollTimerRef = useRef<number>();
+  const previewGridScrollingRef = useRef(false);
+  const generatedThumbnailQueueRef = useRef<string[]>([]);
+  const generatedThumbnailPendingRef = useRef(new Set<string>());
+  const generatedThumbnailVisibleRef = useRef(new Set<string>());
+  const generatedThumbnailCacheRef = useRef(new Map<string, string>());
+  const generatedThumbnailWorkerCountRef = useRef(0);
   const activeGroup = groups.find((group) => group.id === activeGroupId) || groups[0];
   const scriptPreviewGroups = scriptDialogOpen ? parseScriptGroups(scriptDraft) : [];
   const scriptPreviewDocument = scriptPreviewGroups[0];
@@ -4469,18 +4658,58 @@ END：4秒，收束行动指令和品牌露出`);
   useEffect(() => {
     return () => {
       if (generationTimerRef.current) window.clearInterval(generationTimerRef.current);
+      if (previewGridScrollTimerRef.current) window.clearTimeout(previewGridScrollTimerRef.current);
+      generatedThumbnailQueueRef.current = [];
+      generatedThumbnailPendingRef.current.clear();
+      generatedThumbnailVisibleRef.current.clear();
     };
   }, []);
 
   useEffect(() => {
     if (generatedVideos.length > 0) {
-      previewGridRef.current?.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+      previewGridRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     }
   }, [generatedVideos.length]);
 
   useEffect(() => {
     setSelectedGeneratedIds((ids) => ids.filter((id) => generatedVideos.some((video) => video.id === id)));
   }, [generatedVideos]);
+
+  useEffect(() => {
+    const activeSources = new Set(
+      generatedVideos
+        .map((video) => toMediaUrl(video.coverPath || previewPath(video)))
+        .filter((source): source is string => Boolean(source))
+    );
+    generatedThumbnailQueueRef.current = generatedThumbnailQueueRef.current.filter((source) => activeSources.has(source));
+    for (const source of Array.from(generatedThumbnailCacheRef.current.keys())) {
+      if (!activeSources.has(source)) generatedThumbnailCacheRef.current.delete(source);
+    }
+    for (const source of Array.from(generatedThumbnailPendingRef.current.values())) {
+      if (!activeSources.has(source)) generatedThumbnailPendingRef.current.delete(source);
+    }
+    for (const source of Array.from(generatedThumbnailVisibleRef.current.values())) {
+      if (!activeSources.has(source)) generatedThumbnailVisibleRef.current.delete(source);
+    }
+    setGeneratedThumbnailUrls((current) => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [source, thumbnail] of Object.entries(current)) {
+        if (activeSources.has(source)) {
+          next[source] = thumbnail;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [generatedVideos]);
+
+  useEffect(() => {
+    if (generatedVideos.length === 0) return undefined;
+    const frame = window.requestAnimationFrame(() => warmVisibleGeneratedThumbnails());
+    return () => window.cancelAnimationFrame(frame);
+  }, [generatedVideos.length, generatedResultBatchGroups.length]);
 
   useEffect(() => {
     const pollingJobs = generatedVideos.filter((video) => video.jobId && (video.jobStatus === 'submitted' || video.jobStatus === 'running'));
@@ -4570,6 +4799,102 @@ END：4秒，收束行动指令和品牌露出`);
       left: direction === 'left' ? -320 : 320,
       behavior: 'smooth'
     });
+  }
+
+  function scheduleGeneratedThumbnailQueue() {
+    if (previewGridScrollingRef.current) return;
+    while (generatedThumbnailWorkerCountRef.current < GENERATED_THUMBNAIL_CONCURRENCY) {
+      const source = generatedThumbnailQueueRef.current.shift();
+      if (!source) return;
+      if (!generatedThumbnailVisibleRef.current.has(source)) {
+        generatedThumbnailPendingRef.current.delete(source);
+        continue;
+      }
+
+      generatedThumbnailWorkerCountRef.current += 1;
+      window.setTimeout(() => {
+        runWhenBrowserIdle(() => {
+          if (previewGridScrollingRef.current || !generatedThumbnailVisibleRef.current.has(source)) {
+            generatedThumbnailPendingRef.current.delete(source);
+            generatedThumbnailWorkerCountRef.current = Math.max(0, generatedThumbnailWorkerCountRef.current - 1);
+            scheduleGeneratedThumbnailQueue();
+            return;
+          }
+          void captureGeneratedResultThumbnail(source)
+            .then((thumbnail) => {
+              if (thumbnail) {
+                generatedThumbnailCacheRef.current.set(source, thumbnail);
+                setGeneratedThumbnailUrls((current) => (
+                  current[source] === thumbnail ? current : { ...current, [source]: thumbnail }
+                ));
+              }
+            })
+            .finally(() => {
+              generatedThumbnailPendingRef.current.delete(source);
+              generatedThumbnailWorkerCountRef.current = Math.max(0, generatedThumbnailWorkerCountRef.current - 1);
+              scheduleGeneratedThumbnailQueue();
+            });
+        }, 600);
+      }, GENERATED_THUMBNAIL_IDLE_DELAY);
+    }
+  }
+
+  function requestGeneratedThumbnail(source?: string) {
+    if (!source || isImageThumbnailSource(source)) return;
+    if (!generatedThumbnailVisibleRef.current.has(source)) return;
+    if (generatedThumbnailCacheRef.current.has(source) || generatedThumbnailPendingRef.current.has(source)) return;
+    generatedThumbnailPendingRef.current.add(source);
+    generatedThumbnailQueueRef.current.push(source);
+    scheduleGeneratedThumbnailQueue();
+  }
+
+  function updateGeneratedThumbnailVisibility(source: string, visible: boolean) {
+    if (!source || isImageThumbnailSource(source)) return;
+    if (visible) {
+      generatedThumbnailVisibleRef.current.add(source);
+      scheduleGeneratedThumbnailQueue();
+    } else {
+      generatedThumbnailVisibleRef.current.delete(source);
+    }
+  }
+
+  function warmVisibleGeneratedThumbnails() {
+    const grid = previewGridRef.current;
+    if (!grid || previewGridScrollingRef.current) return;
+    const gridRect = grid.getBoundingClientRect();
+    const visibleCards = Array.from(grid.querySelectorAll<HTMLElement>('article[data-thumbnail-src]'))
+      .filter((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.bottom >= gridRect.top - 40
+          && rect.top <= gridRect.bottom + 40
+          && rect.right >= gridRect.left - 80
+          && rect.left <= gridRect.right + 80;
+      })
+      .slice(0, 18);
+
+    for (const card of visibleCards) {
+      const source = card.dataset.thumbnailSrc;
+      if (!source || isImageThumbnailSource(source)) continue;
+      generatedThumbnailVisibleRef.current.add(source);
+      requestGeneratedThumbnail(source);
+    }
+  }
+
+  function markPreviewGridScrolling() {
+    const grid = previewGridRef.current;
+    if (!grid) return;
+    grid.classList.add('is-scrolling');
+    if (!previewGridScrollingRef.current) {
+      previewGridScrollingRef.current = true;
+    }
+    if (previewGridScrollTimerRef.current) window.clearTimeout(previewGridScrollTimerRef.current);
+    previewGridScrollTimerRef.current = window.setTimeout(() => {
+      grid.classList.remove('is-scrolling');
+      previewGridScrollingRef.current = false;
+      previewGridScrollTimerRef.current = undefined;
+      warmVisibleGeneratedThumbnails();
+      scheduleGeneratedThumbnailQueue();
+    }, GENERATED_THUMBNAIL_IDLE_DELAY);
   }
 
   function toggleFissionResultFullscreen() {
@@ -6392,7 +6717,7 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
           </div>
           <div
             className={clsx('fission-preview-grid', generatedVideos.length > 0 && 'generated')}
-            key={generatedVideos[0]?.id || 'preview-default'}
+            onScroll={markPreviewGridScrolling}
             ref={previewGridRef}
           >
             {generatedVideos.length === 0 ? (
@@ -6426,18 +6751,22 @@ function toggleFissionGroupClip(groupId: string, clipId: string) {
                           <button type="button" onClick={() => clearGeneratedResultBatchSelection(batch.key)}>清空本组</button>
                         </div>
                       </header>
-                      <div className="fission-result-group-grid">
+                      <div className="fission-result-group-grid" onScroll={markPreviewGridScrolling}>
                         {batch.videos.map((video, videoIndex) => {
                           const coverUrl = toMediaUrl(video.coverPath || previewPath(video));
                           const selected = isGeneratedVideoSelected(video);
+                          const thumbnailUrl = coverUrl && !isImageThumbnailSource(coverUrl) ? generatedThumbnailUrls[coverUrl] : undefined;
                           return (
                             <GeneratedResultVideoCard
                               key={video.id}
                               video={video}
                               coverUrl={coverUrl}
+                              thumbnailUrl={thumbnailUrl}
                               selected={selected}
                               previewSelected={selectedPreviewItem?.id === video.id}
                               eagerPreview={videoIndex === 0}
+                              onRequestThumbnail={requestGeneratedThumbnail}
+                              onThumbnailVisibilityChange={updateGeneratedThumbnailVisibility}
                               onToggleSelection={toggleGeneratedSelection}
                               onSetSelectedPreviewId={setSelectedPreviewId}
                               onPreview={previewGeneratedVideoItem}
@@ -7550,6 +7879,7 @@ function resolveVariantSelections(
   compositionMode: 'segments' | 'waterfall'
 ) {
   const eligibleGroups = collectLocalEligibleMixGroups(groups, audioItems);
+  const variantStyle = resolveFissionMixVariantStyle(variantIndex);
   if (compositionMode === 'waterfall') {
     return buildWaterfallMixSelections({
       groups: eligibleGroups.map(({ group, availableClips, availableGroupAudios }) => ({
@@ -7558,7 +7888,8 @@ function resolveVariantSelections(
         groupAudios: availableGroupAudios
       })),
       globalAudios: [],
-      variantIndex
+      variantIndex,
+      variantStyle
     });
   }
   return eligibleGroups.map(({ group, availableClips, availableGroupAudios }, groupIndex) => {
@@ -7568,7 +7899,8 @@ function resolveVariantSelections(
       groupAudios: availableGroupAudios,
       globalAudios: [],
       variantIndex,
-      groupIndex
+      groupIndex,
+      variantStyle
     });
     return {
       orderIndex: groupIndex,

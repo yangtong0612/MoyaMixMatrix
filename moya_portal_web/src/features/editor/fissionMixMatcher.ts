@@ -10,6 +10,14 @@ export type FissionMixContentProfile = 'standard' | 'digital_human';
 export type FissionMixSelectionProfile = 'standard' | 'human_presenter' | 'digital_human';
 export type FissionMixAudioUsageType = 'ai_voice' | 'voice' | 'music' | 'effect' | 'unknown';
 export type FissionMixAudioSource = 'group' | 'global' | 'ai';
+export type FissionMixVariantStyle =
+  | 'balanced'
+  | 'visual_diversity'
+  | 'audio_smooth'
+  | 'rhythm_compact'
+  | 'duration_fit'
+  | 'freshness'
+  | 'presenter_safe';
 
 interface MixClipLike {
   id: string;
@@ -46,6 +54,16 @@ interface MixAudioCandidate<TAudio extends MixAudioLike> {
   originalIndex: number;
 }
 
+interface FissionMixVariantStyleBias {
+  clipStep: number;
+  clipOffset: number;
+  forceClipSpread: boolean;
+  audioStep: number;
+  audioOffset: number;
+  forceAudioSpread: boolean;
+  audioIndexWeight: number;
+}
+
 const DIGITAL_HUMAN_KEYWORDS = /数字人|虚拟人|digital\s*human|avatar|metahuman|虚拟主播|虚拟讲解|ai主播/i;
 const HUMAN_PRESENCE_KEYWORDS = /真人|人物|人像|出镜|露脸|口播|讲解|解说|主持|主播|采访|试用|体验|模特|达人|博主|上脸|自拍|vlog|presenter|host|speaker|talking\s*head|onscreen|person/i;
 const AI_AUDIO_KEYWORDS = /(?:^|[\s_-])(ai|tts)(?:$|[\s_-])|数字人|ai配音|智能配音|voiceover|speech|synthetic/i;
@@ -53,6 +71,18 @@ const VOICE_AUDIO_KEYWORDS = /配音|旁白|口播|讲解|解说|人声|主播|�
 const MUSIC_AUDIO_KEYWORDS = /bgm|伴奏|纯音乐|音乐|music|beat|loop|song|melody|instrumental/i;
 const EFFECT_AUDIO_KEYWORDS = /音效|效果|sfx|fx|effect/i;
 const GENERIC_MATCH_TOKENS = new Set(['scene', 'clip', 'audio', 'video', 'mix', 'group', 'voice', 'music', 'bgm', '音频', '视频', '素材', '片段', '镜头', '分镜', '混剪']);
+const FISSION_MIX_VARIANT_STYLE_SEQUENCE: FissionMixVariantStyle[] = [
+  'balanced',
+  'visual_diversity',
+  'audio_smooth',
+  'rhythm_compact',
+  'duration_fit',
+  'freshness',
+  'presenter_safe',
+  'visual_diversity',
+  'duration_fit',
+  'audio_smooth'
+];
 const ACCENT_PATTERN_ENTRIES = [
   ['mandarin', /普通话|国语|mandarin/i],
   ['cantonese', /粤语|广东话|cantonese/i],
@@ -96,6 +126,13 @@ export function buildFissionMixMatchKey(value?: string) {
   return Array.from(new Set(mediaTokens(value))).join(' ');
 }
 
+export function resolveFissionMixVariantStyle(variantIndex: number): FissionMixVariantStyle {
+  const normalizedIndex = Number.isFinite(variantIndex) ? Math.max(0, Math.floor(variantIndex)) : 0;
+  return FISSION_MIX_VARIANT_STYLE_SEQUENCE[
+    positiveModulo(normalizedIndex, FISSION_MIX_VARIANT_STYLE_SEQUENCE.length)
+  ] || 'balanced';
+}
+
 export function selectFissionMixVariantMedia<TClip extends MixClipLike, TAudio extends MixAudioLike>(input: {
   group: MixGroupLike<TClip, TAudio>;
   clips?: TClip[];
@@ -103,12 +140,15 @@ export function selectFissionMixVariantMedia<TClip extends MixClipLike, TAudio e
   globalAudios?: TAudio[];
   variantIndex: number;
   groupIndex?: number;
+  variantStyle?: FissionMixVariantStyle;
 }) {
   const clips = input.clips || input.group.clips || [];
   const groupAudios = input.groupAudios || input.group.groupAudios || [];
   const globalAudios = input.globalAudios || [];
   const selectionProfile = inferFissionMixSelectionProfile(input.group);
   const contentProfile: FissionMixContentProfile = selectionProfile === 'standard' ? 'standard' : 'digital_human';
+  const variantStyle = input.variantStyle || resolveFissionMixVariantStyle(input.variantIndex);
+  const styleBias = getFissionMixVariantStyleBias(variantStyle);
   const cursor = Math.max(0, input.variantIndex + (input.groupIndex || 0));
 
   const groupCandidates = groupAudios.map((audio, originalIndex) => ({
@@ -125,16 +165,23 @@ export function selectFissionMixVariantMedia<TClip extends MixClipLike, TAudio e
   }));
   const allCandidates = [...groupCandidates, ...globalCandidates];
   const anchorSize = Math.max(1, clips.length, allCandidates.length);
+  const clipCursor = Math.max(0, cursor * styleBias.clipStep + styleBias.clipOffset);
 
   const clip = clips.length > 0
     ? clips[
       selectionProfile === 'standard'
-        ? positiveModulo(cursor, clips.length)
-        : alignedPoolIndex(cursor, clips.length, anchorSize)
+        ? resolveStyledPoolIndex(clipCursor, clips.length, clips.length, styleBias.forceClipSpread)
+        : resolveStyledPoolIndex(
+          clipCursor,
+          clips.length,
+          styleBias.forceClipSpread ? clips.length : anchorSize,
+          styleBias.forceClipSpread
+        )
     ]
     : undefined;
 
   const audioCandidate = pickAudioCandidate({
+    variantStyle,
     selectionProfile,
     group: input.group,
     clip,
@@ -157,6 +204,7 @@ export function selectFissionMixVariantMedia<TClip extends MixClipLike, TAudio e
 }
 
 function pickAudioCandidate<TClip extends MixClipLike, TAudio extends MixAudioLike>(input: {
+  variantStyle: FissionMixVariantStyle;
   selectionProfile: FissionMixSelectionProfile;
   group: MixGroupLike<TClip, TAudio>;
   clip?: TClip;
@@ -166,14 +214,33 @@ function pickAudioCandidate<TClip extends MixClipLike, TAudio extends MixAudioLi
   clipCount: number;
 }) {
   const pools = buildAudioPriorityPools(input.selectionProfile, input.groupCandidates, input.globalCandidates);
+  const styleBias = getFissionMixVariantStyleBias(input.variantStyle);
   for (const pool of pools) {
     if (pool.length === 0) continue;
-    const desiredIndex = alignedPoolIndex(input.cursor, pool.length, Math.max(1, input.clipCount, pool.length));
+    const audioCursor = Math.max(0, input.cursor * styleBias.audioStep + styleBias.audioOffset);
+    const desiredIndex = resolveStyledPoolIndex(
+      audioCursor,
+      pool.length,
+      Math.max(1, input.clipCount, pool.length),
+      styleBias.forceAudioSpread
+    );
     return pool
-      .map((candidate, poolIndex) => ({ candidate, poolIndex }))
+      .map((candidate, poolIndex) => ({
+        candidate,
+        poolIndex,
+        score: scoreAudioCandidate(
+          candidate,
+          input.clip,
+          input.group,
+          input.selectionProfile,
+          input.variantStyle,
+          desiredIndex,
+          poolIndex,
+          pool.length
+        )
+      }))
       .sort((left, right) => {
-        const scoreDiff = scoreAudioCandidate(right.candidate, input.clip, input.group, input.selectionProfile)
-          - scoreAudioCandidate(left.candidate, input.clip, input.group, input.selectionProfile);
+        const scoreDiff = right.score - left.score;
         if (scoreDiff !== 0) return scoreDiff;
         const desiredDistance = circularDistance(left.poolIndex, desiredIndex, pool.length)
           - circularDistance(right.poolIndex, desiredIndex, pool.length);
@@ -227,9 +294,14 @@ function scoreAudioCandidate<TClip extends MixClipLike, TAudio extends MixAudioL
   candidate: MixAudioCandidate<TAudio>,
   clip: TClip | undefined,
   group: MixGroupLike<TClip, TAudio>,
-  selectionProfile: FissionMixSelectionProfile
+  selectionProfile: FissionMixSelectionProfile,
+  variantStyle: FissionMixVariantStyle,
+  desiredIndex: number,
+  poolIndex: number,
+  poolLength: number
 ) {
   const voiceLike = isPresenterVoiceLikeUsage(candidate.usageType);
+  const styleBias = getFissionMixVariantStyleBias(variantStyle);
   let score = audioUsageBaseScore(candidate.usageType, selectionProfile);
   if (candidate.source === 'group') score += selectionProfile === 'human_presenter' ? 12 : 8;
   if (selectionProfile !== 'standard') score += voiceLike ? 22 : -28;
@@ -273,8 +345,136 @@ function scoreAudioCandidate<TClip extends MixClipLike, TAudio extends MixAudioL
     else if (diff <= 2.8) score += 2;
     else if (voiceLike && selectionProfile !== 'standard') score -= Math.min(24, Math.round(diff * 4));
     score += presenterSpeechAlignmentPenalty(preferredDuration, candidate.audio, selectionProfile, candidate.usageType);
+    score += scoreAudioDurationStyleBias(audioDuration, preferredDuration, variantStyle, selectionProfile, voiceLike);
   }
 
+  if (poolLength > 1) {
+    const distance = circularDistance(poolIndex, desiredIndex, poolLength);
+    score += Math.max(0, styleBias.audioIndexWeight - distance * 4);
+  }
+
+  score += scoreAudioSpeechSafetyStyleBias(speechWindow, variantStyle, selectionProfile, voiceLike);
+  return score;
+}
+
+function getFissionMixVariantStyleBias(style: FissionMixVariantStyle): FissionMixVariantStyleBias {
+  switch (style) {
+    case 'visual_diversity':
+      return {
+        clipStep: 1,
+        clipOffset: 0,
+        forceClipSpread: true,
+        audioStep: 1,
+        audioOffset: 1,
+        forceAudioSpread: true,
+        audioIndexWeight: 8
+      };
+    case 'audio_smooth':
+      return {
+        clipStep: 1,
+        clipOffset: 0,
+        forceClipSpread: false,
+        audioStep: 1,
+        audioOffset: 0,
+        forceAudioSpread: false,
+        audioIndexWeight: 4
+      };
+    case 'rhythm_compact':
+      return {
+        clipStep: 1,
+        clipOffset: 1,
+        forceClipSpread: true,
+        audioStep: 1,
+        audioOffset: 2,
+        forceAudioSpread: false,
+        audioIndexWeight: 7
+      };
+    case 'duration_fit':
+      return {
+        clipStep: 1,
+        clipOffset: 2,
+        forceClipSpread: false,
+        audioStep: 1,
+        audioOffset: 1,
+        forceAudioSpread: false,
+        audioIndexWeight: 6
+      };
+    case 'freshness':
+      return {
+        clipStep: 1,
+        clipOffset: 2,
+        forceClipSpread: true,
+        audioStep: 1,
+        audioOffset: 2,
+        forceAudioSpread: true,
+        audioIndexWeight: 10
+      };
+    case 'presenter_safe':
+      return {
+        clipStep: 1,
+        clipOffset: 0,
+        forceClipSpread: false,
+        audioStep: 1,
+        audioOffset: 0,
+        forceAudioSpread: false,
+        audioIndexWeight: 3
+      };
+    case 'balanced':
+    default:
+      return {
+        clipStep: 1,
+        clipOffset: 0,
+        forceClipSpread: false,
+        audioStep: 1,
+        audioOffset: 0,
+        forceAudioSpread: false,
+        audioIndexWeight: 5
+      };
+  }
+}
+
+function scoreAudioDurationStyleBias(
+  audioDuration: number,
+  preferredDuration: number,
+  variantStyle: FissionMixVariantStyle,
+  selectionProfile: FissionMixSelectionProfile,
+  voiceLike: boolean
+) {
+  const diff = Math.abs(audioDuration - preferredDuration);
+  const presenterVoice = voiceLike && selectionProfile !== 'standard';
+  if (variantStyle === 'duration_fit') {
+    if (diff <= 0.2) return presenterVoice ? 18 : 12;
+    if (diff <= 0.55) return presenterVoice ? 12 : 8;
+    if (diff <= 1.1) return 5;
+    return -Math.min(presenterVoice ? 14 : 8, Math.round(diff * 3));
+  }
+  if (variantStyle === 'rhythm_compact') {
+    const overrun = audioDuration - preferredDuration;
+    if (overrun <= 0.12 && audioDuration >= preferredDuration * 0.72) return presenterVoice ? 10 : 7;
+    if (overrun > 0.65) return -Math.min(presenterVoice ? 16 : 10, Math.round(overrun * 5));
+    return diff <= 0.55 ? 4 : 0;
+  }
+  if (variantStyle === 'audio_smooth' || variantStyle === 'presenter_safe') {
+    if (diff <= 0.3) return presenterVoice ? 10 : 5;
+    if (diff <= 0.8) return presenterVoice ? 6 : 3;
+    return presenterVoice && diff > 1.6 ? -Math.min(8, Math.round(diff * 2)) : 0;
+  }
+  return 0;
+}
+
+function scoreAudioSpeechSafetyStyleBias(
+  speechWindow: ReturnType<typeof normalizePresenterSpeechWindow>,
+  variantStyle: FissionMixVariantStyle,
+  selectionProfile: FissionMixSelectionProfile,
+  voiceLike: boolean
+) {
+  if (!voiceLike || selectionProfile === 'standard') return 0;
+  if (variantStyle !== 'audio_smooth' && variantStyle !== 'presenter_safe') return 0;
+  if (!speechWindow.hasSpeech || speechWindow.effectiveDuration <= 0.12) return -14;
+  let score = 0;
+  if (speechWindow.effectiveDuration >= 0.55) score += variantStyle === 'presenter_safe' ? 8 : 5;
+  if (speechWindow.trimmedLeading > 0.55) score -= variantStyle === 'presenter_safe' ? 8 : 5;
+  if (speechWindow.trimmedTrailing > 0.55) score -= variantStyle === 'presenter_safe' ? 8 : 5;
   return score;
 }
 
@@ -324,6 +524,14 @@ function alignedPoolIndex(variantIndex: number, size: number, anchorSize: number
   const safeAnchor = Math.max(1, anchorSize);
   const normalized = (positiveModulo(variantIndex, safeAnchor) + 0.5) / safeAnchor;
   return Math.min(size - 1, Math.floor(normalized * size));
+}
+
+function resolveStyledPoolIndex(cursor: number, size: number, anchorSize: number, forceSpread: boolean) {
+  if (size <= 1) return 0;
+  if (forceSpread) {
+    return positiveModulo(cursor + Math.floor(cursor / size), size);
+  }
+  return alignedPoolIndex(cursor, size, anchorSize);
 }
 
 function positiveModulo(value: number, divisor: number) {
