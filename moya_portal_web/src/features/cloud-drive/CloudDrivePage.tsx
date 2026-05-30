@@ -22,7 +22,6 @@ import {
   Share2,
   Trash2,
   Upload,
-  UserRound,
   Video
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -119,7 +118,7 @@ const utilityItems: Array<{ key: CloudMenuKey; label: string; icon: typeof Folde
   { key: 'recycle', label: '回收站', icon: Trash2 },
   { key: 'share', label: '分享中心', icon: Share2 },
   { key: 'direct', label: '站内消息', icon: Inbox },
-  { key: 'account', label: '账号容量', icon: UserRound },
+  { key: 'account', label: '空间容量', icon: HardDrive },
   { key: 'transport', label: '传输列表', icon: Download }
 ];
 
@@ -160,6 +159,10 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
   useEffect(() => {
     if (initialMenu) store.setActiveMenu(initialMenu);
   }, [initialMenu]);
+
+  useEffect(() => {
+    void refreshAccountQuotaSilently();
+  }, []);
 
   useEffect(() => {
     const onProgress = window.surgicol?.cloud?.onUploadDriveFileProgress;
@@ -895,7 +898,7 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
     : 0;
   const quotaTooltip = store.currentUser
     ? `已用 ${formatExactBytes(store.currentUser.quotaUsed)}，剩余 ${formatExactBytes(store.currentUser.quotaRemaining)}，总容量 ${formatExactBytes(store.currentUser.quotaTotal)}`
-    : '未加载账号容量';
+    : '未加载空间容量';
 
   return (
     <section className="page cloud-drive cloud-drive-product">
@@ -942,7 +945,7 @@ export function CloudDrivePage({ initialMenu }: CloudDrivePageProps) {
 
         <div className="cloud-drive-sidebar-footer">
           <div className="cloud-drive-quota" title={quotaTooltip}>
-            <progress value={quotaPercent} max={100} aria-label="账号容量使用情况" />
+            <progress value={quotaPercent} max={100} aria-label="网盘空间使用情况" />
             <div className="cloud-drive-quota-row">
               <span>
                 {store.currentUser ? `${formatSize(store.currentUser.quotaUsed)}/${formatSize(store.currentUser.quotaTotal)}` : '0 B/0 B'}
@@ -1251,19 +1254,14 @@ function DirectSharePanel({ onSave, onCancel }: { onSave: (item: DirectShareView
 
 function AccountPanel() {
   const user = useCloudDriveStore((store) => store.currentUser);
-  if (!user) return <div className="empty-state compact">正在加载账号信息</div>;
+  if (!user) return <div className="empty-state compact">正在加载空间信息</div>;
   const percent = user.quotaTotal > 0 ? Math.min(100, (user.quotaUsed / user.quotaTotal) * 100) : 0;
   const quotaTitle = `已用 ${formatExactBytes(user.quotaUsed)}，剩余 ${formatExactBytes(user.quotaRemaining)}，总容量 ${formatExactBytes(user.quotaTotal)}`;
   return (
     <div className="account-panel">
       <div className="account-card">
-        <UserRound size={26} />
-        <strong>{user.displayName || user.username}</strong>
-        <span>{user.email || user.phone || user.id}</span>
-      </div>
-      <div className="account-card">
         <HardDrive size={26} />
-        <strong>容量使用</strong>
+        <strong>网盘空间</strong>
         <progress value={percent} max={100} title={quotaTitle} />
         <span title={quotaTitle}>
           {formatSize(user.quotaUsed)} / {formatSize(user.quotaTotal)}，剩余 {formatSize(user.quotaRemaining)}

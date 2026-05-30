@@ -1,5 +1,5 @@
-import { Component, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type DragEvent, type ErrorInfo, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Component, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type DragEvent, type ErrorInfo, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { flushSync } from 'react-dom';
 import {
   ArrowRight,
@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Cloud,
   Clapperboard,
+  Crop,
   Download,
   Eye,
   Flame,
@@ -14,7 +15,6 @@ import {
   ImagePlus,
   Info,
   ListVideo,
-  LogOut,
   MonitorSmartphone,
   Moon,
   Package,
@@ -35,9 +35,6 @@ import {
   WandSparkles
 } from 'lucide-react';
 import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
-import { getMe, type AuthTokenResponse } from '@/features/cloud-drive/api/netdisk';
-import { AuthPage } from '@/features/cloud-drive/components/AuthPage';
-import { useCloudDriveStore } from '@/features/cloud-drive/cloudDriveStore';
 import { useEditorStore } from '@/features/editor/editorStore';
 import {
   cacheProductVideoAssetLocally,
@@ -50,10 +47,11 @@ import {
   type ProductVideoTaskStatus
 } from '@/features/product-video/productVideoApi';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
-import type { OssUploadProgress, OssUploadResult } from '@/shared/types/electron';
+import type { MediaCacheResult, MediaCropResult, MediaProbeResult, MediaSplitResult, OssUploadProgress, OssUploadResult } from '@/shared/types/electron';
 
 const navItems = [
   { to: '/', label: '首页', icon: Home },
+  { to: '/materials', label: '素材库', icon: ImagePlus },
   { to: '/cloud-drive', label: '网盘', icon: Cloud },
   { to: '/editor', label: '剪辑', icon: Clapperboard },
   { to: '/transfers', label: '传输', icon: Download },
@@ -100,7 +98,6 @@ class EditorRouteBoundary extends Component<{ children: ReactNode }, EditorRoute
   }
 }
 
-type AuthStatus = 'checking' | 'anonymous' | 'authenticated';
 type ProductVideoScenarioKey = 'product-spokesperson' | 'product-showcase' | 'store-traffic' | 'hot-replica';
 type ProductVideoProgressStage = 'idle' | 'uploading' | 'signing' | 'submitting' | 'generating' | 'done' | 'failed';
 type ProductVideoTaskThread = {
@@ -180,6 +177,105 @@ const productVideoScenarios: Array<{
     tone: 'replica'
   }
 ];
+
+const materialSourceCategories = [
+  {
+    title: '商品素材',
+    subtitle: '商品图、详情页、卖点标签集中沉淀，生成商品视频时直接调用',
+    source: '商品图 / 详情页',
+    action: '整理商品素材',
+    to: '/cloud-drive',
+    icon: Package,
+    tone: 'product',
+    tags: ['商品图', '详情页', '卖点']
+  },
+  {
+    title: '爆款参考',
+    subtitle: '收藏爆款视频链接、拆解结构和参考片段，给复刻任务提供来源',
+    source: '参考视频 / 爆款链接',
+    action: '创建复刻任务',
+    to: '/product-video/create?scenario=hot-replica',
+    icon: Flame,
+    tone: 'viral',
+    tags: ['参考视频', '爆款链接', '结构拆解']
+  },
+  {
+    title: '门店素材',
+    subtitle: '沉淀门头、环境、活动海报和团购图，快速生成同城引流内容',
+    source: '门头 / 环境 / 活动',
+    action: '生成门店视频',
+    to: '/product-video/create?scenario=store-traffic',
+    icon: Store,
+    tone: 'store',
+    tags: ['门店图', '活动海报', '团购']
+  },
+  {
+    title: '包装素材',
+    subtitle: '收纳贴纸、音效、花字和字幕模板，剪辑包装时统一取用',
+    source: '贴纸 / 音效 / 花字',
+    action: '进入网感剪辑',
+    to: '/editor?workflow=viral',
+    icon: Sparkles,
+    tone: 'package',
+    tags: ['贴纸', '音效', '花字']
+  }
+];
+
+const materialQuickFilters = ['全部', '商品图', '爆款链接', '门店图', '贴纸', '音效'];
+const MATERIAL_SOURCE_API_BASE_KEY = 'moya-material-source-api-base';
+const MATERIAL_SOURCE_DEFAULT_API_BASE = 'http://localhost:8787';
+const MATERIAL_SOURCE_USER_ID = 'moya-matrix-materials';
+const materialSplitPresets = [
+  { key: '3-parts', label: '三段', detail: '均分' },
+  { key: '15s', label: '15秒', detail: '短切' },
+  { key: '30s', label: '30秒', detail: '长切' }
+] as const;
+
+type MaterialSplitPresetKey = typeof materialSplitPresets[number]['key'];
+
+const materialCropPresets = [
+  { key: 'original', label: '原始', detail: '完整画面' },
+  { key: '9:16', label: '9:16', detail: '竖屏裁剪' },
+  { key: '1:1', label: '1:1', detail: '方形裁剪' },
+  { key: '16:9', label: '16:9', detail: '横屏裁剪' },
+  { key: 'free', label: '手动', detail: '播放区框选' }
+] as const;
+
+type MaterialCropPresetKey = typeof materialCropPresets[number]['key'];
+
+type MaterialCropRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type MaterialSourceTask = {
+  id: string;
+  text?: string;
+  sourceUrl?: string;
+  platform?: string;
+  userId?: string;
+  title?: string;
+  author?: string;
+  coverUrl?: string;
+  status?: string;
+  error?: string;
+  videoUrl?: string;
+  downloadUrl?: string;
+  originVideoUrl?: string;
+  originDownloadUrl?: string;
+  localFile?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type MaterialSplitPlanSegment = {
+  label: string;
+  start: number;
+  end: number;
+  duration: number;
+};
 
 const productSamples = [
   { id: 'skin', name: '护肤精华', color: '#7f91ff', copy: '淡纹紧致' },
@@ -412,6 +508,166 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
     timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
+}
+
+function normalizeMaterialSourceApiBase(value: string) {
+  const base = String(value || '').trim().replace(/\/+$/, '');
+  return base || MATERIAL_SOURCE_DEFAULT_API_BASE;
+}
+
+function extractFirstUrlFromText(text = '') {
+  const match = String(text).match(/https?:\/\/[^\s"'<>，。；、)）\]]+/i);
+  return match ? match[0] : '';
+}
+
+async function createMaterialSourceTask(apiBase: string, text: string) {
+  const sourceUrl = extractFirstUrlFromText(text) || text.trim();
+  const response = await fetch(`${apiBase}/api/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      sourceUrl,
+      userId: MATERIAL_SOURCE_USER_ID
+    })
+  });
+  const body = await response.json().catch(() => null) as { task?: MaterialSourceTask; error?: string } | null;
+  if (!response.ok || !body?.task) {
+    throw new Error(body?.error || `创建解析任务失败：HTTP ${response.status}`);
+  }
+  return body.task;
+}
+
+async function getMaterialSourceTask(apiBase: string, taskId: string) {
+  const response = await fetch(`${apiBase}/api/tasks/${encodeURIComponent(taskId)}?userId=${encodeURIComponent(MATERIAL_SOURCE_USER_ID)}`);
+  const body = await response.json().catch(() => null) as { task?: MaterialSourceTask; error?: string } | null;
+  if (!response.ok || !body?.task) {
+    throw new Error(body?.error || `读取解析任务失败：HTTP ${response.status}`);
+  }
+  return body.task;
+}
+
+async function pollMaterialSourceTask(apiBase: string, taskId: string, onTask: (task: MaterialSourceTask) => void) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await delay(attempt === 0 ? 800 : 1500);
+    const task = await getMaterialSourceTask(apiBase, taskId);
+    onTask(task);
+    if (['ready', 'failed', 'needs_provider'].includes(String(task.status || '').toLowerCase())) return task;
+  }
+  throw new Error('解析任务等待超时，请稍后在素材库里重试。');
+}
+
+function materialTaskVideoSource(task?: MaterialSourceTask | null, apiBase?: string) {
+  if (!task) return '';
+  if (task.platform === 'local') return task.localFile || task.videoUrl || task.downloadUrl || task.sourceUrl || '';
+  if (String(task.status || '').toLowerCase() === 'ready' && task.id && apiBase) {
+    return `${normalizeMaterialSourceApiBase(apiBase)}/api/tasks/${encodeURIComponent(task.id)}/video.mp4?userId=${encodeURIComponent(MATERIAL_SOURCE_USER_ID)}`;
+  }
+  return task.videoUrl || task.downloadUrl || task.originVideoUrl || task.originDownloadUrl || '';
+}
+
+function materialTaskStatusLabel(task?: MaterialSourceTask | null) {
+  const status = String(task?.status || '').toLowerCase();
+  if (!task) return '等待导入';
+  if (status === 'queued') return '排队中';
+  if (status === 'resolving') return '解析中';
+  if (status === 'downloading') return '下载中';
+  if (status === 'ready') return '已入库';
+  if (status === 'needs_provider') return '待配置解析服务';
+  if (status === 'failed') return '解析失败';
+  return task.status || '处理中';
+}
+
+function formatSecondsLabel(value: number) {
+  const total = Math.max(0, Math.round(Number(value) || 0));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes ? `${minutes}:${String(seconds).padStart(2, '0')}` : `0:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatFileSize(size: number) {
+  const value = Math.max(0, Number(size) || 0);
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function materialFileNameFromPath(filePath: string) {
+  return String(filePath || '').split(/[\\/]/).pop() || '本地视频.mp4';
+}
+
+function clampMaterialCropRect(rect: MaterialCropRect): MaterialCropRect {
+  const minSize = 0.04;
+  const width = Math.max(minSize, Math.min(1, Number(rect.width) || 1));
+  const height = Math.max(minSize, Math.min(1, Number(rect.height) || 1));
+  const x = Math.max(0, Math.min(1 - width, Number(rect.x) || 0));
+  const y = Math.max(0, Math.min(1 - height, Number(rect.y) || 0));
+  return { x, y, width, height };
+}
+
+function buildMaterialCropRectForPreset(probe: MediaProbeResult | null, preset: MaterialCropPresetKey): MaterialCropRect {
+  if (!probe?.width || !probe?.height || preset === 'original' || preset === 'free') {
+    return { x: 0, y: 0, width: 1, height: 1 };
+  }
+  const ratios: Record<Exclude<MaterialCropPresetKey, 'original' | 'free'>, number> = {
+    '9:16': 9 / 16,
+    '1:1': 1,
+    '16:9': 16 / 9
+  };
+  const targetRatio = ratios[preset];
+  const sourceRatio = probe.width / probe.height;
+  if (sourceRatio > targetRatio) {
+    const width = targetRatio / sourceRatio;
+    return clampMaterialCropRect({ x: (1 - width) / 2, y: 0, width, height: 1 });
+  }
+  const height = sourceRatio / targetRatio;
+  return clampMaterialCropRect({ x: 0, y: (1 - height) / 2, width: 1, height });
+}
+
+function materialCropPixelLabel(rect: MaterialCropRect, probe: MediaProbeResult | null) {
+  if (!probe?.width || !probe?.height) return '裁剪尺寸 --';
+  const safeRect = clampMaterialCropRect(rect);
+  return `${Math.round(safeRect.width * probe.width)}x${Math.round(safeRect.height * probe.height)}`;
+}
+
+function materialCropBoundsStyle(rect: MaterialCropRect): CSSProperties {
+  const safeRect = clampMaterialCropRect(rect);
+  return {
+    left: `${safeRect.x * 100}%`,
+    top: `${safeRect.y * 100}%`,
+    width: `${safeRect.width * 100}%`,
+    height: `${safeRect.height * 100}%`
+  };
+}
+
+function materialSplitTrackStyle(segment: MaterialSplitPlanSegment, duration: number): CSSProperties {
+  const safeDuration = Math.max(0.25, Number(duration) || 0);
+  const segmentWidth = clampNumber((segment.duration / safeDuration) * 100, 8, 100);
+  return { width: `${segmentWidth}%` };
+}
+
+function buildMaterialSplitSegments(duration: number, preset: MaterialSplitPresetKey): MaterialSplitPlanSegment[] {
+  const safeDuration = Math.max(0, Number(duration) || 0);
+  if (safeDuration <= 0.25) return [];
+  const segmentLength = preset === '15s' ? 15 : preset === '30s' ? 30 : safeDuration / Math.min(3, Math.max(1, Math.ceil(safeDuration)));
+  const segments: MaterialSplitPlanSegment[] = [];
+  for (let start = 0, index = 0; start < safeDuration - 0.2; start += segmentLength, index += 1) {
+    const end = Math.min(safeDuration, start + segmentLength);
+    if (end - start < 0.25) break;
+    segments.push({
+      label: `片段 ${index + 1}`,
+      start,
+      end,
+      duration: end - start
+    });
+  }
+  return segments;
 }
 
 function productVideoStatusText(task: ProductVideoTaskStatus) {
@@ -943,43 +1199,9 @@ export function App() {
   const isEditorRoute = location.pathname.startsWith('/editor');
   const isProductCreateRoute = location.pathname.startsWith('/product-video/create');
   const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
-  const isProtectedRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
-  const cloudStore = useCloudDriveStore();
-  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (localStorage.getItem('access') ? 'checking' : 'anonymous'));
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return localStorage.getItem('moya-theme') === 'light' ? 'light' : 'dark';
   });
-
-  useEffect(() => {
-    let canceled = false;
-    async function restoreSession() {
-      const token = localStorage.getItem('access');
-      if (!token) {
-        setAuthStatus('anonymous');
-        return;
-      }
-      try {
-        const user = await getMe();
-        if (canceled) return;
-        cloudStore.setCurrentUser(user);
-        setAuthStatus('authenticated');
-      } catch {
-        if (canceled) return;
-        expireSession();
-      }
-    }
-
-    restoreSession();
-    return () => {
-      canceled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    const handler = () => expireSession();
-    window.addEventListener('moya-auth-expired', handler);
-    return () => window.removeEventListener('moya-auth-expired', handler);
-  }, []);
 
   useEffect(() => {
     localStorage.setItem('moya-theme', theme);
@@ -1009,22 +1231,6 @@ export function App() {
     return true;
   }
 
-  async function handleAuthenticated(token: AuthTokenResponse) {
-    localStorage.setItem('access', token.token);
-    const user = await getMe();
-    cloudStore.setCurrentUser(user);
-    setAuthStatus('authenticated');
-  }
-
-  function expireSession() {
-    localStorage.removeItem('access');
-    cloudStore.clearWorkspace();
-    setAuthStatus('anonymous');
-  }
-
-  const isAuthenticated = authStatus === 'authenticated';
-  const showShell = isAuthenticated || !isProtectedRoute;
-
   return (
     <div className={`app-window theme-${theme}${isEditorRoute || isProductCreateRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
       <header className="app-titlebar">
@@ -1042,7 +1248,7 @@ export function App() {
             <span>{theme === 'dark' ? '暗夜模式' : '白天模式'}</span>
           </div>
         </NavLink>
-        {showShell && (isEditorRoute || isProductCreateRoute) ? (
+        {isEditorRoute || isProductCreateRoute ? (
           <nav className="titlebar-nav" aria-label="功能切换">
             {navItems.map((item) => (
               <NavLink
@@ -1065,36 +1271,10 @@ export function App() {
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
             <span>{theme === 'dark' ? '白天' : '暗夜'}</span>
           </button>
-          {isAuthenticated ? (
-            <button
-              className="logout-button"
-              type="button"
-              onClick={(event) => {
-                if (preventLockedNavigation(event)) return;
-                expireSession();
-              }}
-              disabled={isNavigationLocked}
-              title={isNavigationLocked ? navigationLockTitle : undefined}
-            >
-              <LogOut size={15} />
-              <span>退出</span>
-            </button>
-          ) : null}
         </div>
       </header>
 
-      {authStatus === 'checking' && isProtectedRoute ? (
-        <section className="auth-screen">
-          <div className="auth-card">
-            <div className="auth-message">正在恢复登录状态...</div>
-          </div>
-        </section>
-      ) : null}
-
-      {authStatus === 'anonymous' && isProtectedRoute ? <AuthPage onAuthenticated={handleAuthenticated} /> : null}
-
-      {showShell ? (
-        <div className="app-shell">
+      <div className="app-shell">
         <aside className="app-nav">
           <div className="brand-block">
             <img className="brand-mark" src={moyaMatrixLogo} alt="moya矩阵" />
@@ -1125,7 +1305,8 @@ export function App() {
         <main className="app-main">
           <Routes>
             <Route path="/" element={<HomeView />} />
-            <Route path="/cloud-drive" element={isAuthenticated ? <CloudDrivePage /> : <Navigate to="/cloud-drive" replace />} />
+            <Route path="/materials" element={<MaterialLibraryView />} />
+            <Route path="/cloud-drive" element={<CloudDrivePage />} />
             <Route
               path="/editor"
               element={(
@@ -1137,12 +1318,11 @@ export function App() {
               )}
             />
             <Route path="/product-video/create" element={<ProductVideoCreateView />} />
-            <Route path="/transfers" element={isAuthenticated ? <CloudDrivePage initialMenu="transport" /> : <Navigate to="/transfers" replace />} />
+            <Route path="/transfers" element={<CloudDrivePage initialMenu="transport" />} />
             <Route path="/settings" element={<SettingsView />} />
           </Routes>
         </main>
       </div>
-      ) : null}
     </div>
   );
 }
@@ -1237,7 +1417,12 @@ function HomeView() {
         <NavLink to="/cloud-drive" className="home-module-card">
           <Cloud size={28} />
           <strong>网盘</strong>
-          <span>登录后管理素材、分享和传输任务</span>
+          <span>直接管理素材、分享和传输任务</span>
+        </NavLink>
+        <NavLink to="/materials" className="home-module-card">
+          <ImagePlus size={28} />
+          <strong>素材库</strong>
+          <span>汇聚商品图、爆款参考、门店素材和贴纸音效，作为创作来源</span>
         </NavLink>
         <NavLink to="/editor" className="home-module-card">
           <Clapperboard size={28} />
@@ -1293,6 +1478,558 @@ function HomeView() {
             </NavLink>
           ))}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function MaterialLibraryView() {
+  const cropDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const cropStageRef = useRef<HTMLDivElement | null>(null);
+  const [query, setQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState(materialQuickFilters[0]);
+  const [sourceText, setSourceText] = useState('');
+  const [sourceApiBase, setSourceApiBase] = useState(() => localStorage.getItem(MATERIAL_SOURCE_API_BASE_KEY) || MATERIAL_SOURCE_DEFAULT_API_BASE);
+  const [sourceTask, setSourceTask] = useState<MaterialSourceTask | null>(null);
+  const [sourceImportStage, setSourceImportStage] = useState<'idle' | 'creating' | 'polling' | 'caching' | 'ready' | 'failed'>('idle');
+  const [sourceError, setSourceError] = useState('');
+  const [cachedSource, setCachedSource] = useState<MediaCacheResult | null>(null);
+  const [sourceProbe, setSourceProbe] = useState<MediaProbeResult | null>(null);
+  const [sourceThumbnail, setSourceThumbnail] = useState('');
+  const [splitPreset, setSplitPreset] = useState<MaterialSplitPresetKey>('3-parts');
+  const [splitResult, setSplitResult] = useState<MediaSplitResult | null>(null);
+  const [isSplitting, setIsSplitting] = useState(false);
+  const [cropPreset, setCropPreset] = useState<MaterialCropPresetKey>('original');
+  const [cropRect, setCropRect] = useState<MaterialCropRect>({ x: 0, y: 0, width: 1, height: 1 });
+  const [cropResult, setCropResult] = useState<MediaCropResult | null>(null);
+  const [cropViewportStyle, setCropViewportStyle] = useState<CSSProperties>({ inset: 0 });
+  const [isCropping, setIsCropping] = useState(false);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredSources = materialSourceCategories.filter((source) => {
+    const haystack = [source.title, source.subtitle, source.source, ...source.tags].join(' ').toLowerCase();
+    const matchesQuery = !normalizedQuery || haystack.includes(normalizedQuery);
+    const matchesFilter = activeFilter === '全部' || haystack.includes(activeFilter.toLowerCase());
+    return matchesQuery && matchesFilter;
+  });
+  const sourceVideoUrl = materialTaskVideoSource(sourceTask, sourceApiBase);
+  const sourcePreviewUrl = cachedSource?.localPath ? localFileUrl(cachedSource.localPath) : sourceVideoUrl;
+  const sourceBusy = ['creating', 'polling', 'caching'].includes(sourceImportStage);
+  const splitPlan = buildMaterialSplitSegments(sourceProbe?.duration || 0, splitPreset);
+  const canSplit = Boolean(cachedSource?.localPath && splitPlan.length && !isSplitting);
+  const canCrop = Boolean(cachedSource?.localPath && sourceProbe?.width && sourceProbe?.height && !isCropping);
+  const isManualCrop = cropPreset === 'free';
+
+  useEffect(() => {
+    const stage = cropStageRef.current;
+    if (!stage || !sourceProbe?.width || !sourceProbe?.height || !sourcePreviewUrl) {
+      setCropViewportStyle({ inset: 0 });
+      return undefined;
+    }
+    const updateCropViewport = () => {
+      const rect = stage.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const stageRatio = rect.width / rect.height;
+      const videoRatio = sourceProbe.width / sourceProbe.height;
+      if (stageRatio > videoRatio) {
+        const height = rect.height;
+        const width = height * videoRatio;
+        setCropViewportStyle({
+          left: `${(rect.width - width) / 2}px`,
+          top: 0,
+          width: `${width}px`,
+          height: `${height}px`
+        });
+        return;
+      }
+      const width = rect.width;
+      const height = width / videoRatio;
+      setCropViewportStyle({
+        left: 0,
+        top: `${(rect.height - height) / 2}px`,
+        width: `${width}px`,
+        height: `${height}px`
+      });
+    };
+    updateCropViewport();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateCropViewport) : null;
+    observer?.observe(stage);
+    window.addEventListener('resize', updateCropViewport);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateCropViewport);
+    };
+  }, [sourcePreviewUrl, sourceProbe?.height, sourceProbe?.width]);
+
+  async function cacheReadyMaterialTask(task: MaterialSourceTask) {
+    const videoSource = materialTaskVideoSource(task, sourceApiBase);
+    if (!videoSource) throw new Error('解析成功，但没有拿到可用的视频地址');
+    if (!window.surgicol?.media?.cacheRemoteFile) return;
+    setSourceImportStage('caching');
+    const cached = await window.surgicol.media.cacheRemoteFile(videoSource, {
+      folder: 'material-source',
+      cacheKey: task.id,
+      fileName: `${task.title || 'source-video'}.mp4`
+    });
+    setCachedSource(cached);
+    const probe = await window.surgicol.media.probeFile(cached.localPath).catch(() => null);
+    setSourceProbe(probe);
+    setCropPreset('original');
+    setCropRect(buildMaterialCropRectForPreset(probe, 'original'));
+    setCropResult(null);
+    const thumbnail = await window.surgicol.media.createThumbnail(cached.localPath, {
+      width: 260,
+      height: 146,
+      cacheKey: `${task.id}-material-source`
+    }).catch(() => null);
+    setSourceThumbnail(thumbnail?.localPath ? localFileUrl(thumbnail.localPath) : task.coverUrl || '');
+  }
+
+  async function handlePickLocalVideoSource() {
+    if (!window.surgicol?.dialog?.openFiles || !window.surgicol?.media?.cacheRemoteFile) {
+      setSourceError('当前运行环境不支持本地上传，请在 Electron 应用中使用。');
+      return;
+    }
+    const files = await window.surgicol.dialog.openFiles({
+      title: '选择本地视频源',
+      properties: ['openFile'],
+      filters: [
+        { name: '视频文件', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    });
+    const localPath = files[0];
+    if (!localPath) return;
+
+    const fileName = materialFileNameFromPath(localPath);
+    const localTask: MaterialSourceTask = {
+      id: `local-${Date.now()}`,
+      title: fileName,
+      sourceUrl: localPath,
+      platform: 'local',
+      status: 'ready',
+      videoUrl: localPath,
+      localFile: localPath,
+      downloadUrl: localPath,
+      createdAt: new Date().toISOString()
+    };
+
+    setSourceText(localPath);
+    setSourceError('');
+    setSourceTask(localTask);
+    setCachedSource(null);
+    setSourceProbe(null);
+    setSourceThumbnail('');
+    setSplitResult(null);
+    setCropPreset('original');
+    setCropRect({ x: 0, y: 0, width: 1, height: 1 });
+    setCropResult(null);
+    setSourceImportStage('caching');
+    try {
+      await cacheReadyMaterialTask(localTask);
+      setSourceImportStage('ready');
+    } catch (error) {
+      setSourceImportStage('failed');
+      setSourceError(error instanceof Error ? error.message : '本地视频导入失败');
+    }
+  }
+
+  async function handleImportSourceVideo() {
+    const text = sourceText.trim();
+    const sourceUrl = extractFirstUrlFromText(text) || text;
+    if (!/^https?:\/\//i.test(sourceUrl)) {
+      setSourceError('请先粘贴一个视频分享链接或直链。');
+      return;
+    }
+    const apiBase = normalizeMaterialSourceApiBase(sourceApiBase);
+    setSourceApiBase(apiBase);
+    localStorage.setItem(MATERIAL_SOURCE_API_BASE_KEY, apiBase);
+    setSourceError('');
+    setSourceTask(null);
+    setCachedSource(null);
+    setSourceProbe(null);
+    setSourceThumbnail('');
+    setSplitResult(null);
+    setCropPreset('original');
+    setCropRect({ x: 0, y: 0, width: 1, height: 1 });
+    setCropResult(null);
+    setSourceImportStage('creating');
+    try {
+      const createdTask = await createMaterialSourceTask(apiBase, text);
+      setSourceTask(createdTask);
+      setSourceImportStage('polling');
+      const settledTask = await pollMaterialSourceTask(apiBase, createdTask.id, setSourceTask);
+      if (String(settledTask.status || '').toLowerCase() !== 'ready') {
+        throw new Error(settledTask.error || materialTaskStatusLabel(settledTask));
+      }
+      await cacheReadyMaterialTask(settledTask);
+      setSourceImportStage('ready');
+    } catch (error) {
+      setSourceImportStage('failed');
+      setSourceError(error instanceof Error ? error.message : '视频源导入失败');
+    }
+  }
+
+  async function handleSplitVideo() {
+    if (!cachedSource?.localPath) {
+      setSourceError('请先导入并缓存视频源。');
+      return;
+    }
+    if (!window.surgicol?.media?.splitVideo) {
+      setSourceError('当前运行环境不支持本地视频分割，请在 Electron 应用中使用。');
+      return;
+    }
+    setIsSplitting(true);
+    setSplitResult(null);
+    setSourceError('');
+    try {
+      const result = await window.surgicol.media.splitVideo(cachedSource.localPath, {
+        folder: 'material-segments',
+        fileName: sourceTask?.title || cachedSource.name,
+        segments: splitPlan
+      });
+      setSplitResult(result);
+    } catch (error) {
+      setSourceError(error instanceof Error ? error.message : '视频分割失败');
+    } finally {
+      setIsSplitting(false);
+    }
+  }
+
+  function pointFromCropEvent(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: clampNumber((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1),
+      y: clampNumber((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1)
+    };
+  }
+
+  function selectionCropRect(start: { x: number; y: number }, end: { x: number; y: number }) {
+    return clampMaterialCropRect({
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y)
+    });
+  }
+
+  function handleCropPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!sourceProbe?.width || !sourceProbe?.height) return;
+    const point = pointFromCropEvent(event);
+    if (!point) return;
+    cropDragStartRef.current = point;
+    setCropPreset('free');
+    setCropResult(null);
+    setCropRect(clampMaterialCropRect({ x: point.x, y: point.y, width: 0.08, height: 0.08 }));
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleCropPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = cropDragStartRef.current;
+    if (!start) return;
+    const point = pointFromCropEvent(event);
+    if (!point) return;
+    setCropRect(selectionCropRect(start, point));
+  }
+
+  function handleCropPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = cropDragStartRef.current;
+    cropDragStartRef.current = null;
+    if (!start) return;
+    const point = pointFromCropEvent(event);
+    if (point) setCropRect(selectionCropRect(start, point));
+  }
+
+  function handleCropPresetChange(preset: MaterialCropPresetKey) {
+    setCropPreset(preset);
+    setCropResult(null);
+    setCropRect(buildMaterialCropRectForPreset(sourceProbe, preset));
+  }
+
+  async function handleCropVideo() {
+    if (!cachedSource?.localPath) {
+      setSourceError('请先导入并缓存视频源。');
+      return;
+    }
+    if (!window.surgicol?.media?.cropVideo) {
+      setSourceError('当前运行环境不支持本地视频裁剪，请在 Electron 应用中使用。');
+      return;
+    }
+    setIsCropping(true);
+    setCropResult(null);
+    setSourceError('');
+    try {
+      const result = await window.surgicol.media.cropVideo(cachedSource.localPath, {
+        folder: 'material-crops',
+        fileName: sourceTask?.title || cachedSource.name,
+        crop: clampMaterialCropRect(cropRect)
+      });
+      setCropResult(result);
+    } catch (error) {
+      setSourceError(error instanceof Error ? error.message : '视频裁剪失败');
+    } finally {
+      setIsCropping(false);
+    }
+  }
+
+  return (
+    <section className="page material-library-page">
+      <header className="material-library-hero">
+        <div>
+          <span>素材来源</span>
+          <h1>素材库</h1>
+          <p>把商品图、参考视频、门店素材和剪辑包装统一收纳，后续创作时可以从这里取素材。</p>
+        </div>
+        <NavLink to="/cloud-drive" className="material-library-primary">
+          <Upload size={16} />
+          <span>上传素材</span>
+        </NavLink>
+      </header>
+
+      <div className="material-link-import-panel">
+        <div className="material-link-form">
+          <div className="material-link-heading">
+            <span>视频源导入</span>
+            <strong>输入平台链接，或上传本地视频</strong>
+            <p>支持直链 MP4、本地视频文件，以及已接入解析服务的平台链接。请只导入已获授权的内容。</p>
+          </div>
+          <label className="material-service-input">
+            <span>服务地址</span>
+            <input value={sourceApiBase} onChange={(event) => setSourceApiBase(event.target.value)} placeholder="http://localhost:8787" />
+          </label>
+          <textarea
+            value={sourceText}
+            onChange={(event) => setSourceText(event.target.value)}
+            placeholder="粘贴视频分享文本或链接"
+          />
+          <div className="material-link-actions">
+            <button type="button" className="material-link-primary" onClick={handleImportSourceVideo} disabled={sourceBusy}>
+              <Download size={15} />
+              {sourceBusy ? '导入中...' : '解析并下载'}
+            </button>
+            <button type="button" className="material-link-secondary" onClick={handlePickLocalVideoSource} disabled={sourceBusy}>
+              <Upload size={15} />
+              本地上传
+            </button>
+            <small>{sourceTask ? `${materialTaskStatusLabel(sourceTask)} · ${sourceTask.platform || 'unknown'}` : '视频会先进入素材源，再用于切片。'}</small>
+          </div>
+          {sourceError ? <p className="material-source-error">{sourceError}</p> : null}
+        </div>
+
+        <div className="material-import-preview">
+          <div className="material-import-stage" ref={cropStageRef}>
+            {sourcePreviewUrl ? (
+              <video src={sourcePreviewUrl} poster={sourceThumbnail || sourceTask?.coverUrl} controls preload="metadata" />
+            ) : sourceThumbnail || sourceTask?.coverUrl ? (
+              <img src={sourceThumbnail || sourceTask?.coverUrl} alt="视频源封面" />
+            ) : (
+              <div className="material-import-placeholder">
+                <PlayCircle size={32} />
+                <span>视频源预览</span>
+              </div>
+            )}
+            {sourcePreviewUrl && sourceProbe?.width && sourceProbe?.height ? (
+              <div
+                className={`material-crop-layer${isManualCrop ? ' manual' : ' passive'}`}
+                style={cropViewportStyle}
+                onPointerDown={handleCropPointerDown}
+                onPointerMove={handleCropPointerMove}
+                onPointerUp={handleCropPointerUp}
+                onPointerCancel={() => {
+                  cropDragStartRef.current = null;
+                }}
+                aria-label="播放区裁剪框选"
+              >
+                <span className="material-crop-mask top" style={{ height: `${clampMaterialCropRect(cropRect).y * 100}%` }} />
+                <span className="material-crop-mask left" style={{
+                  top: `${clampMaterialCropRect(cropRect).y * 100}%`,
+                  width: `${clampMaterialCropRect(cropRect).x * 100}%`,
+                  height: `${clampMaterialCropRect(cropRect).height * 100}%`
+                }} />
+                <span className="material-crop-mask right" style={{
+                  top: `${clampMaterialCropRect(cropRect).y * 100}%`,
+                  left: `${(clampMaterialCropRect(cropRect).x + clampMaterialCropRect(cropRect).width) * 100}%`,
+                  height: `${clampMaterialCropRect(cropRect).height * 100}%`
+                }} />
+                <span className="material-crop-mask bottom" style={{ top: `${(clampMaterialCropRect(cropRect).y + clampMaterialCropRect(cropRect).height) * 100}%` }} />
+                <span className="material-crop-box" style={materialCropBoundsStyle(cropRect)}>
+                  <i className="corner tl" />
+                  <i className="corner tr" />
+                  <i className="corner bl" />
+                  <i className="corner br" />
+                </span>
+              </div>
+            ) : null}
+          </div>
+          <div className="material-import-meta">
+            <div>
+              <span className={`material-import-status ${sourceImportStage}`}>{sourceTask ? materialTaskStatusLabel(sourceTask) : '未导入'}</span>
+              <strong>{sourceTask?.title || '等待视频源'}</strong>
+              <p>{sourceTask?.sourceUrl || '导入后会在这里显示来源链接、时长和本地缓存。'}</p>
+            </div>
+            <div className="material-import-facts">
+              <span>{sourceProbe ? formatSecondsLabel(sourceProbe.duration) : '时长 --'}</span>
+              <span>{cachedSource ? formatFileSize(cachedSource.size) : '本地缓存 --'}</span>
+              <span>{sourceProbe?.width && sourceProbe?.height ? `${sourceProbe.width}x${sourceProbe.height}` : '尺寸 --'}</span>
+            </div>
+          </div>
+          <div className="material-split-panel">
+            <div className="material-split-head">
+              <div>
+                <span>素材分割</span>
+                <strong>预览下方直接生成分割轨道</strong>
+              </div>
+              <button type="button" onClick={handleSplitVideo} disabled={!canSplit}>
+                <Clapperboard size={15} />
+                {isSplitting ? '分割中...' : '分割视频'}
+              </button>
+            </div>
+            <div className="material-split-presets">
+              {materialSplitPresets.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  className={splitPreset === preset.key ? 'active' : undefined}
+                  onClick={() => setSplitPreset(preset.key)}
+                >
+                  <strong>{preset.label}</strong>
+                  <span>{preset.detail}</span>
+                </button>
+              ))}
+            </div>
+            <div className="material-split-track" aria-label="视频分割轨道">
+              {splitPlan.length ? splitPlan.slice(0, 16).map((segment) => (
+                <span key={`${segment.start}-${segment.end}`} style={materialSplitTrackStyle(segment, sourceProbe?.duration || 0)}>
+                  <strong>{segment.label}</strong>
+                  <em>{formatSecondsLabel(segment.start)} - {formatSecondsLabel(segment.end)}</em>
+                </span>
+              )) : (
+                <span className="empty">导入视频后显示分割轨道</span>
+              )}
+            </div>
+            {splitResult ? (
+              <div className="material-split-result">
+                <strong>已生成 {splitResult.segments.length} 个素材片段</strong>
+                {splitResult.segments.map((segment) => (
+                  <button key={segment.id} type="button" onClick={() => window.surgicol?.file?.reveal(segment.localPath)}>
+                    <span>{segment.label}</span>
+                    <em>{formatSecondsLabel(segment.duration)} · {formatFileSize(segment.size)}</em>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="material-crop-panel">
+          <div className="material-crop-head">
+            <div>
+              <span>素材裁剪</span>
+              <strong>按规则裁剪，或在播放区框选</strong>
+            </div>
+            <button type="button" onClick={handleCropVideo} disabled={!canCrop}>
+              <Crop size={15} />
+              {isCropping ? '裁剪中...' : '裁剪视频'}
+            </button>
+          </div>
+          <div className="material-crop-presets">
+            {materialCropPresets.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                className={cropPreset === preset.key ? 'active' : undefined}
+                onClick={() => handleCropPresetChange(preset.key)}
+              >
+                <strong>{preset.label}</strong>
+                <span>{preset.detail}</span>
+              </button>
+            ))}
+          </div>
+          <div className="material-crop-summary">
+            <span>{materialCropPixelLabel(cropRect, sourceProbe)}</span>
+            <span>左上 {Math.round(clampMaterialCropRect(cropRect).x * 100)}% / {Math.round(clampMaterialCropRect(cropRect).y * 100)}%</span>
+            <span>{isManualCrop ? '可在播放区拖拽重新框选' : '按比例居中裁剪'}</span>
+          </div>
+          {cropResult ? (
+            <div className="material-crop-result">
+              <strong>已生成裁剪素材</strong>
+              <button type="button" onClick={() => window.surgicol?.file?.reveal(cropResult.localPath)}>
+                <span>{cropResult.name}</span>
+                <em>{cropResult.width}x{cropResult.height} · {formatFileSize(cropResult.size)}</em>
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="material-library-toolbar">
+        <label className="material-library-search">
+          <Search size={16} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品、爆款参考、门店素材" />
+        </label>
+        <div className="material-library-filters" aria-label="素材筛选">
+          {materialQuickFilters.map((filter) => (
+            <button key={filter} type="button" className={activeFilter === filter ? 'active' : undefined} onClick={() => setActiveFilter(filter)}>
+              {filter}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="material-source-grid">
+        {filteredSources.length ? filteredSources.map((source) => {
+          const SourceIcon = source.icon;
+          return (
+            <NavLink key={source.title} to={source.to} className={`material-source-card ${source.tone}`}>
+              <div className="material-source-visual">
+                <SourceIcon size={28} />
+                <strong>{source.title}</strong>
+                <span>{source.source}</span>
+              </div>
+              <div className="material-source-copy">
+                <div>
+                  <SourceIcon size={20} />
+                  <strong>{source.title}</strong>
+                </div>
+                <p>{source.subtitle}</p>
+                <div className="material-source-tags">
+                  {source.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </div>
+              </div>
+              <span className="material-source-action">
+                {source.action}
+                <ArrowRight size={15} />
+              </span>
+            </NavLink>
+          );
+        }) : (
+          <div className="material-source-empty">
+            <strong>没有匹配的素材来源</strong>
+            <span>换个关键词，或回到全部素材来源。</span>
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('');
+                setActiveFilter('全部');
+              }}
+            >
+              清除筛选
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="material-flow-panel">
+        <div>
+          <span>创作流向</span>
+          <strong>从素材库沉淀来源，再进入网感剪辑、商品视频和批量创作。</strong>
+        </div>
+        <NavLink to="/editor?workflow=viral">
+          <WandSparkles size={15} />
+          <span>用素材创作</span>
+        </NavLink>
       </div>
     </section>
   );

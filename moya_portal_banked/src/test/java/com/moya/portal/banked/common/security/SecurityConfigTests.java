@@ -64,18 +64,6 @@ class SecurityConfigTests {
 		assertThat(response.getBody()).contains("\"success\":true").contains("\"status\":\"entered\"");
 	}
 
-	@Test
-	void publicVerificationEndpointDoesNotRequireAuthentication() {
-		ResponseEntity<String> response = restTemplate.postForEntity(
-				url("/api/verification/send"),
-				Map.of("scene", "register", "channel", "email", "target", "a@example.com"),
-				String.class
-		);
-
-		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertThat(response.getBody()).contains("\"success\":true");
-	}
-
 	private String issueToken() {
 		SysUser user = new SysUser();
 		user.setId(UUID.randomUUID());

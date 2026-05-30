@@ -78,6 +78,49 @@ export interface MediaProbeResult {
   hasAudio: boolean;
 }
 
+export interface MediaSplitSegmentRequest {
+  start: number;
+  end?: number;
+  duration?: number;
+  label?: string;
+}
+
+export interface MediaSplitSegmentResult {
+  id: string;
+  label: string;
+  start: number;
+  end: number;
+  duration: number;
+  localPath: string;
+  name: string;
+  size: number;
+}
+
+export interface MediaSplitResult {
+  source: string;
+  duration: number;
+  outputDir: string;
+  segments: MediaSplitSegmentResult[];
+}
+
+export interface MediaCropRectRequest {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MediaCropResult {
+  source: string;
+  duration: number;
+  width: number;
+  height: number;
+  localPath: string;
+  name: string;
+  size: number;
+  crop: MediaCropRectRequest;
+}
+
 export interface MediaSpeechAnalysisResult {
   duration: number;
   speechStart: number;
@@ -292,6 +335,8 @@ declare global {
         createThumbnail(source: string, options?: { width?: number; height?: number; time?: number; cacheKey?: string }): Promise<MediaCacheResult>;
         readAsDataUrl(filePath: string, options?: MediaDataUrlOptions): Promise<MediaDataUrlResult>;
         probeFile(filePath: string): Promise<MediaProbeResult>;
+        splitVideo(source: string, options?: { fileName?: string; folder?: string; segments?: MediaSplitSegmentRequest[] }): Promise<MediaSplitResult>;
+        cropVideo(source: string, options?: { fileName?: string; folder?: string; crop?: MediaCropRectRequest }): Promise<MediaCropResult>;
         analyzeSpeech(filePath: string): Promise<MediaSpeechAnalysisResult>;
         analyzeAudioContinuity(filePath: string): Promise<MediaAudioContinuityResult>;
         renderFissionMix(request: LocalFissionMixRequest): Promise<LocalFissionMixResult>;

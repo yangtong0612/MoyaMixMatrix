@@ -25,12 +25,6 @@ public class SecurityConfig {
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(
 								"/api/system/health",
-								"/api/auth/register",
-								"/api/auth/login",
-								"/api/auth/reset-password",
-								"/api/auth/oauth/login",
-								"/api/verification/send",
-								"/api/verification/check",
 								"/api/storage/**",
 								"/api/fission/**",
 								"/api/viral/**",

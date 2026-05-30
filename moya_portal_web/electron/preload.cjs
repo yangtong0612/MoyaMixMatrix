@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('surgicol', {
     createThumbnail: (source, options) => invoke('media:create-thumbnail', source, options),
     readAsDataUrl: (filePath, options) => invoke('media:read-as-data-url', filePath, options),
     probeFile: (filePath) => invoke('media:probe-file', filePath),
+    splitVideo: (source, options) => invoke('media:split-video', source, options),
+    cropVideo: (source, options) => invoke('media:crop-video', source, options),
     analyzeSpeech: (filePath) => invoke('media:analyze-speech', filePath),
     analyzeAudioContinuity: (filePath) => invoke('media:analyze-audio-continuity', filePath),
     renderFissionMix: (request) => invoke('media:render-fission-mix', request),

@@ -16,12 +16,6 @@ interface ApiResponse<T> {
 const uploadRequestConfig = { timeout: 300000 };
 const uploadTimeoutMessage = '上传处理超时，请点击继续重试';
 
-export interface AuthTokenResponse {
-  token: string;
-  userId: UUID;
-  username: string;
-}
-
 export interface CurrentUserView {
   id: UUID;
   username: string;
@@ -31,11 +25,6 @@ export interface CurrentUserView {
   quotaTotal: number;
   quotaUsed: number;
   quotaRemaining: number;
-}
-
-export interface VerificationSendResponse {
-  status: string;
-  devCode?: string;
 }
 
 export interface DriveNodeView {
@@ -149,46 +138,8 @@ function isTimeoutError(error: unknown) {
   return error instanceof Error && /timeout.*exceeded|ECONNABORTED/i.test(error.message);
 }
 
-export function register(data: {
-  username: string;
-  password: string;
-  email?: string;
-  phone?: string;
-  displayName?: string;
-  verificationChannel?: string;
-  verificationTarget?: string;
-  verificationCode?: string;
-}) {
-  return unwrap(http.post<unknown, ApiResponse<AuthTokenResponse>>('/auth/register', data));
-}
-
-export function login(data: { account: string; password: string }) {
-  return unwrap(http.post<unknown, ApiResponse<AuthTokenResponse>>('/auth/login', data));
-}
-
-export function resetPassword(data: {
-  verificationChannel: string;
-  verificationTarget: string;
-  verificationCode: string;
-  newPassword: string;
-}) {
-  return unwrap(http.post<unknown, ApiResponse<void>>('/auth/reset-password', data));
-}
-
-export function oauthLogin(data: { provider: string; openid: string; unionid?: string; displayName?: string }) {
-  return unwrap(http.post<unknown, ApiResponse<AuthTokenResponse>>('/auth/oauth/login', data));
-}
-
 export function getMe() {
-  return unwrap(http.get<unknown, ApiResponse<CurrentUserView>>('/auth/me'));
-}
-
-export function sendVerificationCode(data: { scene: string; channel: string; target: string }) {
-  return unwrap(http.post<unknown, ApiResponse<VerificationSendResponse>>('/verification/send', data));
-}
-
-export function checkVerificationCode(data: { scene: string; channel: string; target: string; code: string }) {
-  return unwrap(http.post<unknown, ApiResponse<void>>('/verification/check', data));
+  return unwrap(http.get<unknown, ApiResponse<CurrentUserView>>('/drive/me'));
 }
 
 export function listDriveNodes(parentId?: UUID | null) {

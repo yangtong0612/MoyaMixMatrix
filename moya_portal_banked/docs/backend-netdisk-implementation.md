@@ -1,22 +1,16 @@
 # 网盘后端实现记录
 
-## 认证与安全
+## 访问与安全
 
-- 新增 `common.security`：`CurrentUser`、`JwtProperties`、`JwtService`、`JwtAuthenticationFilter`。
-- `SecurityConfig` 切换为无状态 JWT 鉴权，公开健康检查、认证、验证码、Swagger 和公开分享查看。
-- 密码使用 BCrypt 存储，JWT 使用 HS256 签名，配置前缀为 `moya.auth.jwt`。
+- 新增 `common.security`：`CurrentUser`、`JwtProperties`、`JwtService`、`JwtAuthenticationFilter`、`LocalDriveUserService`。
+- 网盘业务改为免登录模式：无 Bearer token 时自动注入本地网盘用户 `local_drive`，前端直接进入网盘业务。
+- `SecurityConfig` 保留健康检查、Swagger、公开分享查看等公开入口；网盘业务由默认本地用户承接。
+- JWT 解析能力保留用于兼容旧调用，但不再暴露登录、注册和验证码控制器。
 - 数据库关闭模式下，认证、网盘、上传、分享相关 Bean 通过 `moya.database.enabled=false` 不加载，保留 no-db 启动能力。
-
-## 验证码
-
-- `VerificationCodeClient` 抽象验证码发送和消费。
-- Redis 实现使用 `StringRedisTemplate`，验证码、发送冷却、校验次数分别独立 key。
-- 默认 TTL 为 5 分钟，发送冷却为 1 分钟，最多校验 5 次。
-- 无 RedisTemplate 时加载本地备用实现，便于 no-db/no-redis 测试启动。
 
 ## 数据模型
 
-- V2 迁移补齐网盘后端表结构：`oauth_account`、`storage_object`、`upload_chunk`、`share_item`、`direct_share`。
+- V2 迁移补齐网盘后端表结构：`storage_object`、`upload_chunk`、`share_item`、`direct_share`。
 - 对 V1 已有的 `sys_user`、`drive_node`、`upload_task`、`share_link` 进行兼容扩展。
 - 每张表和关键字段都使用 PostgreSQL `comment on table/column` 添加中文备注。
 - 实体与 Mapper 使用 MyBatis-Plus，ID 统一 UUID，不引入参考项目的 JPA Repository。
@@ -46,6 +40,3 @@
 | `moya.auth.jwt.secret` | `change-me-change-me-change-me-change-me` | JWT 签名密钥 |
 | `moya.auth.jwt.ttl` | `PT2H` | JWT 有效期 |
 | `moya.drive.default-quota-bytes` | `10737418240` | 新用户默认容量 |
-| `moya.verification.ttl` | `PT5M` | 验证码有效期 |
-| `moya.verification.send-cooldown` | `PT1M` | 同一目标发送冷却 |
-| `moya.verification.max-check-attempts` | `5` | 最大校验次数 |

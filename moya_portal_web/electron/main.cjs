@@ -780,6 +780,8 @@ function registerIpc() {
     };
   });
   ipcMain.handle('media:probe-file', async (_event, filePath) => probeMedia(filePath));
+  ipcMain.handle('media:split-video', async (_event, source, options = {}) => splitVideoSource(source, options));
+  ipcMain.handle('media:crop-video', async (_event, source, options = {}) => cropVideoSource(source, options));
   ipcMain.handle('media:analyze-speech', async (_event, filePath) => analyzeSpeechWindow(filePath));
   ipcMain.handle('media:analyze-audio-continuity', async (_event, filePath) => analyzeAudioContinuity(filePath));
   ipcMain.handle('media:render-fission-mix', async (_event, request = {}) => renderFissionMix(request));
@@ -1040,6 +1042,215 @@ async function prepareRenderableSource(source) {
     return { filePath: fileURLToPath(source), cleanup: async () => undefined };
   }
   return { filePath: source, cleanup: async () => undefined };
+}
+
+async function splitVideoSource(source, options = {}) {
+  if (!source || typeof source !== 'string') throw new Error('缺少可分割的视频来源');
+  if (!ffmpegPath) throw new Error('未找到可用的 ffmpeg，无法分割视频');
+
+  const normalizedSource = decodeMediaProtocolSource(source);
+  const prepared = await prepareRenderableSource(normalizedSource);
+  try {
+    const metadata = await probeMedia(prepared.filePath).catch(() => ({ duration: 0 }));
+    const sourceDuration = Math.max(0, Number(metadata.duration) || 0);
+    const segments = normalizeVideoSplitSegments(options.segments, sourceDuration);
+    if (!segments.length) throw new Error('请先设置至少一个有效分割片段');
+
+    const outputDir = path.join(app.getPath('userData'), 'media-cache', options.folder || 'material-segments');
+    await fs.mkdir(outputDir, { recursive: true });
+    const baseName = buildSplitOutputBaseName(options.fileName || inferDownloadFileName(normalizedSource));
+    const runId = createHash('sha1')
+      .update(`${normalizedSource}|${Date.now()}|${Math.random()}`)
+      .digest('hex')
+      .slice(0, 8);
+
+    const results = [];
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index];
+      const segmentNo = String(index + 1).padStart(2, '0');
+      const outputPath = path.join(outputDir, `${baseName}-${runId}-${segmentNo}.mp4`);
+      await cutVideoSegment(prepared.filePath, outputPath, segment.start, segment.duration);
+      const stat = await fs.stat(outputPath);
+      results.push({
+        id: `${runId}-${segmentNo}`,
+        label: segment.label || `片段 ${index + 1}`,
+        start: segment.start,
+        end: segment.end,
+        duration: segment.duration,
+        localPath: outputPath,
+        name: path.basename(outputPath),
+        size: stat.size
+      });
+    }
+
+    return {
+      source: normalizedSource,
+      duration: sourceDuration,
+      outputDir,
+      segments: results
+    };
+  } finally {
+    await prepared.cleanup?.();
+  }
+}
+
+function normalizeVideoSplitSegments(rawSegments, sourceDuration) {
+  const maxEnd = sourceDuration > 0 ? sourceDuration : Number.MAX_SAFE_INTEGER;
+  return (Array.isArray(rawSegments) ? rawSegments : [])
+    .map((segment, index) => {
+      const start = clampSeconds(Number(segment?.start) || 0, 0, maxEnd);
+      const explicitEnd = Number(segment?.end);
+      const explicitDuration = Number(segment?.duration);
+      const end = Number.isFinite(explicitEnd) && explicitEnd > start
+        ? clampSeconds(explicitEnd, start, maxEnd)
+        : clampSeconds(start + (Number.isFinite(explicitDuration) && explicitDuration > 0 ? explicitDuration : 0), start, maxEnd);
+      return {
+        start,
+        end,
+        duration: Math.max(0, end - start),
+        label: typeof segment?.label === 'string' && segment.label.trim() ? segment.label.trim() : `片段 ${index + 1}`
+      };
+    })
+    .filter((segment) => segment.duration >= 0.25);
+}
+
+async function cutVideoSegment(inputPath, outputPath, start, duration) {
+  await fs.rm(outputPath, { force: true }).catch(() => undefined);
+  const copyArgs = [
+    '-y',
+    '-ss', formatFfmpegSeconds(start),
+    '-i', inputPath,
+    '-t', formatFfmpegSeconds(duration),
+    '-map', '0',
+    '-c', 'copy',
+    '-avoid_negative_ts', 'make_zero',
+    outputPath
+  ];
+
+  try {
+    await runProcess(ffmpegPath, copyArgs, { timeout: 180000 });
+    await assertNonEmptyFile(outputPath);
+    return;
+  } catch (error) {
+    await fs.rm(outputPath, { force: true }).catch(() => undefined);
+  }
+
+  await runProcess(ffmpegPath, [
+    '-y',
+    '-ss', formatFfmpegSeconds(start),
+    '-i', inputPath,
+    '-t', formatFfmpegSeconds(duration),
+    '-map', '0',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '22',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-movflags', '+faststart',
+    outputPath
+  ], { timeout: 180000 });
+  await assertNonEmptyFile(outputPath);
+}
+
+async function assertNonEmptyFile(filePath) {
+  const stat = await fs.stat(filePath).catch(() => null);
+  if (!stat?.isFile() || stat.size <= 0) throw new Error('视频片段输出为空');
+}
+
+function buildSplitOutputBaseName(fileName) {
+  const safeName = safeDownloadFileName(fileName || `material-${Date.now()}.mp4`);
+  return path.basename(safeName, path.extname(safeName))
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 64) || 'material';
+}
+
+async function cropVideoSource(source, options = {}) {
+  if (!source || typeof source !== 'string') throw new Error('缺少可裁剪的视频来源');
+  if (!ffmpegPath) throw new Error('未找到可用的 ffmpeg，无法裁剪视频');
+
+  const normalizedSource = decodeMediaProtocolSource(source);
+  const prepared = await prepareRenderableSource(normalizedSource);
+  try {
+    const metadata = await probeMedia(prepared.filePath).catch(() => null);
+    if (!metadata?.width || !metadata?.height) throw new Error('无法读取视频尺寸，不能裁剪');
+    const crop = normalizeVideoCropRect(options.crop, metadata);
+    const outputDir = path.join(app.getPath('userData'), 'media-cache', options.folder || 'material-crops');
+    await fs.mkdir(outputDir, { recursive: true });
+    const baseName = buildSplitOutputBaseName(options.fileName || inferDownloadFileName(normalizedSource));
+    const runId = createHash('sha1')
+      .update(`${normalizedSource}|crop|${Date.now()}|${Math.random()}`)
+      .digest('hex')
+      .slice(0, 8);
+    const outputPath = path.join(outputDir, `${baseName}-crop-${runId}.mp4`);
+
+    await runProcess(ffmpegPath, [
+      '-y',
+      '-i', prepared.filePath,
+      '-map', '0:v:0',
+      '-map', '0:a?',
+      '-vf', `crop=${crop.pixelWidth}:${crop.pixelHeight}:${crop.pixelX}:${crop.pixelY}`,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '22',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
+      outputPath
+    ], { timeout: 180000 });
+    await assertNonEmptyFile(outputPath);
+    const stat = await fs.stat(outputPath);
+    return {
+      source: normalizedSource,
+      duration: Number(metadata.duration) || 0,
+      width: crop.pixelWidth,
+      height: crop.pixelHeight,
+      localPath: outputPath,
+      name: path.basename(outputPath),
+      size: stat.size,
+      crop: crop.normalized
+    };
+  } finally {
+    await prepared.cleanup?.();
+  }
+}
+
+function normalizeVideoCropRect(rawCrop, metadata) {
+  const sourceWidth = Math.max(2, Math.round(Number(metadata.width) || 0));
+  const sourceHeight = Math.max(2, Math.round(Number(metadata.height) || 0));
+  const normalized = {
+    x: clampNumber(Number(rawCrop?.x) || 0, 0, 1),
+    y: clampNumber(Number(rawCrop?.y) || 0, 0, 1),
+    width: clampNumber(Number(rawCrop?.width) || 1, 0.02, 1),
+    height: clampNumber(Number(rawCrop?.height) || 1, 0.02, 1)
+  };
+  normalized.width = Math.min(normalized.width, 1 - normalized.x);
+  normalized.height = Math.min(normalized.height, 1 - normalized.y);
+  let pixelX = evenFloor(normalized.x * sourceWidth);
+  let pixelY = evenFloor(normalized.y * sourceHeight);
+  let pixelWidth = evenFloor(normalized.width * sourceWidth);
+  let pixelHeight = evenFloor(normalized.height * sourceHeight);
+  pixelWidth = Math.max(2, Math.min(pixelWidth, sourceWidth - pixelX));
+  pixelHeight = Math.max(2, Math.min(pixelHeight, sourceHeight - pixelY));
+  if (pixelX + pixelWidth > sourceWidth) pixelX = evenFloor(sourceWidth - pixelWidth);
+  if (pixelY + pixelHeight > sourceHeight) pixelY = evenFloor(sourceHeight - pixelHeight);
+  return {
+    pixelX,
+    pixelY,
+    pixelWidth: evenFloor(pixelWidth),
+    pixelHeight: evenFloor(pixelHeight),
+    normalized: {
+      x: pixelX / sourceWidth,
+      y: pixelY / sourceHeight,
+      width: pixelWidth / sourceWidth,
+      height: pixelHeight / sourceHeight
+    }
+  };
+}
+
+function evenFloor(value) {
+  return Math.max(0, Math.floor((Number(value) || 0) / 2) * 2);
 }
 
 async function renderViralVideo(sourcePath, outputPath, overlay) {

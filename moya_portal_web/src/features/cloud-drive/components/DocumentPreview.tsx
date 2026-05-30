@@ -305,10 +305,7 @@ function UnsupportedPreview({ node, onDownload }: DocumentPreviewProps) {
 }
 
 async function fetchDriveContent(node: DriveNodeView) {
-  const token = localStorage.getItem('access');
-  const response = await fetch(buildDriveContentUrl(node.id), {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined
-  });
+  const response = await fetch(buildDriveContentUrl(node.id));
   if (!response.ok) {
     throw new Error(`无法加载文档内容：HTTP ${response.status}`);
   }
