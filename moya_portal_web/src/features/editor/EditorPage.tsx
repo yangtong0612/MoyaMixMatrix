@@ -52,7 +52,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
-import type { MediaAudioContinuityResult } from '@/shared/types/electron';
+import type { MediaAudioContinuityResult, MediaSplitResult } from '@/shared/types/electron';
 import { useEditorStore, type MaterialItem } from './editorStore';
 import { MaterialPanel } from './components/MaterialPanel';
 import { PreviewPanel } from './components/PreviewPanel';
@@ -85,6 +85,7 @@ import {
 } from './fissionPresenterMixAlgorithm';
 import { buildLocalFissionMixPlan } from './fissionLocalMixPlan';
 import { buildWaterfallMixSelections } from './fissionWaterfallComposer';
+import { buildMaterialSplitSegments, materialSplitPresets, type MaterialSplitPlanSegment, type MaterialSplitPresetKey } from '@/shared/mediaSplit';
 
 function getSurgicolBridge() {
   return (window as Window & { surgicol?: Window['surgicol'] }).surgicol;
@@ -1463,6 +1464,8 @@ interface ViralTimelineClip {
   end: number;
 }
 
+type ViralMaterialSplitPresetKey = 'timeline' | MaterialSplitPresetKey;
+
 interface ViralOverlayTextStyle {
   fontSize: number;
   fontFamily: string;
@@ -1671,6 +1674,35 @@ function createViralDefaultClips(duration = VIRAL_TIMELINE_DURATION): ViralTimel
   return [{ id: 'clip-1', start: 0, end: Math.max(0.1, duration) }];
 }
 
+function buildViralTimelineMaterialSplitSegments(
+  clips: ViralTimelineClip[],
+  sourceDuration: number,
+  preset: ViralMaterialSplitPresetKey
+): MaterialSplitPlanSegment[] {
+  if (preset !== 'timeline') return buildMaterialSplitSegments(sourceDuration, preset);
+  const safeDuration = Math.max(0.25, Number(sourceDuration) || 0);
+  return clips
+    .map((clip, index) => {
+      const start = Math.max(0, Math.min(safeDuration, clip.start));
+      const end = Math.max(start, Math.min(safeDuration, clip.end));
+      return {
+        label: `片段 ${index + 1}`,
+        start,
+        end,
+        duration: end - start
+      };
+    })
+    .filter((segment) => segment.duration >= 0.25);
+}
+
+function buildViralClipsFromMaterialSegments(segments: MaterialSplitPlanSegment[], preset: MaterialSplitPresetKey): ViralTimelineClip[] {
+  return segments.map((segment, index) => ({
+    id: `clip-${preset}-${index + 1}-${Math.round(segment.start * 1000)}`,
+    start: segment.start,
+    end: segment.end
+  }));
+}
+
 function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinishedLibrary: (savedCount: number) => void }) {
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const filmstripRef = useRef<HTMLDivElement>(null);
@@ -1681,6 +1713,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const templatePreviewFrameRef = useRef<number | null>(null);
   const templatePreviewStartedAtRef = useRef(0);
   const templatePreviewRenderedAtRef = useRef(-1);
+  const uploadAttemptRef = useRef(0);
+  const uploadProgressCleanupRef = useRef<(() => void) | null>(null);
   const [sourceVideo, setSourceVideo] = useState<MaterialItem | null>(null);
   const [recentTasks, setRecentTasks] = useState<ViralRecentTask[]>([]);
   const [recentTaskVideoSizes, setRecentTaskVideoSizes] = useState<Record<string, ViralVideoSize>>({});
@@ -1729,6 +1763,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const [sourceDuration, setSourceDuration] = useState(VIRAL_TIMELINE_DURATION);
   const [timelineClips, setTimelineClips] = useState<ViralTimelineClip[]>(createViralDefaultClips);
   const [selectedClipId, setSelectedClipId] = useState('clip-1');
+  const [timelineSplitPreset, setTimelineSplitPreset] = useState<ViralMaterialSplitPresetKey>('timeline');
+  const [timelineSplitResult, setTimelineSplitResult] = useState<MediaSplitResult | null>(null);
+  const [isTimelineSplitting, setIsTimelineSplitting] = useState(false);
   const [recognizedCaptionSegments, setRecognizedCaptionSegments] = useState<ViralCaptionSegment[]>([]);
   const allViralTemplateCards = [...viralTemplateCards, ...customTemplateCards];
   const appliedTemplate = allViralTemplateCards.find((item) => item.cardId === selectedTemplateCardId) || allViralTemplateCards[0] || viralTemplateCards[0];
@@ -1744,6 +1781,10 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const editedCaptionSegments = buildEditedViralCaptionSegments(captionSegments, timelineClips);
   const activeCaptionIndex = findEditedViralCaptionIndex(editedCaptionSegments, timelineCurrentTime);
   const activeCaption = editedCaptionSegments[activeCaptionIndex] || editedCaptionSegments[0];
+  const timelineMaterialSplitSegments = useMemo(
+    () => buildViralTimelineMaterialSplitSegments(timelineClips, sourceDuration, timelineSplitPreset),
+    [timelineClips, sourceDuration, timelineSplitPreset]
+  );
   const liveTemplatePhase = getViralPreviewEffectPhase(timelineCurrentTime % Math.max(0.1, timelineDuration), timelineDuration);
   const displayedUploadProgress = uploadPhase === 'analyzing' || uploadPhase === 'ready' ? 100 : sourceUploadProgress;
   const generatedPreviewHook = previewVersion?.hook || buildViralHook(template, activeCaption?.text || '核心卖点', activeCaptionIndex);
@@ -1756,6 +1797,7 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
   const previewTemplateStyle = viralTemplateThemeStyle(template);
   const activeTitleTextStyle = titleTextStyle;
   const activeCaptionTextStyle = captionTextStyle;
+  const canSplitViralTimelineToMaterial = Boolean(sourceVideo?.path && uploadPhase === 'ready' && timelineMaterialSplitSegments.length && !isTimelineSplitting);
 
   useEffect(() => {
     let canceled = false;
@@ -1862,12 +1904,47 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     });
   }
 
+  function clearViralUploadProgressListener() {
+    uploadProgressCleanupRef.current?.();
+    uploadProgressCleanupRef.current = null;
+  }
+
+  function resetViralSourceSelection() {
+    uploadAttemptRef.current += 1;
+    clearViralUploadProgressListener();
+    sourceVideoSizeRef.current = null;
+    setSourceVideo(null);
+    setVersions([]);
+    setSelectedVersionIds([]);
+    setRecognizedCaptionSegments([]);
+    setTimelineClips(createViralDefaultClips(VIRAL_TIMELINE_DURATION));
+    setSelectedClipId('clip-1');
+    setTimelineSplitPreset('timeline');
+    setTimelineSplitResult(null);
+    setIsTimelineSplitting(false);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setCustomPreviewHook('');
+    setSourceDuration(VIRAL_TIMELINE_DURATION);
+    setSourceUploadProgress(0);
+    setUploadProgress(0);
+    setUploadPhase('idle');
+    setNotice('');
+  }
+
+  async function reselectSourceVideo() {
+    resetViralSourceSelection();
+    await importSourceVideo();
+  }
+
   async function importSourceVideo() {
     const files = await window.surgicol.dialog.openFiles({
       filters: [{ name: '视频文件', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }]
     });
     const filePath = files[0];
     if (!filePath) return;
+    const uploadAttemptId = uploadAttemptRef.current + 1;
+    uploadAttemptRef.current = uploadAttemptId;
     const nextVideo: MaterialItem = {
       id: crypto.randomUUID(),
       name: filePath.split(/[\\/]/).pop() || filePath,
@@ -1883,6 +1960,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setRecognizedCaptionSegments([]);
     setTimelineClips(createViralDefaultClips(VIRAL_TIMELINE_DURATION));
     setSelectedClipId('clip-1');
+    setTimelineSplitPreset('timeline');
+    setTimelineSplitResult(null);
+    setIsTimelineSplitting(false);
     setCurrentTime(0);
     setCustomPreviewHook('');
     setSourceDuration(VIRAL_TIMELINE_DURATION);
@@ -1894,16 +1974,21 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     let unsubscribe: (() => void) | undefined;
     try {
       await getAliyunStorageConfig();
+      if (uploadAttemptRef.current !== uploadAttemptId) return;
       setNotice('正在上传视频到 OSS，上传完成后会自动调用阿里云智能字幕断句。');
       unsubscribe = window.surgicol.media.onUploadToOssProgress?.((progress) => {
+        if (uploadAttemptRef.current !== uploadAttemptId) return;
         if (progress.taskId !== taskId) return;
         const uploadPercent = normalizeUploadPercent(progress.percent);
         setSourceUploadProgress(uploadPercent);
         setUploadProgress(Math.max(3, Math.min(68, Math.round(uploadPercent * 0.68))));
         if (progress.message) setNotice(`视频上传中：${uploadPercent}%`);
       });
+      uploadProgressCleanupRef.current = unsubscribe || null;
       const uploaded = await window.surgicol.media.uploadToOss(filePath, { folder: 'viral/source-videos', taskId });
       unsubscribe?.();
+      if (uploadProgressCleanupRef.current === unsubscribe) uploadProgressCleanupRef.current = null;
+      if (uploadAttemptRef.current !== uploadAttemptId) return;
       setSourceUploadProgress(100);
       setUploadProgress(72);
       setUploadPhase('analyzing');
@@ -1912,8 +1997,12 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         mediaUrl: uploaded.mediaUrl,
         title: nextVideo.name
       });
+      if (uploadAttemptRef.current !== uploadAttemptId) return;
       setNotice('字幕断句任务已提交，正在等待阿里云返回识别结果。');
-      const recognized = await waitForViralSubtitleSegments(submitted.jobId, (progress) => setUploadProgress(progress));
+      const recognized = await waitForViralSubtitleSegments(submitted.jobId, (progress) => {
+        if (uploadAttemptRef.current === uploadAttemptId) setUploadProgress(progress);
+      });
+      if (uploadAttemptRef.current !== uploadAttemptId) return;
       const nextCaptions = viralSubtitleSegmentsToCaptions(recognized.segments);
       const nextDuration = Math.max(
         VIRAL_TIMELINE_DURATION,
@@ -1949,6 +2038,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
       });
     } catch (error) {
       unsubscribe?.();
+      if (uploadProgressCleanupRef.current === unsubscribe) uploadProgressCleanupRef.current = null;
+      if (uploadAttemptRef.current !== uploadAttemptId) return;
       setUploadPhase('failed');
       setSourceUploadProgress(0);
       setUploadProgress(0);
@@ -2078,6 +2169,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setSourceDuration(restoredDuration);
     setTimelineClips(createViralDefaultClips(restoredDuration));
     setSelectedClipId('clip-1');
+    setTimelineSplitPreset('timeline');
+    setTimelineSplitResult(null);
+    setIsTimelineSplitting(false);
     setNotice(`已恢复最近任务「${task.name}」。`);
   }
 
@@ -2336,6 +2430,8 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
         : [item]
     )));
     setSelectedClipId(nextClipId);
+    setTimelineSplitPreset('timeline');
+    setTimelineSplitResult(null);
     setNotice(`已在 ${formatViralTime(sourceToViralTimelineTime(timelineClips, splitTime))} 分割片段。`);
   }
 
@@ -2357,7 +2453,62 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setCurrentTime(nextSelectedClip.start);
     const video = previewVideoRef.current;
     if (video) video.currentTime = nextSelectedClip.start;
+    setTimelineSplitPreset('timeline');
+    setTimelineSplitResult(null);
     setNotice('已删除选中片段，底部时间轴已自动闭合。');
+  }
+
+  function applyTimelineSplitPreset(preset: ViralMaterialSplitPresetKey) {
+    setTimelineSplitPreset(preset);
+    setTimelineSplitResult(null);
+    if (preset === 'timeline') {
+      setNotice('已切回按当前时间轴切点分割。');
+      return;
+    }
+    const nextSegments = buildMaterialSplitSegments(sourceDuration, preset);
+    if (!nextSegments.length) {
+      setNotice('当前视频太短，无法套用素材库分割规则。');
+      return;
+    }
+    const nextClips = buildViralClipsFromMaterialSegments(nextSegments, preset);
+    setTimelineClips(nextClips);
+    setSelectedClipId(nextClips[0]?.id || 'clip-1');
+    setCurrentTime(nextClips[0]?.start || 0);
+    const video = previewVideoRef.current;
+    if (video) video.currentTime = getViralMediaDisplayTime(video, nextClips[0]?.start || 0);
+    const presetLabel = materialSplitPresets.find((item) => item.key === preset)?.label || '分割';
+    setNotice(`已把素材库「${presetLabel}」规则同步到底部时间轴，可继续微调后分割到素材库。`);
+  }
+
+  async function splitTimelineToMaterialLibrary() {
+    if (!sourceVideo?.path) {
+      setNotice('请先导入视频，再分割到素材库。');
+      return;
+    }
+    if (!window.surgicol?.media?.splitVideo) {
+      setNotice('当前运行环境不支持本地素材分割，请在 Electron 应用中使用。');
+      return;
+    }
+    if (!timelineMaterialSplitSegments.length) {
+      setNotice('当前时间轴没有可分割的有效片段。');
+      return;
+    }
+    setIsTimelineSplitting(true);
+    setTimelineSplitResult(null);
+    setNotice('正在按底部时间轴生成素材库片段...');
+    try {
+      const result = await window.surgicol.media.splitVideo(sourceVideo.path, {
+        folder: 'material-segments',
+        fileName: sourceVideo.name,
+        segments: timelineMaterialSplitSegments
+      });
+      setTimelineSplitResult(result);
+      setNotice(`已按底部时间轴生成 ${result.segments.length} 个素材片段，和素材库分割输出保持一致。`);
+    } catch (error) {
+      setNotice(error instanceof Error ? `素材分割失败：${error.message}` : '素材分割失败，请检查本地视频和 ffmpeg。');
+    } finally {
+      setIsTimelineSplitting(false);
+    }
   }
 
   function selectViralClip(clip: ViralTimelineClip) {
@@ -2571,6 +2722,9 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
     setSourceUploadProgress(0);
     setVersions([]);
     setSelectedVersionIds([]);
+    setTimelineSplitPreset('timeline');
+    setTimelineSplitResult(null);
+    setIsTimelineSplitting(false);
     setCurrentTime(0);
   }
 
@@ -2691,13 +2845,16 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
           <section className="viral-processing-card">
             <Upload size={76} />
             <h2>{uploadPhase === 'failed' ? '视频上传失败' : uploadPhase === 'uploading' ? '正在上传你的视频...' : '检测语音和分析内容'}</h2>
-            <button type="button" onClick={() => {
-              setSourceVideo(null);
-              setUploadPhase('idle');
-              setSourceUploadProgress(0);
-              setUploadProgress(0);
-              setNotice('');
-            }}>{uploadPhase === 'failed' ? '重新选择视频' : '取消上传'}</button>
+            <div className="viral-processing-actions">
+              {uploadPhase === 'failed' ? (
+                <>
+                  <button className="primary-action" type="button" onClick={() => void reselectSourceVideo()}>重新选择视频</button>
+                  <button type="button" onClick={resetViralSourceSelection}>返回首页</button>
+                </>
+              ) : (
+                <button className="primary-action" type="button" onClick={resetViralSourceSelection}>返回首页</button>
+              )}
+            </div>
             {uploadPhase === 'failed' && notice ? <p className="viral-processing-error">{notice}</p> : null}
             <div className="viral-progress-steps">
               <span className={uploadPhase === 'failed' ? 'failed' : uploadPhase === 'analyzing' ? 'completed' : 'active'}>
@@ -3165,10 +3322,38 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 <span className="slash">/</span>
                 <span>{formatViralTime(timelineDuration)}</span>
               </div>
-              <button className="viral-timeline-save" type="button" onClick={saveSelectedToFinishedLibrary} disabled={!sourceVideo || packagingProgress !== null}>
-                <Download size={15} />
-                <span>保存到成片库</span>
-              </button>
+              <div className="viral-timeline-actions">
+                <div className="viral-material-split-controls" aria-label="素材分割规则">
+                  <button
+                    type="button"
+                    className={timelineSplitPreset === 'timeline' ? 'active' : undefined}
+                    onClick={() => applyTimelineSplitPreset('timeline')}
+                    disabled={!sourceVideo || isTimelineSplitting}
+                  >
+                    当前切点
+                  </button>
+                  {materialSplitPresets.map((preset) => (
+                    <button
+                      key={preset.key}
+                      type="button"
+                      className={timelineSplitPreset === preset.key ? 'active' : undefined}
+                      onClick={() => applyTimelineSplitPreset(preset.key)}
+                      disabled={!sourceVideo || isTimelineSplitting}
+                      title={`${preset.label} · ${preset.detail}`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <button className="viral-timeline-split-save" type="button" onClick={() => void splitTimelineToMaterialLibrary()} disabled={!canSplitViralTimelineToMaterial}>
+                  <Scissors size={15} />
+                  <span>{isTimelineSplitting ? '分割中...' : '分割到素材库'}</span>
+                </button>
+                <button className="viral-timeline-save" type="button" onClick={saveSelectedToFinishedLibrary} disabled={!sourceVideo || packagingProgress !== null}>
+                  <Download size={15} />
+                  <span>保存到成片库</span>
+                </button>
+              </div>
             </div>
             <div
               className="viral-ruler"
@@ -3250,6 +3435,23 @@ function ViralPackagingWorkspace(props: { projectName: string; onSavedToFinished
                 );
               })}
             </div>
+            {timelineSplitResult ? (
+              <div className="viral-material-split-result">
+                <strong>已生成 {timelineSplitResult.segments.length} 个素材片段</strong>
+                <div>
+                  <button type="button" onClick={() => window.surgicol?.file?.reveal(timelineSplitResult.outputDir)}>
+                    <FolderOpen size={14} />
+                    打开目录
+                  </button>
+                  {timelineSplitResult.segments.slice(0, 4).map((segment) => (
+                    <button key={segment.id} type="button" onClick={() => window.surgicol?.file?.reveal(segment.localPath)} title={segment.name}>
+                      {segment.label} · {formatViralDuration(segment.duration)} · {formatViralFileSize(segment.size)}
+                    </button>
+                  ))}
+                  {timelineSplitResult.segments.length > 4 ? <span>+{timelineSplitResult.segments.length - 4}</span> : null}
+                </div>
+              </div>
+            ) : null}
           </section>
           {versions.length ? (
             <section className="viral-version-drawer">
@@ -4046,6 +4248,14 @@ function formatViralDuration(value: number) {
   const minutes = Math.floor(value / 60);
   const seconds = Math.floor(value % 60);
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatViralFileSize(size?: number) {
+  const value = Math.max(0, Number(size) || 0);
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
 }
 
 function readViralDuration(value: string) {

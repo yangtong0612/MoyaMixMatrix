@@ -47,6 +47,7 @@ import {
   type ProductVideoTaskStatus
 } from '@/features/product-video/productVideoApi';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
+import { buildMaterialSplitSegments, materialSplitPresets, type MaterialSplitPlanSegment, type MaterialSplitPresetKey } from '@/shared/mediaSplit';
 import type { MediaCacheResult, MediaCropResult, MediaProbeResult, MediaSplitResult, OssUploadProgress, OssUploadResult } from '@/shared/types/electron';
 
 const navItems = [
@@ -225,13 +226,6 @@ const materialQuickFilters = ['全部', '商品图', '爆款链接', '门店图'
 const MATERIAL_SOURCE_API_BASE_KEY = 'moya-material-source-api-base';
 const MATERIAL_SOURCE_DEFAULT_API_BASE = 'http://localhost:8787';
 const MATERIAL_SOURCE_USER_ID = 'moya-matrix-materials';
-const materialSplitPresets = [
-  { key: '3-parts', label: '三段', detail: '均分' },
-  { key: '15s', label: '15秒', detail: '短切' },
-  { key: '30s', label: '30秒', detail: '长切' }
-] as const;
-
-type MaterialSplitPresetKey = typeof materialSplitPresets[number]['key'];
 
 const materialCropPresets = [
   { key: 'original', label: '原始', detail: '完整画面' },
@@ -270,11 +264,17 @@ type MaterialSourceTask = {
   updatedAt?: string;
 };
 
-type MaterialSplitPlanSegment = {
-  label: string;
-  start: number;
-  end: number;
-  duration: number;
+type MaterialBatchSplitStatus = 'queued' | 'probing' | 'splitting' | 'done' | 'failed';
+
+type MaterialBatchSplitItem = {
+  id: string;
+  localPath: string;
+  name: string;
+  status: MaterialBatchSplitStatus;
+  duration?: number;
+  outputDir?: string;
+  segments?: MediaSplitResult['segments'];
+  error?: string;
 };
 
 const productSamples = [
@@ -578,6 +578,14 @@ function materialTaskStatusLabel(task?: MaterialSourceTask | null) {
   return task.status || '处理中';
 }
 
+function materialBatchSplitStatusLabel(status: MaterialBatchSplitStatus) {
+  if (status === 'queued') return '待分割';
+  if (status === 'probing') return '读取中';
+  if (status === 'splitting') return '分割中';
+  if (status === 'done') return '已完成';
+  return '失败';
+}
+
 function formatSecondsLabel(value: number) {
   const total = Math.max(0, Math.round(Number(value) || 0));
   const minutes = Math.floor(total / 60);
@@ -650,24 +658,6 @@ function materialSplitTrackStyle(segment: MaterialSplitPlanSegment, duration: nu
   const safeDuration = Math.max(0.25, Number(duration) || 0);
   const segmentWidth = clampNumber((segment.duration / safeDuration) * 100, 8, 100);
   return { width: `${segmentWidth}%` };
-}
-
-function buildMaterialSplitSegments(duration: number, preset: MaterialSplitPresetKey): MaterialSplitPlanSegment[] {
-  const safeDuration = Math.max(0, Number(duration) || 0);
-  if (safeDuration <= 0.25) return [];
-  const segmentLength = preset === '15s' ? 15 : preset === '30s' ? 30 : safeDuration / Math.min(3, Math.max(1, Math.ceil(safeDuration)));
-  const segments: MaterialSplitPlanSegment[] = [];
-  for (let start = 0, index = 0; start < safeDuration - 0.2; start += segmentLength, index += 1) {
-    const end = Math.min(safeDuration, start + segmentLength);
-    if (end - start < 0.25) break;
-    segments.push({
-      label: `片段 ${index + 1}`,
-      start,
-      end,
-      duration: end - start
-    });
-  }
-  return segments;
 }
 
 function productVideoStatusText(task: ProductVideoTaskStatus) {
@@ -1498,7 +1488,10 @@ function MaterialLibraryView() {
   const [sourceThumbnail, setSourceThumbnail] = useState('');
   const [splitPreset, setSplitPreset] = useState<MaterialSplitPresetKey>('3-parts');
   const [splitResult, setSplitResult] = useState<MediaSplitResult | null>(null);
+  const [selectedSplitPreviewId, setSelectedSplitPreviewId] = useState('');
   const [isSplitting, setIsSplitting] = useState(false);
+  const [batchSplitItems, setBatchSplitItems] = useState<MaterialBatchSplitItem[]>([]);
+  const [isBatchSplitting, setIsBatchSplitting] = useState(false);
   const [cropPreset, setCropPreset] = useState<MaterialCropPresetKey>('original');
   const [cropRect, setCropRect] = useState<MaterialCropRect>({ x: 0, y: 0, width: 1, height: 1 });
   const [cropResult, setCropResult] = useState<MediaCropResult | null>(null);
@@ -1515,8 +1508,13 @@ function MaterialLibraryView() {
   const sourcePreviewUrl = cachedSource?.localPath ? localFileUrl(cachedSource.localPath) : sourceVideoUrl;
   const sourceBusy = ['creating', 'polling', 'caching'].includes(sourceImportStage);
   const splitPlan = buildMaterialSplitSegments(sourceProbe?.duration || 0, splitPreset);
-  const canSplit = Boolean(cachedSource?.localPath && splitPlan.length && !isSplitting);
-  const canCrop = Boolean(cachedSource?.localPath && sourceProbe?.width && sourceProbe?.height && !isCropping);
+  const selectedSplitPreviewSegment = splitResult?.segments.find((segment) => segment.id === selectedSplitPreviewId) || splitResult?.segments[0] || null;
+  const canSplit = Boolean(cachedSource?.localPath && splitPlan.length && !isSplitting && !isBatchSplitting);
+  const batchDoneCount = batchSplitItems.filter((item) => item.status === 'done').length;
+  const batchSegmentCount = batchSplitItems.reduce((total, item) => total + (item.segments?.length || 0), 0);
+  const canBatchSplit = Boolean(batchSplitItems.length && !isBatchSplitting && !isSplitting);
+  const canCrop = Boolean(cachedSource?.localPath && sourceProbe?.width && sourceProbe?.height && !isCropping && !isBatchSplitting);
+  const generatedMaterialCount = (splitResult?.segments.length || 0) + (cropResult ? 1 : 0) + batchSegmentCount;
   const isManualCrop = cropPreset === 'free';
 
   useEffect(() => {
@@ -1620,6 +1618,7 @@ function MaterialLibraryView() {
     setSourceProbe(null);
     setSourceThumbnail('');
     setSplitResult(null);
+    setSelectedSplitPreviewId('');
     setCropPreset('original');
     setCropRect({ x: 0, y: 0, width: 1, height: 1 });
     setCropResult(null);
@@ -1649,6 +1648,7 @@ function MaterialLibraryView() {
     setSourceProbe(null);
     setSourceThumbnail('');
     setSplitResult(null);
+    setSelectedSplitPreviewId('');
     setCropPreset('original');
     setCropRect({ x: 0, y: 0, width: 1, height: 1 });
     setCropResult(null);
@@ -1680,6 +1680,7 @@ function MaterialLibraryView() {
     }
     setIsSplitting(true);
     setSplitResult(null);
+    setSelectedSplitPreviewId('');
     setSourceError('');
     try {
       const result = await window.surgicol.media.splitVideo(cachedSource.localPath, {
@@ -1688,11 +1689,105 @@ function MaterialLibraryView() {
         segments: splitPlan
       });
       setSplitResult(result);
+      setSelectedSplitPreviewId(result.segments[0]?.id || '');
     } catch (error) {
       setSourceError(error instanceof Error ? error.message : '视频分割失败');
     } finally {
       setIsSplitting(false);
     }
+  }
+
+  function handleSplitPresetChange(preset: MaterialSplitPresetKey) {
+    setSplitPreset(preset);
+    setSplitResult(null);
+    setSelectedSplitPreviewId('');
+  }
+
+  function updateBatchSplitItem(id: string, patch: Partial<MaterialBatchSplitItem>) {
+    setBatchSplitItems((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  async function handlePickBatchSplitSources() {
+    if (!window.surgicol?.dialog?.openFiles || !window.surgicol?.media?.probeFile || !window.surgicol?.media?.splitVideo) {
+      setSourceError('当前运行环境不支持批量素材分割，请在 Electron 应用中使用。');
+      return;
+    }
+    const files = await window.surgicol.dialog.openFiles({
+      title: '选择批量分割视频',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: '视频文件', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    });
+    if (!files.length) return;
+    const timestamp = Date.now();
+    const nextItems = files.map((localPath, index) => ({
+      id: `batch-${timestamp}-${index}`,
+      localPath,
+      name: materialFileNameFromPath(localPath),
+      status: 'queued' as const
+    }));
+    setBatchSplitItems((items) => {
+      const existingPaths = new Set(items.map((item) => item.localPath));
+      return [...items, ...nextItems.filter((item) => !existingPaths.has(item.localPath))];
+    });
+    setSourceError('');
+  }
+
+  async function handleBatchSplitVideos() {
+    const media = window.surgicol?.media;
+    if (!media?.probeFile || !media?.splitVideo) {
+      setSourceError('当前运行环境不支持批量素材分割，请在 Electron 应用中使用。');
+      return;
+    }
+    if (!batchSplitItems.length) {
+      setSourceError('请先选择要批量分割的视频素材。');
+      return;
+    }
+    setIsBatchSplitting(true);
+    setSourceError('');
+    const activePreset = splitPreset;
+    try {
+      for (const item of batchSplitItems) {
+        updateBatchSplitItem(item.id, {
+          status: 'probing',
+          duration: undefined,
+          outputDir: undefined,
+          segments: undefined,
+          error: undefined
+        });
+        try {
+          const probe = await media.probeFile(item.localPath);
+          const segments = buildMaterialSplitSegments(probe.duration || 0, activePreset);
+          if (!segments.length) throw new Error('视频时长过短，无法生成分割片段');
+          updateBatchSplitItem(item.id, { status: 'splitting', duration: probe.duration });
+          const result = await media.splitVideo(item.localPath, {
+            folder: 'material-batch-segments',
+            fileName: item.name,
+            segments
+          });
+          updateBatchSplitItem(item.id, {
+            status: 'done',
+            duration: result.duration || probe.duration,
+            outputDir: result.outputDir,
+            segments: result.segments
+          });
+        } catch (error) {
+          updateBatchSplitItem(item.id, {
+            status: 'failed',
+            error: error instanceof Error ? error.message : '批量分割失败'
+          });
+        }
+      }
+    } finally {
+      setIsBatchSplitting(false);
+    }
+  }
+
+  function removeBatchSplitItem(id: string) {
+    if (isBatchSplitting) return;
+    setBatchSplitItems((items) => items.filter((item) => item.id !== id));
   }
 
   function pointFromCropEvent(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1814,6 +1909,31 @@ function MaterialLibraryView() {
             <small>{sourceTask ? `${materialTaskStatusLabel(sourceTask)} · ${sourceTask.platform || 'unknown'}` : '视频会先进入素材源，再用于切片。'}</small>
           </div>
           {sourceError ? <p className="material-source-error">{sourceError}</p> : null}
+          <div className="material-link-summary">
+            <div className="material-link-summary-main">
+              <span>当前素材</span>
+              <strong>{sourceTask?.title || '未选择视频'}</strong>
+              <p>{cachedSource?.localPath || sourceTask?.sourceUrl || '等待导入'}</p>
+            </div>
+            <div className="material-link-summary-facts">
+              <span>
+                <strong>{sourceTask ? materialTaskStatusLabel(sourceTask) : '未导入'}</strong>
+                <em>状态</em>
+              </span>
+              <span>
+                <strong>{sourceProbe ? formatSecondsLabel(sourceProbe.duration) : '--'}</strong>
+                <em>时长</em>
+              </span>
+              <span>
+                <strong>{cachedSource ? formatFileSize(cachedSource.size) : '--'}</strong>
+                <em>缓存</em>
+              </span>
+              <span>
+                <strong>{splitResult ? `${splitResult.segments.length} 段` : splitPlan.length ? `${splitPlan.length} 段` : '--'}</strong>
+                <em>{splitResult ? '已分割' : '预估'}</em>
+              </span>
+            </div>
+          </div>
         </div>
 
         <div className="material-import-preview">
@@ -1873,11 +1993,40 @@ function MaterialLibraryView() {
               <span>{sourceProbe?.width && sourceProbe?.height ? `${sourceProbe.width}x${sourceProbe.height}` : '尺寸 --'}</span>
             </div>
           </div>
-          <div className="material-split-panel">
+        </div>
+
+        <aside className="material-generate-panel">
+          <div className="material-generate-head">
+            <div>
+              <span>操作中心</span>
+              <strong>生成、分割、裁剪集中处理</strong>
+            </div>
+            <WandSparkles size={18} />
+          </div>
+          <div className="material-generate-stats">
+            <span>
+              <strong>{sourceTask ? materialTaskStatusLabel(sourceTask) : '未导入'}</strong>
+              <em>视频源</em>
+            </span>
+            <span>
+              <strong>{splitResult?.segments.length || 0}</strong>
+              <em>分割片段</em>
+            </span>
+            <span>
+              <strong>{cropResult ? 1 : 0}</strong>
+              <em>裁剪素材</em>
+            </span>
+            <span>
+              <strong>{generatedMaterialCount}</strong>
+              <em>可用素材</em>
+            </span>
+          </div>
+
+          <div className="material-operation-section material-split-panel">
             <div className="material-split-head">
               <div>
                 <span>素材分割</span>
-                <strong>预览下方直接生成分割轨道</strong>
+                <strong>按当前规则生成素材片段</strong>
               </div>
               <button type="button" onClick={handleSplitVideo} disabled={!canSplit}>
                 <Clapperboard size={15} />
@@ -1890,7 +2039,7 @@ function MaterialLibraryView() {
                   key={preset.key}
                   type="button"
                   className={splitPreset === preset.key ? 'active' : undefined}
-                  onClick={() => setSplitPreset(preset.key)}
+                  onClick={() => handleSplitPresetChange(preset.key)}
                 >
                   <strong>{preset.label}</strong>
                   <span>{preset.detail}</span>
@@ -1911,55 +2060,196 @@ function MaterialLibraryView() {
               <div className="material-split-result">
                 <strong>已生成 {splitResult.segments.length} 个素材片段</strong>
                 {splitResult.segments.map((segment) => (
-                  <button key={segment.id} type="button" onClick={() => window.surgicol?.file?.reveal(segment.localPath)}>
+                  <button
+                    key={segment.id}
+                    type="button"
+                    className={selectedSplitPreviewSegment?.id === segment.id ? 'active' : undefined}
+                    onClick={() => setSelectedSplitPreviewId(segment.id)}
+                  >
                     <span>{segment.label}</span>
                     <em>{formatSecondsLabel(segment.duration)} · {formatFileSize(segment.size)}</em>
                   </button>
                 ))}
               </div>
             ) : null}
+            <div className={`material-split-preview${selectedSplitPreviewSegment ? ' ready' : ''}`}>
+              <div className="material-split-preview-head">
+                <div>
+                  <span>分割预览</span>
+                  <strong>{selectedSplitPreviewSegment ? selectedSplitPreviewSegment.label : '等待生成素材片段'}</strong>
+                </div>
+                {selectedSplitPreviewSegment ? (
+                  <button type="button" onClick={() => window.surgicol?.file?.reveal(selectedSplitPreviewSegment.localPath)}>
+                    打开文件
+                  </button>
+                ) : null}
+              </div>
+              <div className="material-split-preview-stage">
+                {selectedSplitPreviewSegment ? (
+                  <video key={selectedSplitPreviewSegment.localPath} src={localFileUrl(selectedSplitPreviewSegment.localPath)} controls preload="metadata" />
+                ) : (
+                  <div>
+                    <PlayCircle size={26} />
+                    <span>分割后点击片段可在这里预览</span>
+                  </div>
+                )}
+              </div>
+              <div className="material-split-preview-meta">
+                <span>{selectedSplitPreviewSegment ? `${formatSecondsLabel(selectedSplitPreviewSegment.start)} - ${formatSecondsLabel(selectedSplitPreviewSegment.end)}` : '时间 --'}</span>
+                <span>{selectedSplitPreviewSegment ? formatSecondsLabel(selectedSplitPreviewSegment.duration) : '时长 --'}</span>
+                <span>{selectedSplitPreviewSegment ? formatFileSize(selectedSplitPreviewSegment.size) : '大小 --'}</span>
+              </div>
+            </div>
+            <div className="material-batch-split">
+              <div className="material-batch-head">
+                <div>
+                  <span>批量素材</span>
+                  <strong>多条视频按当前规则逐条分割</strong>
+                </div>
+                <div className="material-batch-actions">
+                  <button type="button" onClick={handlePickBatchSplitSources} disabled={isBatchSplitting}>
+                    <Upload size={15} />
+                    选择视频
+                  </button>
+                  <button type="button" onClick={handleBatchSplitVideos} disabled={!canBatchSplit}>
+                    <ListVideo size={15} />
+                    {isBatchSplitting ? '处理中...' : '批量分割'}
+                  </button>
+                  {batchSplitItems.length ? (
+                    <button
+                      type="button"
+                      className="icon-only"
+                      aria-label="清空批量队列"
+                      title="清空批量队列"
+                      onClick={() => setBatchSplitItems([])}
+                      disabled={isBatchSplitting}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="material-batch-summary">
+                <span>已选 {batchSplitItems.length}</span>
+                <span>完成 {batchDoneCount}</span>
+                <span>片段 {batchSegmentCount}</span>
+              </div>
+              <div className="material-batch-list">
+                {batchSplitItems.length ? batchSplitItems.map((item) => (
+                  <div key={item.id} className={`material-batch-item ${item.status}`}>
+                    <div className="material-batch-copy">
+                      <strong>{item.name}</strong>
+                      <span>
+                        {item.error || (item.segments?.length
+                          ? `${item.segments.length} 段 · ${formatSecondsLabel(item.duration || 0)}`
+                          : item.duration
+                            ? formatSecondsLabel(item.duration)
+                            : item.localPath)}
+                      </span>
+                    </div>
+                    <div className="material-batch-meta">
+                      <span className={`material-batch-status ${item.status}`}>{materialBatchSplitStatusLabel(item.status)}</span>
+                      {item.segments?.[0] ? (
+                        <button type="button" onClick={() => window.surgicol?.file?.reveal(item.outputDir || item.segments?.[0]?.localPath || item.localPath)}>
+                          打开
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="icon-only"
+                        aria-label={`移除 ${item.name}`}
+                        title="移除"
+                        onClick={() => removeBatchSplitItem(item.id)}
+                        disabled={isBatchSplitting}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="material-batch-empty">选择多条本地视频后，会在这里显示批量队列</div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div className="material-crop-panel">
-          <div className="material-crop-head">
+          <div className="material-operation-section material-crop-panel">
+            <div className="material-crop-head">
+              <div>
+                <span>素材裁剪</span>
+                <strong>裁剪画面后生成新素材</strong>
+              </div>
+              <button type="button" onClick={handleCropVideo} disabled={!canCrop}>
+                <Crop size={15} />
+                {isCropping ? '裁剪中...' : '裁剪视频'}
+              </button>
+            </div>
+            <div className="material-crop-presets">
+              {materialCropPresets.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  className={cropPreset === preset.key ? 'active' : undefined}
+                  onClick={() => handleCropPresetChange(preset.key)}
+                >
+                  <strong>{preset.label}</strong>
+                  <span>{preset.detail}</span>
+                </button>
+              ))}
+            </div>
+            <div className="material-crop-summary">
+              <span>{materialCropPixelLabel(cropRect, sourceProbe)}</span>
+              <span>左上 {Math.round(clampMaterialCropRect(cropRect).x * 100)}% / {Math.round(clampMaterialCropRect(cropRect).y * 100)}%</span>
+              <span>{isManualCrop ? '可在播放区拖拽重新框选' : '按比例居中裁剪'}</span>
+            </div>
+            {cropResult ? (
+              <div className="material-crop-result">
+                <strong>已生成裁剪素材</strong>
+                <button type="button" onClick={() => window.surgicol?.file?.reveal(cropResult.localPath)}>
+                  <span>{cropResult.name}</span>
+                  <em>{cropResult.width}x{cropResult.height} · {formatFileSize(cropResult.size)}</em>
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="material-generate-actions">
+            <NavLink to="/editor?workflow=viral">
+              <Clapperboard size={16} />
+              <span>进入剪辑生成</span>
+              <ArrowRight size={15} />
+            </NavLink>
+            <NavLink to="/product-video/create?scenario=product-showcase">
+              <Package size={16} />
+              <span>商品视频生成</span>
+              <ArrowRight size={15} />
+            </NavLink>
+            <NavLink to="/product-video/create?scenario=hot-replica">
+              <Flame size={16} />
+              <span>爆款复刻生成</span>
+              <ArrowRight size={15} />
+            </NavLink>
+          </div>
+          <div className="material-generate-queue">
             <div>
-              <span>素材裁剪</span>
-              <strong>按规则裁剪，或在播放区框选</strong>
+              <span>已生成素材</span>
+              <strong>{generatedMaterialCount ? `已准备 ${generatedMaterialCount} 个素材` : '等待素材生成'}</strong>
             </div>
-            <button type="button" onClick={handleCropVideo} disabled={!canCrop}>
-              <Crop size={15} />
-              {isCropping ? '裁剪中...' : '裁剪视频'}
-            </button>
-          </div>
-          <div className="material-crop-presets">
-            {materialCropPresets.map((preset) => (
-              <button
-                key={preset.key}
-                type="button"
-                className={cropPreset === preset.key ? 'active' : undefined}
-                onClick={() => handleCropPresetChange(preset.key)}
-              >
-                <strong>{preset.label}</strong>
-                <span>{preset.detail}</span>
+            {selectedSplitPreviewSegment ? (
+              <button type="button" onClick={() => window.surgicol?.file?.reveal(selectedSplitPreviewSegment.localPath)}>
+                <ListVideo size={15} />
+                打开当前片段
               </button>
-            ))}
-          </div>
-          <div className="material-crop-summary">
-            <span>{materialCropPixelLabel(cropRect, sourceProbe)}</span>
-            <span>左上 {Math.round(clampMaterialCropRect(cropRect).x * 100)}% / {Math.round(clampMaterialCropRect(cropRect).y * 100)}%</span>
-            <span>{isManualCrop ? '可在播放区拖拽重新框选' : '按比例居中裁剪'}</span>
-          </div>
-          {cropResult ? (
-            <div className="material-crop-result">
-              <strong>已生成裁剪素材</strong>
+            ) : cropResult ? (
               <button type="button" onClick={() => window.surgicol?.file?.reveal(cropResult.localPath)}>
-                <span>{cropResult.name}</span>
-                <em>{cropResult.width}x{cropResult.height} · {formatFileSize(cropResult.size)}</em>
+                <Crop size={15} />
+                打开裁剪素材
               </button>
-            </div>
-          ) : null}
-        </div>
+            ) : (
+              <small>分割或裁剪后会在这里汇总。</small>
+            )}
+          </div>
+        </aside>
       </div>
 
       <div className="material-library-toolbar">

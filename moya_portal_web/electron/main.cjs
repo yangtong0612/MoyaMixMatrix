@@ -523,6 +523,7 @@ function delay(ms) {
 
 function registerIpc() {
   ipcMain.handle('app:get-version', () => app.getVersion());
+  ipcMain.handle('app:request-api', (_event, request = {}) => requestBackendApi(request));
   ipcMain.handle('app:set-titlebar-theme', (_event, theme) => {
     if (!mainWindow || typeof mainWindow.setTitleBarOverlay !== 'function') return false;
     mainWindow.setTitleBarOverlay({
@@ -1974,6 +1975,82 @@ function probeMedia(filePath) {
       }
     });
   });
+}
+
+async function requestBackendApi(request = {}) {
+  const method = String(request.method || 'GET').toUpperCase();
+  const targetUrl = resolveBackendApiUrl(request.url);
+  const headers = normalizeApiRequestHeaders(request.headers);
+  let body = request.data;
+  if (body !== undefined && body !== null && typeof body === 'object' && !(body instanceof ArrayBuffer)) {
+    body = JSON.stringify(body);
+    if (!hasHeader(headers, 'content-type')) {
+      headers['Content-Type'] = 'application/json';
+    }
+  }
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1000, Number(request.timeout) || 30000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(targetUrl, {
+      method,
+      headers,
+      body: method === 'GET' || method === 'HEAD' ? undefined : body,
+      signal: controller.signal
+    });
+    const responseText = await response.text();
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      data: parseApiResponseBody(responseText, response.headers.get('content-type') || '')
+    };
+  } catch (error) {
+    const detail = error?.name === 'AbortError'
+      ? `请求超时（${Math.round(timeoutMs / 1000)}s）`
+      : (error?.message || String(error));
+    throw new Error(`无法连接后端服务：${apiBaseUrl}。请确认 moya_portal_banked 已启动。${detail ? ` (${detail})` : ''}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function resolveBackendApiUrl(rawUrl = '') {
+  const apiRoot = new URL(`${apiBaseUrl}/`);
+  const value = String(rawUrl || '').trim();
+  if (/^https?:\/\//i.test(value)) {
+    const target = new URL(value);
+    const rootPath = apiRoot.pathname.replace(/\/+$/, '');
+    if (target.origin !== apiRoot.origin || !target.pathname.startsWith(`${rootPath}/`)) {
+      throw new Error('仅允许请求当前后端 API');
+    }
+    return target.toString();
+  }
+  const path = value.replace(/^\/+/, '').replace(/^api\/+/, '');
+  return new URL(path, apiRoot).toString();
+}
+
+function normalizeApiRequestHeaders(headers = {}) {
+  return Object.entries(headers || {}).reduce((nextHeaders, [key, value]) => {
+    if (value === undefined || value === null) return nextHeaders;
+    nextHeaders[key] = Array.isArray(value) ? value.join(', ') : String(value);
+    return nextHeaders;
+  }, {});
+}
+
+function hasHeader(headers, name) {
+  const normalizedName = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === normalizedName);
+}
+
+function parseApiResponseBody(text, contentType) {
+  if (!text) return null;
+  if (!/json/i.test(contentType)) return text;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 async function analyzeSpeechWindow(filePath) {

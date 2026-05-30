@@ -294,10 +294,27 @@ export interface DriveUploadProgress {
   message?: string;
 }
 
+export interface ApiBridgeRequest {
+  url?: string;
+  method?: string;
+  headers?: Record<string, unknown>;
+  data?: unknown;
+  timeout?: number;
+}
+
+export interface ApiBridgeResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  data: unknown;
+}
+
 declare global {
   interface Window {
     surgicol: {
       app: {
+        apiBaseUrl: string;
+        requestApi(request: ApiBridgeRequest): Promise<ApiBridgeResponse>;
         getVersion(): Promise<string>;
         setTitlebarTheme(theme: 'dark' | 'light'): Promise<boolean>;
       };

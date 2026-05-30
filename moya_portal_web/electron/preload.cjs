@@ -1,9 +1,12 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
+const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://127.0.0.1:8081/api').replace(/\/+$/, '');
 
 contextBridge.exposeInMainWorld('surgicol', {
   app: {
+    apiBaseUrl,
+    requestApi: (request) => invoke('app:request-api', request),
     getVersion: () => invoke('app:get-version'),
     setTitlebarTheme: (theme) => invoke('app:set-titlebar-theme', theme)
   },
