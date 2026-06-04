@@ -10560,7 +10560,7 @@ progress::-webkit-progress-value {
   max-width: none;
   padding: 0;
   border-radius: 0;
-  font-family: var(--viral-title-font, "Arial Black", "Microsoft YaHei", sans-serif);
+  font-family: var(--viral-title-font, "Moya Smiley Sans", "Smiley Sans Oblique", "Microsoft YaHei", sans-serif);
   font-size: 20px;
   font-weight: 900;
   line-height: 1.02;
@@ -10577,7 +10577,7 @@ progress::-webkit-progress-value {
   max-width: none;
   padding: 0;
   border-radius: 0;
-  font-family: var(--viral-subtitle-font, "Trebuchet MS", "Microsoft YaHei", sans-serif);
+  font-family: var(--viral-subtitle-font, "Moya Resource Han Rounded CN", "Resource Han Rounded CN", "Microsoft YaHei", sans-serif);
   font-size: 15px;
   font-weight: 800;
   line-height: 1.15;
@@ -10591,7 +10591,7 @@ progress::-webkit-progress-value {
   max-width: 72px;
   padding: 0;
   color: var(--viral-keyword-bg, #facc15);
-  font-family: var(--viral-subtitle-font, "Arial Black", "Microsoft YaHei", sans-serif);
+  font-family: var(--viral-subtitle-font, "Moya Resource Han Rounded CN", "Resource Han Rounded CN", "Microsoft YaHei", sans-serif);
   font-size: 12px;
   font-style: normal;
   font-weight: 900;

@@ -29,6 +29,7 @@ import {
   Store,
   Sun,
   Trash2,
+  Type,
   Upload,
   UserRound,
   Volume2,
@@ -59,6 +60,18 @@ const navItems = [
   { to: '/settings', label: '设置', icon: Settings }
 ];
 
+const workspaceNavItems = [
+  ...navItems.slice(0, 4),
+  { to: '/subtitle-template', label: '字幕模板', icon: Type },
+  ...navItems.slice(4)
+];
+
+const sidebarNavItems = [
+  ...navItems.slice(0, 4),
+  { to: '/subtitle-template', label: '字幕模板', icon: WandSparkles },
+  ...navItems.slice(4)
+];
+
 const editorLoadingStages = [
   '正在预热资源引擎',
   '正在装配时间线布局',
@@ -68,6 +81,11 @@ const editorLoadingStages = [
 const LazyEditorPage = lazy(async () => {
   const module = await import('@/features/editor/EditorPage');
   return { default: module.EditorPage };
+});
+
+const LazySubtitleTemplatePage = lazy(async () => {
+  const module = await import('@/features/subtitle-template/SubtitleTemplatePage');
+  return { default: module.SubtitleTemplatePage };
 });
 
 type EditorRouteBoundaryState = {
@@ -1187,6 +1205,7 @@ export function App() {
   const isNavigationLocked = useEditorStore((state) => state.isNavigationLocked);
   const navigationLockReason = useEditorStore((state) => state.navigationLockReason);
   const isEditorRoute = location.pathname.startsWith('/editor');
+  const isSubtitleTemplateRoute = location.pathname.startsWith('/subtitle-template');
   const isProductCreateRoute = location.pathname.startsWith('/product-video/create');
   const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -1222,7 +1241,7 @@ export function App() {
   }
 
   return (
-    <div className={`app-window theme-${theme}${isEditorRoute || isProductCreateRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
+    <div className={`app-window theme-${theme}${isEditorRoute || isSubtitleTemplateRoute || isProductCreateRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
       <header className="app-titlebar">
         <NavLink
           className={isNavigationLocked ? 'titlebar-brand route-lock-disabled' : 'titlebar-brand'}
@@ -1238,9 +1257,9 @@ export function App() {
             <span>{theme === 'dark' ? '暗夜模式' : '白天模式'}</span>
           </div>
         </NavLink>
-        {isEditorRoute || isProductCreateRoute ? (
+        {isEditorRoute || isSubtitleTemplateRoute || isProductCreateRoute ? (
           <nav className="titlebar-nav" aria-label="功能切换">
-            {navItems.map((item) => (
+            {workspaceNavItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -1275,7 +1294,7 @@ export function App() {
           </div>
 
           <nav>
-            {navItems.map((item) => (
+            {sidebarNavItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -1303,6 +1322,16 @@ export function App() {
                 <EditorRouteBoundary>
                   <Suspense fallback={<EditorRouteLoading />}>
                     <LazyEditorPage />
+                  </Suspense>
+                </EditorRouteBoundary>
+              )}
+            />
+            <Route
+              path="/subtitle-template"
+              element={(
+                <EditorRouteBoundary>
+                  <Suspense fallback={<EditorRouteLoading />}>
+                    <LazySubtitleTemplatePage />
                   </Suspense>
                 </EditorRouteBoundary>
               )}
