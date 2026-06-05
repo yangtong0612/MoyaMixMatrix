@@ -9,17 +9,21 @@ const { fileURLToPath, pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
 const { app, BrowserWindow, Menu, dialog, ipcMain, nativeImage, net, protocol, shell } = require('electron');
 const Store = require('electron-store');
-const bundledFfmpegPath = require('ffmpeg-static');
-const bundledFfprobePath = require('ffprobe-static').path;
+const bundledFfmpegPath = optionalRequire('ffmpeg-static') || '';
+const installedFfmpegPath = optionalRequire('@ffmpeg-installer/ffmpeg')?.path || '';
+const bundledFfprobePath = optionalRequire('ffprobe-static')?.path || '';
+const ffmpegExecutableName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+const ffprobeExecutableName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
 const ffmpegPath = resolveMediaToolPath('FFMPEG_BIN', [
   process.env.FFMPEG_BIN,
-  'C:\\Users\\HUAWEI\\choco\\bin\\ffmpeg.exe',
+  resolvePackagedMediaToolPath(ffmpegExecutableName),
+  installedFfmpegPath,
   bundledFfmpegPath,
   'ffmpeg'
 ]);
 const ffprobePath = resolveMediaToolPath('FFPROBE_BIN', [
   process.env.FFPROBE_BIN,
-  'C:\\Users\\HUAWEI\\choco\\bin\\ffprobe.exe',
+  resolvePackagedMediaToolPath(ffprobeExecutableName),
   bundledFfprobePath,
   'ffprobe'
 ]);
@@ -67,6 +71,34 @@ const prodRendererUrl = pathToFileURL(prodRendererPath).toString();
 const apiBaseUrl = (process.env.MOYA_API_BASE_URL || 'http://127.0.0.1:8081/api').replace(/\/+$/, '');
 const ossUploadTimeoutMs = Number(process.env.MOYA_OSS_UPLOAD_TIMEOUT_MS || 10 * 60 * 1000);
 const appIconPath = path.join(__dirname, 'assets', process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png');
+
+function resolveSubtitleFontsDir() {
+  const candidates = [
+    process.env.MOYA_SUBTITLE_FONTS_DIR,
+    path.join(__dirname, '../public/fonts/subtitle'),
+    path.join(__dirname, '../dist/fonts/subtitle'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'fonts/subtitle') : undefined
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (
+        fsSync.existsSync(candidate) &&
+        fsSync.existsSync(path.join(candidate, 'SourceHanSansSC-Regular.otf')) &&
+        fsSync.existsSync(path.join(candidate, 'SourceHanSansSC-Heavy.otf')) &&
+        fsSync.existsSync(path.join(candidate, 'SmileySans-Oblique.otf')) &&
+        fsSync.existsSync(path.join(candidate, 'ResourceHanRoundedCN-Regular.ttf')) &&
+        fsSync.existsSync(path.join(candidate, 'ResourceHanRoundedCN-Bold.ttf')) &&
+        fsSync.existsSync(path.join(candidate, 'SourceHanSerifSC-Bold.otf')) &&
+        fsSync.existsSync(path.join(candidate, 'LXGWWenKai-Regular.ttf'))
+      ) {
+        return candidate;
+      }
+    } catch {
+      // Ignore inaccessible candidates and keep the default system font fallback.
+    }
+  }
+  return '';
+}
 
 function createWindow() {
   let activeRendererUrl = isDev ? devRendererUrl : prodRendererUrl;
@@ -455,6 +487,18 @@ function resolveMediaToolPath(envName, candidates) {
   }
   console.warn(`[moya] ${envName} is not available. Tried: ${candidates.filter(Boolean).join(', ')}`);
   return '';
+}
+
+function resolvePackagedMediaToolPath(fileName) {
+  return process.resourcesPath ? path.join(process.resourcesPath, 'bin', fileName) : '';
+}
+
+function optionalRequire(moduleName) {
+  try {
+    return require(moduleName);
+  } catch {
+    return null;
+  }
 }
 
 function isExecutableUsable(command) {
@@ -1283,7 +1327,7 @@ async function renderViralVideo(sourcePath, outputPath, overlay) {
       captionPosition: overlay.captionPosition,
       captions: Array.isArray(overlay.subtitleSegments) ? overlay.subtitleSegments.length : 0
     });
-    const videoFilter = `${buildViralVideoCanvasFilter(renderCanvas, overlay)},subtitles=filename=${quoteFfmpegFilterPath(assPath)}`;
+    const videoFilter = `${buildViralVideoCanvasFilter(renderCanvas, overlay)},${buildAssSubtitleFilter(assPath)}`;
     await runProcess(ffmpegPath, [
       '-y',
       '-i', sourcePath,
@@ -1911,7 +1955,7 @@ async function renderViralVideoWithPupCaps(sourcePath, outputPath, overlay) {
       throw new Error('PupCaps 未生成有效字幕层');
     }
     const baseFilter = buildViralVideoCanvasFilter(renderCanvas, overlay);
-    const filterComplex = `[0:v]${baseFilter}[base];[base][1:v]overlay=0:0,subtitles=filename=${quoteFfmpegFilterPath(titleAssPath)}[v]`;
+    const filterComplex = `[0:v]${baseFilter}[base];[base][1:v]overlay=0:0,${buildAssSubtitleFilter(titleAssPath)}[v]`;
     await runProcess(ffmpegPath, [
       '-y',
       '-i', sourcePath,
@@ -2300,10 +2344,11 @@ function buildPupCapsSrt(overlay, metadata) {
   const captions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
     ? overlay.subtitleSegments
     : [{ time: `00:00:00 - ${formatAssTime(duration)}`, text: overlay.name || '自动识别添加字幕' }];
+  const isBilingual = isOverlayBilingual(overlay, captions);
   return captions.map((caption, index) => {
     const range = parseCaptionRange(caption.time, duration);
     const keywords = buildOverlayKeywords(overlay.keywords || '', caption.text || '');
-    const captionText = markPupCapsKeywords(caption.text || '', keywords);
+    const captionText = markPupCapsKeywords(buildOverlayCaptionText(caption, isBilingual), keywords);
     return [
       String(index + 1),
       `${formatSrtTime(range.start)} --> ${formatSrtTime(range.end)}`,
@@ -2337,6 +2382,114 @@ function cssCaptionTemplateTextShadow(style) {
   ].join(', ') + shadow;
 }
 
+function buildSubtitleFontFaceCss() {
+  const fontsDir = resolveSubtitleFontsDir();
+  if (!fontsDir) return '';
+  const regularUrl = pathToFileURL(path.join(fontsDir, 'SourceHanSansSC-Regular.otf')).toString();
+  const heavyUrl = pathToFileURL(path.join(fontsDir, 'SourceHanSansSC-Heavy.otf')).toString();
+  const smileyUrl = pathToFileURL(path.join(fontsDir, 'SmileySans-Oblique.otf')).toString();
+  const roundedRegularUrl = pathToFileURL(path.join(fontsDir, 'ResourceHanRoundedCN-Regular.ttf')).toString();
+  const roundedBoldUrl = pathToFileURL(path.join(fontsDir, 'ResourceHanRoundedCN-Bold.ttf')).toString();
+  const serifUrl = pathToFileURL(path.join(fontsDir, 'SourceHanSerifSC-Bold.otf')).toString();
+  const wenkaiUrl = pathToFileURL(path.join(fontsDir, 'LXGWWenKai-Regular.ttf')).toString();
+  return `
+@font-face {
+  font-family: "Moya Source Han Sans SC";
+  src: url("${regularUrl}") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Moya Source Han Sans SC Heavy";
+  src: url("${heavyUrl}") format("opentype");
+  font-weight: 800;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Moya Smiley Sans";
+  src: url("${smileyUrl}") format("opentype");
+  font-weight: 800;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Moya Resource Han Rounded CN";
+  src: url("${roundedRegularUrl}") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Moya Resource Han Rounded CN";
+  src: url("${roundedBoldUrl}") format("truetype");
+  font-weight: 800;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Moya Source Han Serif SC";
+  src: url("${serifUrl}") format("opentype");
+  font-weight: 800;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Moya LXGW WenKai";
+  src: url("${wenkaiUrl}") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+`.trim();
+}
+
+function resolvePupCapsFontFamily(fontFamily) {
+  const value = String(fontFamily || '');
+  if (/Moya Smiley Sans|Smiley Sans Oblique|SmileySans-Oblique|得意黑/i.test(value)) {
+    return '"Moya Smiley Sans", "Smiley Sans Oblique", "Smiley Sans", "Microsoft YaHei", sans-serif';
+  }
+  if (/Moya Resource Han Rounded CN|Resource Han Rounded CN|Resource-Han-Rounded-CN|清爽圆体/i.test(value)) {
+    return '"Moya Resource Han Rounded CN", "Resource Han Rounded CN", "Microsoft YaHei", sans-serif';
+  }
+  if (/Moya Source Han Serif SC|Source Han Serif SC|SourceHanSerifSC|电影字幕/i.test(value)) {
+    return '"Moya Source Han Serif SC", "Source Han Serif SC", "SimSun", serif';
+  }
+  if (/Moya LXGW WenKai|LXGW WenKai|LXGWWenKai|霞鹜文楷/i.test(value)) {
+    return '"Moya LXGW WenKai", "LXGW WenKai", "KaiTi", "Microsoft YaHei", cursive';
+  }
+  if (/Moya Source Han Sans SC Heavy|Source Han Sans SC Heavy|SourceHanSansSC-Heavy/i.test(value)) {
+    return '"Moya Source Han Sans SC Heavy", "Source Han Sans SC Heavy", "Source Han Sans SC", "Microsoft YaHei", sans-serif';
+  }
+  if (/Moya Source Han Sans SC|Source Han Sans SC|SourceHanSansSC/i.test(value)) {
+    return '"Moya Source Han Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif';
+  }
+  return '"Microsoft YaHei", "PingFang SC", Arial, sans-serif';
+}
+
+function resolveAssFontName(fontFamily) {
+  const value = String(fontFamily || '');
+  if (/Moya Smiley Sans|Smiley Sans Oblique|SmileySans-Oblique|得意黑/i.test(value)) {
+    return 'Smiley Sans Oblique';
+  }
+  if (/Moya Resource Han Rounded CN|Resource Han Rounded CN|Resource-Han-Rounded-CN|清爽圆体/i.test(value)) {
+    return 'Resource Han Rounded CN';
+  }
+  if (/Moya Source Han Serif SC|Source Han Serif SC|SourceHanSerifSC|电影字幕/i.test(value)) {
+    return 'Source Han Serif SC';
+  }
+  if (/Moya LXGW WenKai|LXGW WenKai|LXGWWenKai|霞鹜文楷/i.test(value)) {
+    return 'LXGW WenKai';
+  }
+  if (/Moya Source Han Sans SC Heavy|Source Han Sans SC Heavy|SourceHanSansSC-Heavy/i.test(value)) {
+    return 'Source Han Sans SC Heavy';
+  }
+  if (/Moya Source Han Sans SC|Source Han Sans SC|SourceHanSansSC/i.test(value)) {
+    return 'Source Han Sans SC';
+  }
+  return 'Microsoft YaHei';
+}
+
 function buildPupCapsCss(overlay, metadata) {
   const width = Math.max(1, Number(metadata.width) || 720);
   const height = Math.max(1, Number(metadata.height) || 1280);
@@ -2350,15 +2503,23 @@ function buildPupCapsCss(overlay, metadata) {
   const captionBoxShadow = captionTemplateStyle ? 'none' : '0 12px 28px rgb(0 0 0 / 18%)';
   const captionTextAlign = captionTemplateStyle?.align?.includes('left') ? 'left' : 'center';
   const captionLeft = Math.max(0, Math.round((Math.max(0, Math.min(100, Number(captionPosition.x) || 50)) / 100) * width));
+  const captionFontFamily = captionTemplateStyle
+    ? resolvePupCapsFontFamily(captionTemplateStyle.fontFamily)
+    : resolvePupCapsFontFamily(captionStyle.fontFamily);
+  const captionEntrance = normalizeCaptionEntrance(overlay.captionEntrance);
+  const captionAnimation = captionEntrance === 'blur-reveal'
+    ? 'moyaCaptionBlurReveal 560ms cubic-bezier(0.2, 0.82, 0.18, 1) both'
+    : 'none';
   const top = Math.max(0, Math.round((Math.max(0, Math.min(100, Number(captionPosition.y) || 64)) / 100) * height - captionStyle.height / 2));
   const fontSize = Math.max(16, captionStyle.fontSize);
   const maxWidth = Math.max(180, Math.min(width - 48, captionStyle.width));
   return `
+${buildSubtitleFontFaceCss()}
 #video {
   display: block;
   width: ${width}px;
   height: ${height}px;
-  font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+  font-family: ${captionFontFamily};
 }
 
 .captions {
@@ -2380,6 +2541,8 @@ function buildPupCapsCss(overlay, metadata) {
   border-radius: 6px;
   background: ${captionBackground};
   box-shadow: ${captionBoxShadow};
+  animation: ${captionAnimation};
+  will-change: transform, filter, opacity;
 }
 
 .word {
@@ -2388,7 +2551,7 @@ function buildPupCapsCss(overlay, metadata) {
   padding: 1px 2px;
   border-radius: 3px;
   color: ${captionTemplateStyle?.textColor || theme.captionColor};
-  font-family: ${captionTemplateStyle?.fontFamily || '"Microsoft YaHei", "PingFang SC", Arial, sans-serif'};
+  font-family: ${captionFontFamily};
   font-size: ${fontSize}px;
   font-weight: 800;
   line-height: 1.28;
@@ -2408,6 +2571,12 @@ function buildPupCapsCss(overlay, metadata) {
   38% { transform: translateY(-3px) scale(1.08); }
   58% { transform: translateY(1px) scale(0.98); }
 }
+
+@keyframes moyaCaptionBlurReveal {
+  0% { opacity: 0; filter: blur(10px); transform: translateY(10px); }
+  54% { opacity: 0.72; filter: blur(4px); transform: translateY(-1px); }
+  100% { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
 `.trim();
 }
 
@@ -2417,51 +2586,11 @@ function buildViralTitleAss(overlay, metadata) {
   const duration = Math.max(0.1, Number(metadata.duration) || readOverlayDuration(overlay));
   const titlePosition = overlay.titlePosition || { x: 50, y: 18 };
   const titleStyle = readOverlayTextStyle(overlay.titleTextStyle, { fontSize: Math.round(height * 0.038) }, width);
+  const titleFontName = resolveAssFontName(titleStyle.fontFamily);
   const theme = viralRenderTheme(overlay);
   const titleText = overlay.hook || overlay.templateName || overlay.name || '网感剪辑';
-  const titleEnd = formatAssTime(Math.min(duration, Math.max(1.2, Math.min(3, duration * 0.28))));
-  const titlePoint = overlayCenterToTopLeft(titlePosition, titleStyle, width, height);
-  return [
-    '[Script Info]',
-    'ScriptType: v4.00+',
-    `PlayResX: ${width}`,
-    `PlayResY: ${height}`,
-    'ScaledBorderAndShadow: yes',
-    '',
-    '[V4+ Styles]',
-    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Title,Microsoft YaHei,${titleStyle.fontSize},${assPrimaryColor(theme.titleColor)},&H00FFFFFF,${assBackColor(theme.titleBackground)},${assBackColor(theme.titleBackground)},-1,0,0,0,100,100,0,0,3,2,0,7,24,24,24,1`,
-    '',
-    '[Events]',
-    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
-  ];
-  if (!readOverlayCaptionTemplateStyle(overlay)) {
-    lines.push(`Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`);
-  }
-  return lines.join('\n');
-}
-
-function buildViralAss(overlay, metadata) {
-  const width = Math.max(1, Number(metadata.width) || 720);
-  const height = Math.max(1, Number(metadata.height) || 1280);
-  const duration = Math.max(0.1, Number(metadata.duration) || readOverlayDuration(overlay));
-  const titlePosition = overlay.titlePosition || { x: 50, y: 18 };
-  const captionPosition = overlay.captionPosition || { x: 50, y: 64 };
-  const titleStyle = readOverlayTextStyle(overlay.titleTextStyle, { fontSize: Math.round(height * 0.038) }, width);
-  const captionStyle = readOverlayTextStyle(overlay.captionTextStyle, { fontSize: Math.round(height * 0.024) }, width);
-  const palette = viralAssPalette(overlay);
-  const titleColor = assBackColor(palette.title);
-  const captionColor = assBackColor('#000000', '70');
-  const captionPrimaryColor = assPrimaryColor(palette.caption || '#ffffff');
-  const titleText = overlay.hook || overlay.templateName || overlay.name || '网感剪辑';
-  const captions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
-    ? overlay.subtitleSegments
-    : [{ time: `00:00:00 - ${formatAssTime(duration)}`, text: overlay.name || '自动识别添加字幕' }];
-  const keywords = buildOverlayKeywords(overlay.keywords || '', captions[0]?.text || '');
-  const isBilingual = /双语/.test(String(overlay.templateName || ''));
-  const titleEnd = formatAssTime(Math.min(duration, Math.max(1.2, Math.min(3, duration * 0.28))));
-  const titlePoint = overlayCenterToTopLeft(titlePosition, titleStyle, width, height);
-  const captionPoint = overlayCenterToTopLeft(captionPosition, captionStyle, width, height);
+  const titleEnd = formatAssTime(readOverlayTitleEnd(overlay, duration));
+  const titlePoint = overlayCenterPoint(titlePosition, width, height);
   const lines = [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -2471,24 +2600,122 @@ function buildViralAss(overlay, metadata) {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Title,Microsoft YaHei,${titleStyle.fontSize},&H00FFFFFF,&H00FFFFFF,${titleColor},${titleColor},-1,0,0,0,100,100,0,0,3,2,0,7,24,24,24,1`,
-    `Style: Caption,Microsoft YaHei,${captionStyle.fontSize},${captionPrimaryColor},&H00FFFFFF,&H00000000,${captionColor},-1,0,0,0,100,100,0,0,3,1.4,0,7,24,24,24,1`,
+    `Style: Title,${titleFontName},${titleStyle.fontSize},${assPrimaryColor(theme.titleColor)},&H00FFFFFF,${assBackColor(theme.titleBackground)},${assBackColor(theme.titleBackground)},-1,0,0,0,100,100,0,0,3,2,0,5,24,24,24,1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
   ];
   if (!readOverlayCaptionTemplateStyle(overlay)) {
-    lines.push(`Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`);
+    lines.push(`Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an5\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`);
+  }
+  return lines.join('\n');
+}
+
+function buildViralAss(overlay, metadata) {
+  const width = Math.max(1, Number(metadata.width) || 720);
+  const height = Math.max(1, Number(metadata.height) || 1280);
+  const duration = Math.max(0.1, Number(metadata.duration) || readOverlayDuration(overlay));
+  const subtitleTemplateOverlay = isSubtitleTemplateOverlayKey(overlay.templateKey);
+  const overlayTheme = readOverlayTheme(overlay);
+  const titlePosition = overlay.titlePosition || { x: 50, y: 18 };
+  const captionPosition = overlay.captionPosition || { x: 50, y: 64 };
+  const titleStyle = readOverlayTextStyle(overlay.titleTextStyle, { fontSize: Math.round(height * 0.038) }, width);
+  const captionStyle = readOverlayTextStyle(overlay.captionTextStyle, { fontSize: Math.round(height * 0.024) }, width);
+  const translationStyle = { ...captionStyle, fontSize: Math.max(10, Math.round(captionStyle.fontSize * 0.56)) };
+  const titleFontName = resolveAssFontName(titleStyle.fontFamily);
+  const captionFontName = resolveAssFontName(captionStyle.fontFamily);
+  const palette = viralAssPalette(overlay);
+  const captionTemplateStyle = readOverlayCaptionTemplateStyle(overlay);
+  const captionPrimaryHex = captionTemplateStyle
+    ? firstCssHexColor(captionTemplateStyle.textColor, '#ffffff')
+    : subtitleTemplateOverlay ? readOverlayCaptionPrimaryColor(overlay) : '#ffffff';
+  const titlePrimaryHex = captionTemplateStyle
+    ? firstCssHexColor(captionTemplateStyle.textColor, '#ffffff')
+    : subtitleTemplateOverlay ? overlayTheme.titleColor : '#ffffff';
+  const titlePrimaryColor = assPrimaryColor(titlePrimaryHex);
+  const captionPrimaryColor = assPrimaryColor(captionPrimaryHex);
+  const titleColor = assBackColor(palette.title || overlayTheme.titleStroke || '#000000', palette.titleOutlineAlpha || palette.outlineAlpha || '00');
+  const captionBackColor = assBackColor(palette.captionBackground || '#000000', palette.captionBackAlpha || '70');
+  const captionOutlineColor = assBackColor(palette.captionOutline || overlayTheme.captionShadow || overlayTheme.titleStroke || '#000000', palette.captionOutlineAlpha || palette.outlineAlpha || '00');
+  const captionBorderStyle = palette.captionBackAlpha === 'FF' ? 1 : 3;
+  const captionOutlineWidth = Number.isFinite(Number(palette.captionOutlineWidth)) ? Number(palette.captionOutlineWidth) : 1.4;
+  const titleBorderStyle = palette.captionBackAlpha === 'FF' ? 1 : 3;
+  const titleOutlineWidth = Number.isFinite(Number(palette.titleOutlineWidth)) ? Number(palette.titleOutlineWidth) : 2;
+  const titleText = overlay.hook || overlay.templateName || overlay.name || '网感剪辑';
+  const captions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
+    ? overlay.subtitleSegments
+    : [{ time: `00:00:00 - ${formatAssTime(duration)}`, text: overlay.name || '自动识别添加字幕' }];
+  const keywords = buildOverlayKeywords(overlay.keywords || '', captions[0]?.text || '');
+  const isBilingual = isOverlayBilingual(overlay, captions);
+  const titleEnd = formatAssTime(readOverlayTitleEnd(overlay, duration));
+  const titlePoint = overlayCenterPoint(titlePosition, width, height);
+  const captionPoint = overlayCenterPoint(captionPosition, width, height);
+  const captionAssPrefix = buildCaptionAssPrefix(overlay, captionPoint);
+  const lines = [
+    '[Script Info]',
+    'ScriptType: v4.00+',
+    `PlayResX: ${width}`,
+    `PlayResY: ${height}`,
+    'ScaledBorderAndShadow: yes',
+    '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    `Style: Title,${titleFontName},${titleStyle.fontSize},${titlePrimaryColor},&H00FFFFFF,${titleColor},${titleColor},-1,0,0,0,100,100,0,0,${titleBorderStyle},${titleOutlineWidth},0,5,24,24,24,1`,
+    `Style: Caption,${captionFontName},${captionStyle.fontSize},${captionPrimaryColor},&H00FFFFFF,${captionOutlineColor},${captionBackColor},-1,0,0,0,100,100,0,0,${captionBorderStyle},${captionOutlineWidth},0,5,24,24,24,1`,
+    `Style: CaptionTranslation,${captionFontName},${translationStyle.fontSize},${captionPrimaryColor},&H00FFFFFF,${captionOutlineColor},${captionBackColor},-1,1,0,0,100,100,0,0,${captionBorderStyle},${Math.max(1, captionOutlineWidth * 0.78)},0,5,24,24,24,1`,
+    '',
+    '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
+  ];
+  if (!readOverlayCaptionTemplateStyle(overlay)) {
+    lines.push(`Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an5\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`);
   }
   for (const caption of captions) {
     const range = parseCaptionRange(caption.time, duration);
-    const translation = String(caption.translation || '').trim() || buildOverlayBilingualCaption(caption.text || '', keywords);
-    const captionText = isBilingual
-      ? `${caption.text || ''}\n${translation}`
-      : caption.text || '';
-    lines.push(`Dialogue: 3,${formatAssTime(range.start)},${formatAssTime(range.end)},Caption,,0,0,0,,{\\an7\\pos(${captionPoint.x},${captionPoint.y})}${highlightAssKeywords(wrapAssText(captionText, captionStyle), keywords, palette.keyword, palette.caption || '#ffffff')}`);
+    const startTime = formatAssTime(range.start);
+    const endTime = formatAssTime(range.end);
+    if (isBilingual && String(caption.translation || '').trim()) {
+      const primaryPoint = { ...captionPoint, y: Math.round(captionPoint.y - captionStyle.fontSize * 0.34) };
+      const translationPoint = { ...captionPoint, y: Math.round(captionPoint.y + captionStyle.fontSize * 0.5) };
+      lines.push(`Dialogue: 3,${startTime},${endTime},Caption,,0,0,0,,${buildCaptionAssPrefix(overlay, primaryPoint)}${highlightAssKeywords(wrapAssText(caption.text || '', captionStyle), keywords, palette.keyword, captionPrimaryHex)}`);
+      lines.push(`Dialogue: 3,${startTime},${endTime},CaptionTranslation,,0,0,0,,${buildCaptionAssPrefix(overlay, translationPoint)}${escapeAssText(wrapAssText(caption.translation || '', translationStyle))}`);
+    } else {
+      const captionText = buildOverlayCaptionText(caption, isBilingual);
+      lines.push(`Dialogue: 3,${startTime},${endTime},Caption,,0,0,0,,${captionAssPrefix}${highlightAssKeywords(wrapAssText(captionText, captionStyle), keywords, palette.keyword, captionPrimaryHex)}`);
+    }
   }
   return lines.join('\n');
+}
+
+function buildCaptionAssPrefix(overlay, captionPoint) {
+  const basePosition = `\\an5\\pos(${captionPoint.x},${captionPoint.y})`;
+  if (normalizeCaptionEntrance(overlay.captionEntrance) !== 'blur-reveal') {
+    return `{${basePosition}}`;
+  }
+  return `{\\fad(180,0)\\blur8\\t(0,560,\\blur0)${basePosition}}`;
+}
+
+function readOverlayTitleEnd(overlay, duration) {
+  if (overlay?.titleDuration === 'full') return duration;
+  const explicit = Number(overlay?.titleDuration);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.min(duration, explicit);
+  return duration;
+}
+
+function isOverlayBilingual(overlay, captions = []) {
+  if (typeof overlay?.isBilingual === 'boolean') return overlay.isBilingual;
+  return captions.some((caption) => String(caption?.translation || '').trim());
+}
+
+function buildOverlayCaptionText(caption, isBilingual) {
+  const primary = String(caption?.text || '').trim();
+  const translation = String(caption?.translation || '').trim();
+  if (!isBilingual || !translation) return primary;
+  return `${primary}\n${translation}`;
+}
+
+function normalizeCaptionEntrance(value) {
+  return value === 'blur-reveal' ? 'blur-reveal' : 'none';
 }
 
 function buildViralRenderCanvas(metadata, overlay) {
@@ -2525,7 +2752,8 @@ function readOverlayTextStyle(style, fallback, canvasWidth = 720) {
   return {
     fontSize: Number.isFinite(fontSize) ? Math.max(10, Math.round(fontSize * scale)) : fallback.fontSize,
     width: Number.isFinite(width) ? Math.max(80, Math.round(width * scale)) : Math.round(canvasWidth * 0.82),
-    height: Number.isFinite(height) ? Math.max(24, Math.round(height * scale)) : 80
+    height: Number.isFinite(height) ? Math.max(24, Math.round(height * scale)) : 80,
+    fontFamily: typeof style?.fontFamily === 'string' ? style.fontFamily : ''
   };
 }
 
@@ -2537,6 +2765,13 @@ function overlayCenterToTopLeft(position, style, canvasWidth, canvasHeight) {
   return {
     x: Math.round(Math.max(0, Math.min(canvasWidth - 1, centerX - boxWidth / 2))),
     y: Math.round(Math.max(0, Math.min(canvasHeight - 1, centerY - boxHeight / 2)))
+  };
+}
+
+function overlayCenterPoint(position, canvasWidth, canvasHeight) {
+  return {
+    x: Math.round(percentX(position?.x, canvasWidth)),
+    y: Math.round(percentY(position?.y, canvasHeight))
   };
 }
 
@@ -2569,16 +2804,62 @@ function visualTextLength(text) {
   return Array.from(String(text || '')).reduce((sum, char) => sum + (/[ -~]/.test(char) ? 0.55 : 1), 0);
 }
 
+function readOverlayTheme(overlay) {
+  const theme = overlay?.theme && typeof overlay.theme === 'object' ? overlay.theme : {};
+  const titleColor = normalizeHexColor(theme.titleColor, '#ffffff');
+  const titleStroke = normalizeHexColor(theme.titleStroke, '#111111');
+  return {
+    titleColor,
+    titleStroke,
+    captionColor: normalizeHexColor(theme.captionColor, titleColor),
+    captionShadow: normalizeHexColor(theme.captionShadow, titleStroke),
+    keywordBackground: normalizeHexColor(theme.keywordBackground, titleStroke),
+    keywordColor: normalizeHexColor(theme.keywordColor, titleColor),
+    accent: normalizeHexColor(theme.accent, '#1f77ff')
+  };
+}
+
+function readOverlayCaptionPrimaryColor(overlay) {
+  const theme = readOverlayTheme(overlay);
+  return isSubtitleTemplateOverlayKey(overlay?.templateKey) ? theme.titleColor : theme.captionColor;
+}
+
+function normalizeHexColor(value, fallback) {
+  const normalized = String(value || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : fallback;
+}
+
 function viralAssPalette(overlay) {
   const captionTemplateStyle = readOverlayCaptionTemplateStyle(overlay);
   if (captionTemplateStyle) {
     return {
       title: firstCssHexColor(captionTemplateStyle.strokeColor, '#111827'),
       keyword: firstCssHexColor(captionTemplateStyle.keywordColor, '#facc15'),
-      caption: firstCssHexColor(captionTemplateStyle.textColor, '#ffffff')
+      caption: firstCssHexColor(captionTemplateStyle.textColor, '#ffffff'),
+      captionOutline: firstCssHexColor(captionTemplateStyle.strokeColor, '#111827'),
+      captionBackground: '#000000',
+      captionBackAlpha: 'FF',
+      titleOutlineAlpha: '00',
+      captionOutlineAlpha: '00',
+      titleOutlineWidth: 2,
+      captionOutlineWidth: 1.4
     };
   }
   const name = String(overlay.templateName || '');
+  if (isSubtitleTemplateOverlayKey(overlay.templateKey)) {
+    const theme = readOverlayTheme(overlay);
+    return {
+      title: theme.titleStroke,
+      keyword: readOverlayCaptionPrimaryColor(overlay),
+      captionOutline: theme.captionShadow,
+      captionBackground: '#000000',
+      captionBackAlpha: 'FF',
+      titleOutlineAlpha: '00',
+      captionOutlineAlpha: '00',
+      titleOutlineWidth: 2.4,
+      captionOutlineWidth: 1.4
+    };
+  }
   if (/高级红/.test(name)) return { title: '#8a1230', keyword: '#8a1230' };
   if (/黄白|白金|轻奢|黄色|百搭黄/.test(name)) return { title: '#fff7d6', keyword: '#facc15' };
   if (/经典蓝/.test(name)) return { title: '#1d4ed8', keyword: '#2563eb' };
@@ -2604,6 +2885,19 @@ function viralRenderTheme(overlay) {
   }
   const name = String(overlay.templateName || '');
   const key = overlay.templateKey;
+  if (isSubtitleTemplateOverlayKey(key)) {
+    const theme = readOverlayTheme(overlay);
+    const captionColor = readOverlayCaptionPrimaryColor(overlay);
+    return {
+      titleBackground: theme.titleStroke,
+      titleColor: theme.titleColor,
+      captionBackground: 'transparent',
+      captionColor,
+      keywordBackground: 'transparent',
+      keywordColor: captionColor,
+      glowColor: `${theme.titleColor}99`
+    };
+  }
   if (/爆点|高级红/.test(name) || key === 'street') {
     return {
       titleBackground: '#8a1230',
@@ -2701,6 +2995,19 @@ function viralRenderTheme(overlay) {
     keywordColor: '#ffffff',
     glowColor: 'rgb(244 114 182 / 82%)'
   };
+}
+
+function isSubtitleTemplateOverlayKey(key) {
+  return [
+    'premium-red-bilingual',
+    'luxury-white-bilingual',
+    'classic-blue-bilingual',
+    'yellow-flash',
+    'simple-yellow-white',
+    'translucent-dark',
+    'basic-white-gold',
+    'eye-catching-green'
+  ].includes(String(key || ''));
 }
 
 function buildOverlayKeywords(keywords, captionText) {
@@ -2868,6 +3175,15 @@ function quoteFfmpegFilterPath(filePath) {
     .replace(/'/g, "\\'")
     .replace(/,/g, '\\,');
   return `'${normalized}'`;
+}
+
+function buildAssSubtitleFilter(assPath) {
+  const args = [`filename=${quoteFfmpegFilterPath(assPath)}`];
+  const fontsDir = resolveSubtitleFontsDir();
+  if (fontsDir) {
+    args.push(`fontsdir=${quoteFfmpegFilterPath(fontsDir)}`);
+  }
+  return `subtitles=${args.join(':')}`;
 }
 
 function inferDownloadFileName(source) {
