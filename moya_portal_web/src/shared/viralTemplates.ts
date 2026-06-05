@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { captionTemplatePresets, formatCaptionTemplateMotionLabel, type CaptionTemplatePreset } from '@/features/caption-templates';
 
 export type ViralTemplateKey = 'street' | 'seed' | 'deal' | 'story' | 'list' | 'expert' | 'compare' | 'urgency' | 'local' | 'live';
 
@@ -18,6 +19,7 @@ export interface ViralTemplateCard extends ViralTemplate {
   variantIndex: number;
   custom?: boolean;
   sourceSummary?: string;
+  captionTemplate?: CaptionTemplatePreset;
 }
 
 export interface ViralOverlayTextStyle {
@@ -164,7 +166,7 @@ export const viralFontOptions = [
   { label: '霞鹜文楷', value: '"Moya LXGW WenKai", "LXGW WenKai", "KaiTi", "Microsoft YaHei", cursive' }
 ];
 
-export const viralTemplateCards: ViralTemplateCard[] = viralTemplateVariantNames.map((cardName, index) => {
+const viralBaseTemplateCards: ViralTemplateCard[] = viralTemplateVariantNames.map((cardName, index) => {
   const template = viralTemplates[index % viralTemplates.length];
   return {
     ...template,
@@ -174,7 +176,79 @@ export const viralTemplateCards: ViralTemplateCard[] = viralTemplateVariantNames
   };
 });
 
+const captionTemplateViralProfiles: Record<string, { key: ViralTemplateKey; rhythm: string; accent: string; effects: string[] }> = {
+  'moya-caption-template-burst-yellow-v1': {
+    key: 'street',
+    rhythm: '口播强强调 / 关键词逐字跳出 / 适合前三秒爆点',
+    accent: '爆款黄字描边',
+    effects: ['PupCaps 字幕层', '关键词黄字强调', '字词弹出', '口播节奏同步', '保存渲染同款样式']
+  },
+  'moya-caption-template-variety-outline-v1': {
+    key: 'story',
+    rhythm: '反应点弹跳 / 综艺描边 / 适合剧情和探店',
+    accent: '综艺描边弹幕字',
+    effects: ['PupCaps 字幕层', '综艺描边', '弹跳入场', '情绪词强调', '保存渲染同款样式']
+  },
+  'moya-caption-template-word-highlight-v1': {
+    key: 'expert',
+    rhythm: '知识口播逐字扫光 / 重点词跟随高亮',
+    accent: '逐字高亮字幕',
+    effects: ['PupCaps 字幕层', '逐字高亮', '卡拉 OK 扫光', '知识点强调', '保存渲染同款样式']
+  },
+  'moya-caption-template-flash-title-v1': {
+    key: 'deal',
+    rhythm: '卡点闪切 / 大字居中 / 适合结论和转化钩子',
+    accent: '卡点大字标题',
+    effects: ['PupCaps 字幕层', '大字闪切', '重点词爆闪', '转场卡点', '保存渲染同款样式']
+  },
+  'moya-caption-template-selling-strip-v1': {
+    key: 'local',
+    rhythm: '卖点条滑入 / 优惠信息底部常驻',
+    accent: '商品卖点信息条',
+    effects: ['PupCaps 字幕层', '卖点条', '利益点高亮', '本地套餐提示', '保存渲染同款样式']
+  },
+  'moya-caption-template-clean-bilingual-v1': {
+    key: 'expert',
+    rhythm: '品牌感双行字幕 / 信息稳定呈现',
+    accent: '轻量双行字幕',
+    effects: ['PupCaps 字幕层', '双行字幕', '品牌感字幕卡', '关键词轻高亮', '保存渲染同款样式']
+  }
+};
+
+const viralCaptionTemplateCards: ViralTemplateCard[] = captionTemplatePresets.map((captionTemplate, index) => {
+  const profile = captionTemplateViralProfiles[captionTemplate.templateId] || captionTemplateViralProfiles['moya-caption-template-burst-yellow-v1'];
+  const baseTemplate = viralTemplates.find((item) => item.key === profile.key) || viralTemplates[0];
+  return {
+    ...baseTemplate,
+    key: profile.key,
+    cardId: captionTemplate.templateId,
+    cardName: captionTemplate.name,
+    name: captionTemplate.name,
+    scene: captionTemplate.scene,
+    rhythm: profile.rhythm,
+    accent: profile.accent,
+    caption: `字幕特效 · ${formatCaptionTemplateMotionLabel(captionTemplate.motion)}`,
+    effects: profile.effects,
+    variantIndex: 1000 + index,
+    sourceSummary: captionTemplate.templateId,
+    captionTemplate
+  };
+});
+
+export const viralTemplateCards: ViralTemplateCard[] = [
+  viralBaseTemplateCards[0],
+  ...viralCaptionTemplateCards,
+  ...viralBaseTemplateCards.slice(1)
+];
+
 export function getViralTemplateCardCopy(template: ViralTemplateCard, fallbackText: string, _index: number) {
+  if (template.captionTemplate) {
+    return {
+      title: template.captionTemplate.sample,
+      subtitle: '',
+      badge: ''
+    };
+  }
   const bilingual = /双语/.test(template.cardName);
   const subtitles = [
     '双行排版更网感',
@@ -203,6 +277,19 @@ export function getViralTemplateCardCopy(template: ViralTemplateCard, fallbackTe
 }
 
 function getViralTemplateTheme(template: ViralTemplateCard | ViralTemplate): ViralTemplateTheme {
+  const captionTemplate = readViralTemplateCaptionTemplate(template);
+  if (captionTemplate) {
+    return {
+      titleBackground: 'transparent',
+      titleColor: captionTemplate.style.textColor,
+      captionBackground: captionTemplate.style.background,
+      captionColor: captionTemplate.style.textColor,
+      keywordBackground: captionTemplate.style.keywordColor,
+      keywordColor: captionTemplate.style.keywordColor,
+      effectBackground: captionTemplate.style.background,
+      glowColor: captionTemplate.style.keywordColor
+    };
+  }
   const name = 'cardName' in template ? template.cardName : template.name;
   if (/轻奢白|简洁黄白|基础白金/.test(name)) {
     return {
@@ -362,6 +449,7 @@ function getViralTemplateTheme(template: ViralTemplateCard | ViralTemplate): Vir
 
 export function viralTemplateThemeStyle(template: ViralTemplateCard | ViralTemplate): CSSProperties {
   const theme = getViralTemplateTheme(template);
+  const captionTemplate = readViralTemplateCaptionTemplate(template);
   return {
     '--viral-title-bg': theme.titleBackground,
     '--viral-title-color': theme.titleColor,
@@ -371,12 +459,18 @@ export function viralTemplateThemeStyle(template: ViralTemplateCard | ViralTempl
     '--viral-keyword-color': theme.keywordColor,
     '--viral-effect-bg': theme.effectBackground,
     '--viral-glow-color': theme.glowColor,
+    '--viral-caption-stroke': captionTemplate?.style.strokeColor || 'rgb(0 0 0 / 84%)',
+    '--viral-caption-shadow': captionTemplate?.style.shadow || `0 0 14px ${theme.glowColor}`,
+    '--viral-caption-template-bg': captionTemplate?.style.background || theme.captionBackground,
+    '--viral-card-caption-size': captionTemplate ? `${Math.max(15, Math.min(20, Math.round(captionTemplate.style.fontSize * 0.38)))}px` : undefined,
     '--viral-title-font': getViralDisplayFont(template, 'title'),
     '--viral-subtitle-font': getViralDisplayFont(template, 'subtitle')
   } as CSSProperties;
 }
 
 export function getViralDisplayFont(template: ViralTemplateCard | ViralTemplate, layer: 'title' | 'subtitle') {
+  const captionTemplate = readViralTemplateCaptionTemplate(template);
+  if (captionTemplate) return captionTemplate.style.fontFamily;
   const name = 'cardName' in template ? template.cardName : template.name;
   if (/手写|轻奢/.test(name)) return '"Moya LXGW WenKai", "LXGW WenKai", "KaiTi", "Microsoft YaHei", cursive';
   if (/科技|经典蓝|新闻蓝|智能识别/.test(name)) return '"Moya Source Han Sans SC Heavy", "Source Han Sans SC Heavy", "Source Han Sans SC", "Microsoft YaHei", sans-serif';
@@ -387,6 +481,20 @@ export function getViralDisplayFont(template: ViralTemplateCard | ViralTemplate,
 }
 
 export function getViralTemplateTextStyle(template: ViralTemplateCard | ViralTemplate, layer: 'title' | 'caption'): ViralOverlayTextStyle {
+  const captionTemplate = readViralTemplateCaptionTemplate(template);
+  if (captionTemplate) {
+    const fontSize = Math.max(16, Math.min(32, Math.round(captionTemplate.style.fontSize * 0.58)));
+    const isBilingual = /双行|双语|bilingual/i.test(`${captionTemplate.name} ${captionTemplate.scene} ${captionTemplate.tags.join(' ')}`);
+    if (layer === 'title') {
+      return { fontSize: Math.max(20, fontSize), fontFamily: captionTemplate.style.fontFamily, width: 320, height: 78 };
+    }
+    return {
+      fontSize,
+      fontFamily: captionTemplate.style.fontFamily,
+      width: captionTemplate.style.align.includes('left') ? 330 : 320,
+      height: isBilingual ? 78 : Math.max(54, Math.round(fontSize * 2.8))
+    };
+  }
   const cardName = 'cardName' in template ? template.cardName : template.name;
   const titleFont = getViralDisplayFont(template, 'title');
   const subtitleFont = getViralDisplayFont(template, 'subtitle');
@@ -419,6 +527,8 @@ export function mergeViralTemplateTextStyle(
 }
 
 export function getViralTemplatePreviewClass(template: ViralTemplateCard | ViralTemplate) {
+  const captionTemplate = readViralTemplateCaptionTemplate(template);
+  if (captionTemplate) return `variant-caption-template ${captionTemplate.cssScope}`;
   if (!('variantIndex' in template)) return 'variant-default';
   const classes = [
     'variant-high-red',
@@ -443,4 +553,8 @@ export function getViralTemplatePreviewClass(template: ViralTemplateCard | Viral
     'variant-pink-flash'
   ];
   return classes[template.variantIndex] || 'variant-default';
+}
+
+function readViralTemplateCaptionTemplate(template: ViralTemplateCard | ViralTemplate) {
+  return 'captionTemplate' in template ? template.captionTemplate : undefined;
 }
