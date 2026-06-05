@@ -2312,12 +2312,44 @@ function buildPupCapsSrt(overlay, metadata) {
   }).join('\n\n') + '\n';
 }
 
+function readOverlayCaptionTemplateStyle(overlay) {
+  const style = overlay?.captionTemplate?.style;
+  if (!style || typeof style !== 'object') return null;
+  return {
+    fontFamily: String(style.fontFamily || '"Microsoft YaHei", "PingFang SC", Arial, sans-serif'),
+    textColor: String(style.textColor || '#ffffff'),
+    keywordColor: String(style.keywordColor || '#facc15'),
+    strokeColor: String(style.strokeColor || '#111827'),
+    background: String(style.background || 'transparent'),
+    shadow: String(style.shadow || '0 8px 20px rgb(0 0 0 / 32%)'),
+    align: String(style.align || 'bottom-center')
+  };
+}
+
+function cssCaptionTemplateTextShadow(style) {
+  const stroke = style?.strokeColor || '#111827';
+  const shadow = style?.shadow && style.shadow !== 'none' ? `, ${style.shadow}` : '';
+  return [
+    `-1px -1px 0 ${stroke}`,
+    `1px -1px 0 ${stroke}`,
+    `-1px 1px 0 ${stroke}`,
+    `1px 1px 0 ${stroke}`
+  ].join(', ') + shadow;
+}
+
 function buildPupCapsCss(overlay, metadata) {
   const width = Math.max(1, Number(metadata.width) || 720);
   const height = Math.max(1, Number(metadata.height) || 1280);
   const captionPosition = overlay.captionPosition || { x: 50, y: 64 };
   const captionStyle = readOverlayTextStyle(overlay.captionTextStyle, { fontSize: Math.round(height * 0.024) }, width);
   const theme = viralRenderTheme(overlay);
+  const captionTemplateStyle = readOverlayCaptionTemplateStyle(overlay);
+  const captionTextShadow = captionTemplateStyle ? cssCaptionTemplateTextShadow(captionTemplateStyle) : '0 2px 6px rgb(0 0 0 / 38%)';
+  const captionBackground = captionTemplateStyle ? captionTemplateStyle.background : theme.captionBackground;
+  const captionBorder = captionTemplateStyle ? '0' : '1px solid rgb(255 255 255 / 12%)';
+  const captionBoxShadow = captionTemplateStyle ? 'none' : '0 12px 28px rgb(0 0 0 / 18%)';
+  const captionTextAlign = captionTemplateStyle?.align?.includes('left') ? 'left' : 'center';
+  const captionLeft = Math.max(0, Math.round((Math.max(0, Math.min(100, Number(captionPosition.x) || 50)) / 100) * width));
   const top = Math.max(0, Math.round((Math.max(0, Math.min(100, Number(captionPosition.y) || 64)) / 100) * height - captionStyle.height / 2));
   const fontSize = Math.max(16, captionStyle.fontSize);
   const maxWidth = Math.max(180, Math.min(width - 48, captionStyle.width));
@@ -2331,12 +2363,12 @@ function buildPupCapsCss(overlay, metadata) {
 
 .captions {
   position: absolute;
-  left: 50%;
+  left: ${captionLeft}px;
   top: ${top}px;
   width: ${maxWidth}px;
   margin: 0;
   transform: translateX(-50%);
-  text-align: left;
+  text-align: ${captionTextAlign};
 }
 
 .caption {
@@ -2344,10 +2376,10 @@ function buildPupCapsCss(overlay, metadata) {
   box-sizing: border-box;
   max-width: ${maxWidth}px;
   padding: 8px 10px;
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: ${captionBorder};
   border-radius: 6px;
-  background: ${theme.captionBackground};
-  box-shadow: 0 12px 28px rgb(0 0 0 / 18%);
+  background: ${captionBackground};
+  box-shadow: ${captionBoxShadow};
 }
 
 .word {
@@ -2355,19 +2387,20 @@ function buildPupCapsCss(overlay, metadata) {
   margin: 0 1px;
   padding: 1px 2px;
   border-radius: 3px;
-  color: ${theme.captionColor};
+  color: ${captionTemplateStyle?.textColor || theme.captionColor};
+  font-family: ${captionTemplateStyle?.fontFamily || '"Microsoft YaHei", "PingFang SC", Arial, sans-serif'};
   font-size: ${fontSize}px;
   font-weight: 800;
   line-height: 1.28;
-  text-shadow: 0 2px 6px rgb(0 0 0 / 38%);
+  text-shadow: ${captionTextShadow};
 }
 
 .word.highlighted {
-  background: ${theme.keywordBackground};
-  color: ${theme.keywordColor};
-  text-shadow: none;
+  background: ${captionTemplateStyle ? 'transparent' : theme.keywordBackground};
+  color: ${captionTemplateStyle?.keywordColor || theme.keywordColor};
+  text-shadow: ${captionTemplateStyle ? captionTextShadow : 'none'};
   animation: moyaKeywordJump 760ms cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
-  box-shadow: 0 0 12px ${theme.glowColor};
+  box-shadow: ${captionTemplateStyle ? 'none' : `0 0 12px ${theme.glowColor}`};
 }
 
 @keyframes moyaKeywordJump {
@@ -2400,9 +2433,12 @@ function buildViralTitleAss(overlay, metadata) {
     `Style: Title,Microsoft YaHei,${titleStyle.fontSize},${assPrimaryColor(theme.titleColor)},&H00FFFFFF,${assBackColor(theme.titleBackground)},${assBackColor(theme.titleBackground)},-1,0,0,0,100,100,0,0,3,2,0,7,24,24,24,1`,
     '',
     '[Events]',
-    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-    `Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`
-  ].join('\n');
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
+  ];
+  if (!readOverlayCaptionTemplateStyle(overlay)) {
+    lines.push(`Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`);
+  }
+  return lines.join('\n');
 }
 
 function buildViralAss(overlay, metadata) {
@@ -2416,6 +2452,7 @@ function buildViralAss(overlay, metadata) {
   const palette = viralAssPalette(overlay);
   const titleColor = assBackColor(palette.title);
   const captionColor = assBackColor('#000000', '70');
+  const captionPrimaryColor = assPrimaryColor(palette.caption || '#ffffff');
   const titleText = overlay.hook || overlay.templateName || overlay.name || '网感剪辑';
   const captions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
     ? overlay.subtitleSegments
@@ -2435,19 +2472,21 @@ function buildViralAss(overlay, metadata) {
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     `Style: Title,Microsoft YaHei,${titleStyle.fontSize},&H00FFFFFF,&H00FFFFFF,${titleColor},${titleColor},-1,0,0,0,100,100,0,0,3,2,0,7,24,24,24,1`,
-    `Style: Caption,Microsoft YaHei,${captionStyle.fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,${captionColor},-1,0,0,0,100,100,0,0,3,1.4,0,7,24,24,24,1`,
+    `Style: Caption,Microsoft YaHei,${captionStyle.fontSize},${captionPrimaryColor},&H00FFFFFF,&H00000000,${captionColor},-1,0,0,0,100,100,0,0,3,1.4,0,7,24,24,24,1`,
     '',
     '[Events]',
-    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-    `Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
   ];
+  if (!readOverlayCaptionTemplateStyle(overlay)) {
+    lines.push(`Dialogue: 1,0:00:00.00,${titleEnd},Title,,0,0,0,,{\\an7\\pos(${titlePoint.x},${titlePoint.y})}${escapeAssText(wrapAssText(titleText, titleStyle))}`);
+  }
   for (const caption of captions) {
     const range = parseCaptionRange(caption.time, duration);
     const translation = String(caption.translation || '').trim() || buildOverlayBilingualCaption(caption.text || '', keywords);
     const captionText = isBilingual
       ? `${caption.text || ''}\n${translation}`
       : caption.text || '';
-    lines.push(`Dialogue: 3,${formatAssTime(range.start)},${formatAssTime(range.end)},Caption,,0,0,0,,{\\an7\\pos(${captionPoint.x},${captionPoint.y})}${highlightAssKeywords(wrapAssText(captionText, captionStyle), keywords, palette.keyword)}`);
+    lines.push(`Dialogue: 3,${formatAssTime(range.start)},${formatAssTime(range.end)},Caption,,0,0,0,,{\\an7\\pos(${captionPoint.x},${captionPoint.y})}${highlightAssKeywords(wrapAssText(captionText, captionStyle), keywords, palette.keyword, palette.caption || '#ffffff')}`);
   }
   return lines.join('\n');
 }
@@ -2531,6 +2570,14 @@ function visualTextLength(text) {
 }
 
 function viralAssPalette(overlay) {
+  const captionTemplateStyle = readOverlayCaptionTemplateStyle(overlay);
+  if (captionTemplateStyle) {
+    return {
+      title: firstCssHexColor(captionTemplateStyle.strokeColor, '#111827'),
+      keyword: firstCssHexColor(captionTemplateStyle.keywordColor, '#facc15'),
+      caption: firstCssHexColor(captionTemplateStyle.textColor, '#ffffff')
+    };
+  }
   const name = String(overlay.templateName || '');
   if (/高级红/.test(name)) return { title: '#8a1230', keyword: '#8a1230' };
   if (/黄白|白金|轻奢|黄色|百搭黄/.test(name)) return { title: '#fff7d6', keyword: '#facc15' };
@@ -2543,6 +2590,18 @@ function viralAssPalette(overlay) {
 }
 
 function viralRenderTheme(overlay) {
+  const captionTemplateStyle = readOverlayCaptionTemplateStyle(overlay);
+  if (captionTemplateStyle) {
+    return {
+      titleBackground: firstCssHexColor(captionTemplateStyle.strokeColor, '#111827'),
+      titleColor: firstCssHexColor(captionTemplateStyle.textColor, '#ffffff'),
+      captionBackground: captionTemplateStyle.background,
+      captionColor: captionTemplateStyle.textColor,
+      keywordBackground: 'transparent',
+      keywordColor: captionTemplateStyle.keywordColor,
+      glowColor: 'transparent'
+    };
+  }
   const name = String(overlay.templateName || '');
   const key = overlay.templateKey;
   if (/爆点|高级红/.test(name) || key === 'street') {
@@ -2726,14 +2785,14 @@ function escapeAssText(text) {
     .replace(/\r?\n/g, '\\N');
 }
 
-function highlightAssKeywords(text, keywords, keywordHex) {
+function highlightAssKeywords(text, keywords, keywordHex, baseHex = '#ffffff') {
   const safeKeywords = Array.isArray(keywords)
     ? keywords.map((item) => String(item || '').trim()).filter((item) => item.length >= 2)
     : [];
   if (safeKeywords.length === 0) return escapeAssText(text);
   const matcher = new RegExp(`(${safeKeywords.map(escapeRegExp).join('|')})`, 'gi');
   const keywordColor = assInlineColor(keywordHex || '#8a1230');
-  const baseColor = assInlineColor('#ffffff');
+  const baseColor = assInlineColor(baseHex);
   return String(text || '').split(matcher).filter(Boolean).map((part) => {
     const isKeyword = safeKeywords.some((keyword) => keyword.toLowerCase() === part.toLowerCase());
     const escaped = escapeAssText(part);
@@ -2748,6 +2807,11 @@ function assInlineColor(hex) {
   const gg = normalized.slice(2, 4);
   const bb = normalized.slice(4, 6);
   return `&H${bb}${gg}${rr}&`;
+}
+
+function firstCssHexColor(value, fallback = '#ffffff') {
+  const match = String(value || '').match(/#[0-9a-f]{6}\b/i);
+  return match ? match[0] : fallback;
 }
 
 function assPrimaryColor(hex) {

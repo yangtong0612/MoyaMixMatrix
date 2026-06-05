@@ -35,6 +35,7 @@ import {
   WandSparkles
 } from 'lucide-react';
 import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
+import { CaptionTemplateEmpty, CaptionTemplateShowcase, filterCaptionTemplatePresets } from '@/features/caption-templates';
 import { useEditorStore } from '@/features/editor/editorStore';
 import {
   cacheProductVideoAssetLocally,
@@ -222,7 +223,7 @@ const materialSourceCategories = [
   }
 ];
 
-const materialQuickFilters = ['全部', '商品图', '爆款链接', '门店图', '贴纸', '音效'];
+const materialQuickFilters = ['全部', '商品图', '爆款链接', '门店图', '字幕模板', '贴纸', '音效'];
 const MATERIAL_SOURCE_API_BASE_KEY = 'moya-material-source-api-base';
 const MATERIAL_SOURCE_DEFAULT_API_BASE = 'http://localhost:8787';
 const MATERIAL_SOURCE_USER_ID = 'moya-matrix-materials';
@@ -1504,6 +1505,7 @@ function MaterialLibraryView() {
     const matchesFilter = activeFilter === '全部' || haystack.includes(activeFilter.toLowerCase());
     return matchesQuery && matchesFilter;
   });
+  const filteredCaptionTemplates = filterCaptionTemplatePresets(query, activeFilter);
   const sourceVideoUrl = materialTaskVideoSource(sourceTask, sourceApiBase);
   const sourcePreviewUrl = cachedSource?.localPath ? localFileUrl(cachedSource.localPath) : sourceVideoUrl;
   const sourceBusy = ['creating', 'polling', 'caching'].includes(sourceImportStage);
@@ -2255,7 +2257,7 @@ function MaterialLibraryView() {
       <div className="material-library-toolbar">
         <label className="material-library-search">
           <Search size={16} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品、爆款参考、门店素材" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品、爆款参考、门店素材、字幕模板" />
         </label>
         <div className="material-library-filters" aria-label="素材筛选">
           {materialQuickFilters.map((filter) => (
@@ -2294,7 +2296,7 @@ function MaterialLibraryView() {
               </span>
             </NavLink>
           );
-        }) : (
+        }) : filteredCaptionTemplates.length ? null : (
           <div className="material-source-empty">
             <strong>没有匹配的素材来源</strong>
             <span>换个关键词，或回到全部素材来源。</span>
@@ -2310,6 +2312,12 @@ function MaterialLibraryView() {
           </div>
         )}
       </div>
+
+      {filteredCaptionTemplates.length ? (
+        <CaptionTemplateShowcase templates={filteredCaptionTemplates} />
+      ) : activeFilter === '字幕模板' || normalizedQuery ? (
+        <CaptionTemplateEmpty />
+      ) : null}
 
       <div className="material-flow-panel">
         <div>
