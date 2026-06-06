@@ -18,6 +18,18 @@ import {
   X
 } from 'lucide-react';
 import clsx from 'clsx';
+import emphasisBrightDingSound from '@/assets/sfx/emphasis-bright-ding.ogg';
+import emphasisClickClackSound from '@/assets/sfx/emphasis-click-clack.ogg';
+import emphasisSoftPopSound from '@/assets/sfx/emphasis-soft-pop.ogg';
+import emphasisTechBeepSound from '@/assets/sfx/emphasis-tech-beep.ogg';
+import openingHitLightSound from '@/assets/sfx/opening-hit-light.ogg';
+import openingPopLightSound from '@/assets/sfx/opening-pop-light.ogg';
+import openingPopSoftSound from '@/assets/sfx/opening-pop-soft.ogg';
+import openingWhooshGentleSound from '@/assets/sfx/opening-whoosh-gentle.wav';
+import transitionGlitchSciFiSound from '@/assets/sfx/transition-glitch-sci-fi.ogg';
+import transitionGlitchSoftSound from '@/assets/sfx/transition-glitch-soft.ogg';
+import transitionWhooshFastSound from '@/assets/sfx/transition-whoosh-fast.wav';
+import transitionWhooshShortSound from '@/assets/sfx/transition-whoosh-short.wav';
 import { buildDriveContentUrl, listDriveNodes, type DriveNodeView } from '@/features/cloud-drive/api/netdisk';
 import { toMediaUrl } from '@/features/editor/mediaUrl';
 import {
@@ -41,20 +53,74 @@ import {
 import type {
   SubtitleTemplate,
   SubtitleCaptionEntrance,
+  SubtitleCaptionSoundEffect,
+  SubtitleCaptionSoundRhythm,
+  SubtitleOpeningSoundEffect,
   SubtitleTemplateCaption,
   SubtitleTemplateProcessingState,
   SubtitleTemplateSoundSettings,
   SubtitleTemplateStyleVars,
   SubtitleTemplateTab,
-  SubtitleTemplateTextStyle
+  SubtitleTemplateTextStyle,
+  SubtitleTemplateVideoZoomRange,
+  SubtitleTransitionSoundEffect
 } from './subtitleTemplateTypes';
 import './subtitleTemplate.css';
 
 const recentTaskKey = 'subtitle-template:recent-tasks';
 const captionEntranceOptions: Array<{ value: SubtitleCaptionEntrance; label: string }> = [
   { value: 'none', label: '无' },
-  { value: 'blur-reveal', label: '模糊聚焦' }
+  { value: 'blur-reveal', label: '模糊聚焦' },
+  { value: 'fade', label: '淡入' },
+  { value: 'rise', label: '上浮' },
+  { value: 'pop', label: '弹出' },
+  { value: 'karaoke', label: '卡拉OK高亮' }
 ];
+const openingSoundEffectOptions: Array<{ value: SubtitleOpeningSoundEffect; label: string }> = [
+  { value: 'none', label: '无' },
+  { value: 'pop-soft', label: '轻 Pop' },
+  { value: 'pop-light', label: '短 Pop' },
+  { value: 'hit-light', label: '轻 Hit' },
+  { value: 'whoosh-gentle', label: '轻 Whoosh' }
+];
+const transitionSoundEffectOptions: Array<{ value: SubtitleTransitionSoundEffect; label: string }> = [
+  { value: 'none', label: '无' },
+  { value: 'whoosh-fast', label: '快 Whoosh' },
+  { value: 'whoosh-short', label: '短 Whoosh' },
+  { value: 'glitch-soft', label: '轻 Glitch' },
+  { value: 'glitch-sci-fi', label: '科技 Glitch' }
+];
+const captionSoundEffectOptions: Array<{ value: SubtitleCaptionSoundEffect; label: string }> = [
+  { value: 'none', label: '无' },
+  { value: 'soft-pop', label: '轻啵' },
+  { value: 'bright-ding', label: '清脆叮' },
+  { value: 'click-clack', label: '咔哒' },
+  { value: 'tech-beep', label: '科技哔' }
+];
+const captionSoundRhythmOptions: Array<{ value: SubtitleCaptionSoundRhythm; label: string }> = [
+  { value: 'recommended', label: '克制推荐' },
+  { value: 'boost', label: '节奏增强' },
+  { value: 'all', label: '每句字幕' },
+  { value: 'off', label: '关闭' }
+];
+const openingSoundEffectSources: Record<Exclude<SubtitleOpeningSoundEffect, 'none'>, string> = {
+  'pop-soft': openingPopSoftSound,
+  'pop-light': openingPopLightSound,
+  'hit-light': openingHitLightSound,
+  'whoosh-gentle': openingWhooshGentleSound
+};
+const transitionSoundEffectSources: Record<Exclude<SubtitleTransitionSoundEffect, 'none'>, string> = {
+  'whoosh-fast': transitionWhooshFastSound,
+  'whoosh-short': transitionWhooshShortSound,
+  'glitch-soft': transitionGlitchSoftSound,
+  'glitch-sci-fi': transitionGlitchSciFiSound
+};
+const captionSoundEffectSources: Record<Exclude<SubtitleCaptionSoundEffect, 'none'>, string> = {
+  'soft-pop': emphasisSoftPopSound,
+  'bright-ding': emphasisBrightDingSound,
+  'click-clack': emphasisClickClackSound,
+  'tech-beep': emphasisTechBeepSound
+};
 const emptyProcessing: SubtitleTemplateProcessingState = {
   active: false,
   title: '',
@@ -74,6 +140,11 @@ interface SubtitleTemplateRecentTask {
   savedAt: string;
   duration: number;
   styleOverride?: SubtitleTemplateStyleOverride;
+  openingSoundEffect?: SubtitleOpeningSoundEffect;
+  transitionSoundEffect?: SubtitleTransitionSoundEffect;
+  captionSoundEffect?: SubtitleCaptionSoundEffect;
+  captionSoundRhythm?: SubtitleCaptionSoundRhythm;
+  videoZoomRanges?: SubtitleTemplateVideoZoomRange[];
 }
 
 interface SubtitleTemplateSourceVideo {
@@ -107,6 +178,12 @@ export function SubtitleTemplatePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const phoneRef = useRef<HTMLDivElement>(null);
   const layerDragRef = useRef<SubtitleTemplateLayerDragState | null>(null);
+  const soundEffectAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastCaptionSoundKeyRef = useRef('');
+  const lastCaptionSoundAtRef = useRef(-Infinity);
+  const lastTransitionZoomRangeIdRef = useRef('');
+  const openingSoundPlayedRef = useRef(false);
+  const noticeTimerRef = useRef<number | null>(null);
   const [activeTab, setActiveTab] = useState<SubtitleTemplateTab>('template');
   const [sourceVideo, setSourceVideo] = useState<SubtitleTemplateSourceVideo | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState(subtitleTemplates[0].id);
@@ -120,8 +197,13 @@ export function SubtitleTemplatePage() {
     bgmVolume: 50,
     music: true,
     soundFx: true,
+    openingSoundEffect: 'none',
+    transitionSoundEffect: 'none',
+    captionSoundEffect: 'none',
+    captionSoundRhythm: 'recommended',
     noiseReduction: false
   });
+  const [videoZoomRanges, setVideoZoomRanges] = useState<SubtitleTemplateVideoZoomRange[]>([]);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [draggedLayer, setDraggedLayer] = useState<SubtitleTemplateLayerKey | null>(null);
@@ -147,10 +229,13 @@ export function SubtitleTemplatePage() {
   const activeCaption = useMemo(() => {
     return captions.find((caption) => currentTime >= caption.start && currentTime < caption.end) || captions[0];
   }, [captions, currentTime]);
+  const activeCaptionKey = activeCaption?.id || '';
+  const activeCaptionIndex = activeCaption ? captions.findIndex((caption) => caption.id === activeCaption.id) : -1;
   const visibleRecentTasks = useMemo(() => normalizeRecentTasks(recentTasks), [recentTasks]);
   const displayedTitle = openingTitle || buildOpeningTitle(selectedTemplate, activeCaption?.text || captions[0]?.text || '字幕模板');
   const keywordList = useMemo(() => buildKeywordList(keywords, activeCaption?.text || ''), [keywords, activeCaption?.text]);
   const templateVars = buildTemplateVars(positionedTemplate);
+  const activeVideoZoomScale = getVideoZoomScale(videoZoomRanges, currentTime);
 
   useEffect(() => {
     let canceled = false;
@@ -172,6 +257,101 @@ export function SubtitleTemplatePage() {
     video.volume = Math.max(0, Math.min(1, soundSettings.videoVolume / 100));
   }, [soundSettings.videoVolume, sourceVideo?.path]);
 
+  useEffect(() => {
+    lastCaptionSoundKeyRef.current = '';
+    lastCaptionSoundAtRef.current = -Infinity;
+    lastTransitionZoomRangeIdRef.current = '';
+    openingSoundPlayedRef.current = false;
+  }, [sourceVideo?.id]);
+
+  useEffect(() => {
+    lastTransitionZoomRangeIdRef.current = '';
+  }, [videoZoomRanges]);
+
+  useEffect(() => {
+    return () => {
+      soundEffectAudioRef.current?.pause();
+      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sourceVideo || !isPlaying || !activeCaption || !activeCaptionKey) return;
+
+    if (
+      !openingSoundPlayedRef.current &&
+      activeCaptionIndex === 0 &&
+      currentTime <= 2.4 &&
+      soundSettings.soundFx &&
+      soundSettings.openingSoundEffect !== 'none'
+    ) {
+      openingSoundPlayedRef.current = true;
+      lastCaptionSoundAtRef.current = currentTime;
+      void playOpeningSoundEffect(soundSettings.openingSoundEffect);
+      return;
+    }
+
+    const transitionZoomRange = getTransitionZoomSoundRange({
+      currentTime,
+      lastPlayedAt: lastCaptionSoundAtRef.current,
+      lastRangeId: lastTransitionZoomRangeIdRef.current,
+      soundEffect: soundSettings.transitionSoundEffect,
+      soundFx: soundSettings.soundFx,
+      videoZoomRanges
+    });
+    if (transitionZoomRange) {
+      lastTransitionZoomRangeIdRef.current = transitionZoomRange.id;
+      lastCaptionSoundAtRef.current = currentTime;
+      void playTransitionSoundEffect(soundSettings.transitionSoundEffect);
+      return;
+    }
+
+    if (lastCaptionSoundKeyRef.current === activeCaptionKey) return;
+    lastCaptionSoundKeyRef.current = activeCaptionKey;
+
+    if (shouldPlayTransitionSound({
+      captions,
+      captionIndex: activeCaptionIndex,
+      currentTime,
+      lastPlayedAt: lastCaptionSoundAtRef.current,
+      soundEffect: soundSettings.transitionSoundEffect,
+      soundFx: soundSettings.soundFx
+    })) {
+      lastCaptionSoundAtRef.current = currentTime;
+      void playTransitionSoundEffect(soundSettings.transitionSoundEffect);
+      return;
+    }
+
+    if (!shouldPlayCaptionSound({
+      caption: activeCaption,
+      captionIndex: activeCaptionIndex,
+      currentTime,
+      keywords,
+      lastPlayedAt: lastCaptionSoundAtRef.current,
+      rhythm: soundSettings.captionSoundRhythm,
+      soundEffect: soundSettings.captionSoundEffect,
+      soundFx: soundSettings.soundFx
+    })) return;
+
+    lastCaptionSoundAtRef.current = currentTime;
+    void playCaptionSoundEffect(soundSettings.captionSoundEffect);
+  }, [
+    activeCaption,
+    activeCaptionIndex,
+    activeCaptionKey,
+    captions,
+    currentTime,
+    isPlaying,
+    keywords,
+    sourceVideo,
+    soundSettings.captionSoundEffect,
+    soundSettings.captionSoundRhythm,
+    soundSettings.openingSoundEffect,
+    soundSettings.soundFx,
+    soundSettings.transitionSoundEffect,
+    videoZoomRanges
+  ]);
+
   async function importSourceVideo() {
     const bridge = window.surgicol;
     if (!bridge?.dialog?.openFiles || !bridge.media?.uploadToOss) {
@@ -188,6 +368,7 @@ export function SubtitleTemplatePage() {
     setNotice('');
     setCaptions([]);
     setOpeningTitle('');
+    setVideoZoomRanges([]);
     setCurrentTime(0);
     setActiveTab('template');
     setProcessing({
@@ -243,7 +424,12 @@ export function SubtitleTemplatePage() {
         keywords: nextKeywords.length ? nextKeywords.join(', ') : defaultSubtitleKeywords,
         savedAt: new Date().toISOString(),
         duration,
-        styleOverride: buildTemplateStyleOverride(selectedTemplate)
+        styleOverride: buildTemplateStyleOverride(selectedTemplate),
+        openingSoundEffect: soundSettings.openingSoundEffect,
+        transitionSoundEffect: soundSettings.transitionSoundEffect,
+        captionSoundEffect: soundSettings.captionSoundEffect,
+        captionSoundRhythm: soundSettings.captionSoundRhythm,
+        videoZoomRanges: []
       });
       window.setTimeout(() => setProcessing(emptyProcessing), 700);
     } catch (error) {
@@ -283,6 +469,7 @@ export function SubtitleTemplatePage() {
     setNotice('');
     setCaptions([]);
     setOpeningTitle('');
+    setVideoZoomRanges([]);
     setCurrentTime(0);
     setActiveTab('template');
     setProcessing({
@@ -341,7 +528,12 @@ export function SubtitleTemplatePage() {
         keywords: nextKeywords.join(', '),
         savedAt: new Date().toISOString(),
         duration,
-        styleOverride: buildTemplateStyleOverride(selectedTemplate)
+        styleOverride: buildTemplateStyleOverride(selectedTemplate),
+        openingSoundEffect: soundSettings.openingSoundEffect,
+        transitionSoundEffect: soundSettings.transitionSoundEffect,
+        captionSoundEffect: soundSettings.captionSoundEffect,
+        captionSoundRhythm: soundSettings.captionSoundRhythm,
+        videoZoomRanges: []
       });
       window.setTimeout(() => setProcessing(emptyProcessing), 700);
     } catch (error) {
@@ -377,9 +569,17 @@ export function SubtitleTemplatePage() {
     setCaptions(task.captions || []);
     setKeywords(task.keywords || defaultSubtitleKeywords);
     setOpeningTitle(buildOpeningTitleFromCaptions(restoredTemplate, task.captions || [], task.name));
+    setVideoZoomRanges(normalizeVideoZoomRanges(task.videoZoomRanges, task.duration || 13));
+    setSoundSettings((settings) => ({
+      ...settings,
+      openingSoundEffect: isOpeningSoundEffect(task.openingSoundEffect) ? task.openingSoundEffect : 'none',
+      transitionSoundEffect: isTransitionSoundEffect(task.transitionSoundEffect) ? task.transitionSoundEffect : 'none',
+      captionSoundEffect: isCaptionSoundEffect(task.captionSoundEffect) ? task.captionSoundEffect : 'none',
+      captionSoundRhythm: isCaptionSoundRhythm(task.captionSoundRhythm) ? task.captionSoundRhythm : 'recommended'
+    }));
     setActiveTab('template');
     setRecentDrawerOpen(false);
-    setNotice('已恢复最近字幕模板任务。');
+    showNotice('已恢复最近字幕模板任务。', 3000);
   }
 
   function applyTemplate(template: SubtitleTemplate) {
@@ -392,6 +592,11 @@ export function SubtitleTemplatePage() {
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
+      resetSubtitleSoundPlaybackState();
+      if (video.ended || video.currentTime >= Math.max(0, video.duration - 0.08)) {
+        video.currentTime = 0;
+        setCurrentTime(0);
+      }
       video.play().catch(() => undefined);
     } else {
       video.pause();
@@ -402,6 +607,9 @@ export function SubtitleTemplatePage() {
     const video = videoRef.current;
     const safeTime = Math.max(0, Math.min(sourceVideo?.duration || 0, time));
     if (video) video.currentTime = safeTime;
+    if (safeTime <= 2.4 || safeTime < currentTime - 0.25) {
+      resetSubtitleSoundPlaybackState();
+    }
     setCurrentTime(safeTime);
   }
 
@@ -537,6 +745,70 @@ export function SubtitleTemplatePage() {
     window.setTimeout(() => setProcessing(emptyProcessing), 2100);
   }
 
+  function showNotice(message: string, autoHideMs = 0) {
+    if (noticeTimerRef.current) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+    setNotice(message);
+    if (autoHideMs > 0) {
+      noticeTimerRef.current = window.setTimeout(() => {
+        setNotice((current) => (current === message ? '' : current));
+        noticeTimerRef.current = null;
+      }, autoHideMs);
+    }
+  }
+
+  function updateOpeningSoundEffect(value: SubtitleOpeningSoundEffect) {
+    resetSubtitleSoundPlaybackState();
+    updateSoundSetting('openingSoundEffect', value);
+  }
+
+  function updateTransitionSoundEffect(value: SubtitleTransitionSoundEffect) {
+    resetSubtitleSoundPlaybackState();
+    updateSoundSetting('transitionSoundEffect', value);
+  }
+
+  function updateCaptionSoundEffect(value: SubtitleCaptionSoundEffect) {
+    resetSubtitleSoundPlaybackState();
+    updateSoundSetting('captionSoundEffect', value);
+  }
+
+  function updateCaptionSoundRhythm(value: SubtitleCaptionSoundRhythm) {
+    resetSubtitleSoundPlaybackState();
+    updateSoundSetting('captionSoundRhythm', value);
+  }
+
+  function resetSubtitleSoundPlaybackState() {
+    lastCaptionSoundKeyRef.current = '';
+    lastCaptionSoundAtRef.current = -Infinity;
+    lastTransitionZoomRangeIdRef.current = '';
+    openingSoundPlayedRef.current = false;
+  }
+
+  function playOpeningSoundEffect(effect: SubtitleOpeningSoundEffect) {
+    if (effect === 'none') return Promise.resolve();
+    return playSoundEffectSource(openingSoundEffectSources[effect]);
+  }
+
+  function playTransitionSoundEffect(effect: SubtitleTransitionSoundEffect) {
+    if (effect === 'none') return Promise.resolve();
+    return playSoundEffectSource(transitionSoundEffectSources[effect]);
+  }
+
+  function playCaptionSoundEffect(effect: SubtitleCaptionSoundEffect) {
+    if (effect === 'none') return Promise.resolve();
+    return playSoundEffectSource(captionSoundEffectSources[effect]);
+  }
+
+  function playSoundEffectSource(source: string) {
+    soundEffectAudioRef.current?.pause();
+    const audio = new Audio(source);
+    audio.volume = Math.max(0, Math.min(1, Math.max(soundSettings.videoVolume, 35) / 100));
+    soundEffectAudioRef.current = audio;
+    return audio.play().catch(() => undefined);
+  }
+
   async function exportVideo() {
     if (!sourceVideo?.path && !sourceVideo?.mediaUrl) {
       setNotice('请先导入视频。');
@@ -551,7 +823,12 @@ export function SubtitleTemplatePage() {
       captions,
       title: displayedTitle,
       keywords,
-      captionEntrance
+      captionEntrance,
+      openingSoundEffect: soundSettings.openingSoundEffect,
+      transitionSoundEffect: soundSettings.transitionSoundEffect,
+      captionSoundEffect: soundSettings.captionSoundEffect,
+      captionSoundRhythm: soundSettings.captionSoundRhythm,
+      videoZoomRanges: normalizeVideoZoomRanges(videoZoomRanges, sourceVideo?.duration || 0)
     });
     try {
       setProcessing({
@@ -567,7 +844,7 @@ export function SubtitleTemplatePage() {
       });
       setProcessing(emptyProcessing);
       if (!result.canceled) {
-        setNotice(`已导出：${result.name || result.localPath}`);
+        showNotice(`已导出：${result.name || result.localPath}`, 4000);
       }
     } catch (error) {
       setProcessing(emptyProcessing);
@@ -605,7 +882,7 @@ export function SubtitleTemplatePage() {
               <video
                 ref={videoRef}
                 src={sourceVideo.path ? toMediaUrl(sourceVideo.path) : sourceVideo.mediaUrl}
-                style={{ objectFit: 'cover' }}
+                style={{ objectFit: 'cover', transform: `scale(${activeVideoZoomScale})`, transition: 'transform 120ms ease' }}
                 onLoadedMetadata={(event) => {
                   const duration = event.currentTarget.duration;
                   if (Number.isFinite(duration)) {
@@ -613,9 +890,15 @@ export function SubtitleTemplatePage() {
                   }
                 }}
                 onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-                onPlay={() => setIsPlaying(true)}
+                onPlay={() => {
+                  resetSubtitleSoundPlaybackState();
+                  setIsPlaying(true);
+                }}
                 onPause={() => setIsPlaying(false)}
-                onEnded={() => setIsPlaying(false)}
+                onEnded={() => {
+                  setIsPlaying(false);
+                  resetSubtitleSoundPlaybackState();
+                }}
               />
             ) : (
               <div className="subtitle-template-empty-phone">
@@ -649,7 +932,7 @@ export function SubtitleTemplatePage() {
                 <div
                   className={clsx(
                     'subtitle-template-caption-layer draggable-layer',
-                    captionEntrance === 'blur-reveal' && 'entrance-blur-reveal',
+                    captionEntrance !== 'none' && `entrance-${captionEntrance}`,
                     draggedLayer === 'caption' && 'dragging'
                   )}
                   style={{ left: `${positionedTemplate.captionPosition.x}%`, top: `${positionedTemplate.captionPosition.y}%` }}
@@ -713,6 +996,7 @@ export function SubtitleTemplatePage() {
           <div className="subtitle-template-tabs">
             <button className={clsx(activeTab === 'template' && 'active')} type="button" onClick={() => setActiveTab('template')}>字幕模板</button>
             <button className={clsx(activeTab === 'captions' && 'active')} type="button" onClick={() => setActiveTab('captions')}>文字快剪</button>
+            <button className={clsx(activeTab === 'video' && 'active')} type="button" onClick={() => setActiveTab('video')}>画面效果</button>
             <button className={clsx(activeTab === 'sound' && 'active')} type="button" onClick={() => setActiveTab('sound')}>声音</button>
           </div>
 
@@ -809,6 +1093,50 @@ export function SubtitleTemplatePage() {
                   </label>
                   <button className="style-add-caption" type="button" onClick={addCaption}>新增字幕</button>
                 </div>
+                <div className="subtitle-template-sfx-panel">
+                  <label>
+                    开头音效
+                    <select value={soundSettings.openingSoundEffect} onChange={(event) => updateOpeningSoundEffect(event.target.value as SubtitleOpeningSoundEffect)}>
+                      {openingSoundEffectOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <button type="button" title="试听开头音效" disabled={soundSettings.openingSoundEffect === 'none'} onClick={() => void playOpeningSoundEffect(soundSettings.openingSoundEffect)}>
+                      <Volume2 size={15} />
+                    </button>
+                  </label>
+                  <label>
+                    转场音效
+                    <select value={soundSettings.transitionSoundEffect} onChange={(event) => updateTransitionSoundEffect(event.target.value as SubtitleTransitionSoundEffect)}>
+                      {transitionSoundEffectOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <button type="button" title="试听转场音效" disabled={soundSettings.transitionSoundEffect === 'none'} onClick={() => void playTransitionSoundEffect(soundSettings.transitionSoundEffect)}>
+                      <Volume2 size={15} />
+                    </button>
+                  </label>
+                  <label>
+                    重点音效
+                    <select value={soundSettings.captionSoundEffect} onChange={(event) => updateCaptionSoundEffect(event.target.value as SubtitleCaptionSoundEffect)}>
+                      {captionSoundEffectOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <button type="button" title="试听重点音效" disabled={soundSettings.captionSoundEffect === 'none'} onClick={() => void playCaptionSoundEffect(soundSettings.captionSoundEffect)}>
+                      <Volume2 size={15} />
+                    </button>
+                  </label>
+                  <label>
+                    音效节奏
+                    <select value={soundSettings.captionSoundRhythm} onChange={(event) => updateCaptionSoundRhythm(event.target.value as SubtitleCaptionSoundRhythm)}>
+                      {captionSoundRhythmOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <i />
+                  </label>
+                </div>
               </header>
               <label className="subtitle-template-title-input">
                 开场标题
@@ -831,6 +1159,70 @@ export function SubtitleTemplatePage() {
                 ))}
                 {captions.length === 0 ? <p>导入视频后会自动识别字幕，也可以手动新增。</p> : null}
               </div>
+            </div>
+          ) : null}
+
+          {activeTab === 'video' ? (
+            <div className="subtitle-template-tab-body video-body">
+              <section className="subtitle-template-video-zoom-panel">
+                <header>
+                  <div>
+                    <strong>画面推近</strong>
+                    <span>按固定秒数放大底层视频，标题和字幕不跟随缩放。</span>
+                  </div>
+                  <div className="subtitle-template-video-zoom-actions">
+                    <button type="button" onClick={addVideoZoomRange}>添加区间</button>
+                    <button type="button" onClick={applyReferenceVideoZoomPreset}>套用参考节奏</button>
+                  </div>
+                </header>
+                {videoZoomRanges.length ? (
+                  <div className="subtitle-template-video-zoom-list">
+                    {videoZoomRanges.map((range, index) => (
+                      <div className="subtitle-template-video-zoom-row" key={range.id}>
+                        <span>#{index + 1}</span>
+                        <label>
+                          开始
+                          <input
+                            type="number"
+                            min={0}
+                            max={Math.max(0.1, sourceVideo?.duration || 13)}
+                            step={0.1}
+                            value={range.start}
+                            onChange={(event) => updateVideoZoomRange(range.id, { start: Number(event.target.value) })}
+                          />
+                        </label>
+                        <label>
+                          结束
+                          <input
+                            type="number"
+                            min={0.1}
+                            max={Math.max(0.1, sourceVideo?.duration || 13)}
+                            step={0.1}
+                            value={range.end}
+                            onChange={(event) => updateVideoZoomRange(range.id, { end: Number(event.target.value) })}
+                          />
+                        </label>
+                        <label>
+                          倍率
+                          <input
+                            type="number"
+                            min={1.01}
+                            max={1.3}
+                            step={0.01}
+                            value={range.scale}
+                            onChange={(event) => updateVideoZoomRange(range.id, { scale: Number(event.target.value) })}
+                          />
+                        </label>
+                        <button type="button" title="删除区间" onClick={() => deleteVideoZoomRange(range.id)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>未设置时，导出保持原始画面比例。</p>
+                )}
+              </section>
             </div>
           ) : null}
 
@@ -877,7 +1269,12 @@ export function SubtitleTemplatePage() {
           onSelect={(node) => void importCloudVideo(node)}
         />
       ) : null}
-      {notice && !notice.startsWith('已应用') ? <div className="subtitle-template-notice">{notice}</div> : null}
+      {notice && !notice.startsWith('已应用') ? (
+        <div className="subtitle-template-notice">
+          <span>{notice}</span>
+          <button type="button" onClick={() => showNotice('')} title="关闭提示">关闭</button>
+        </div>
+      ) : null}
       {processing.active ? <ProcessingDialog state={processing} onCancel={() => setProcessing(emptyProcessing)} /> : null}
     </section>
   );
@@ -885,6 +1282,167 @@ export function SubtitleTemplatePage() {
   function updateSoundSetting<Key extends keyof SubtitleTemplateSoundSettings>(key: Key, value: SubtitleTemplateSoundSettings[Key]) {
     setSoundSettings((settings) => ({ ...settings, [key]: value }));
   }
+
+  function addVideoZoomRange() {
+    const duration = Math.max(0.1, sourceVideo?.duration || 13);
+    const start = roundSeconds(Math.min(Math.max(0, currentTime), Math.max(0, duration - 0.1)));
+    const end = roundSeconds(Math.min(duration, start + 3));
+    const nextRange: SubtitleTemplateVideoZoomRange = {
+      id: crypto.randomUUID(),
+      start,
+      end: end > start ? end : roundSeconds(Math.min(duration, start + 0.1)),
+      scale: 1.2
+    };
+    setVideoZoomRanges((ranges) => normalizeVideoZoomRanges([...ranges, nextRange], duration));
+  }
+
+  function applyReferenceVideoZoomPreset() {
+    const duration = Math.max(0.1, sourceVideo?.duration || 13);
+    const preset: SubtitleTemplateVideoZoomRange[] = [
+      { id: crypto.randomUUID(), start: 3, end: 6, scale: 1.2 },
+      { id: crypto.randomUUID(), start: 10, end: 13, scale: 1.2 }
+    ];
+    setVideoZoomRanges(normalizeVideoZoomRanges(preset, duration));
+    showNotice('已套用画面推近参考节奏：3-6 秒、10-13 秒。', 2600);
+  }
+
+  function updateVideoZoomRange(id: string, patch: Partial<SubtitleTemplateVideoZoomRange>) {
+    const duration = Math.max(0.1, sourceVideo?.duration || 13);
+    setVideoZoomRanges((ranges) => {
+      const nextRanges = ranges.map((range) => {
+        if (range.id !== id) return range;
+        const patchedStart = patch.start === undefined ? range.start : clampSeconds(patch.start, duration);
+        const patchedEnd = patch.end === undefined ? range.end : clampSeconds(patch.end, duration);
+        const start = roundSeconds(Math.min(patchedStart, Math.max(0, duration - 0.1)));
+        const end = roundSeconds(Math.min(duration, Math.max(start + 0.1, patchedEnd)));
+        return {
+          ...range,
+          ...patch,
+          start,
+          end,
+          scale: Number((Math.max(1.01, Math.min(1.3, Number(patch.scale ?? range.scale) || 1.2))).toFixed(2))
+        };
+      });
+      return normalizeVideoZoomRanges(nextRanges, duration);
+    });
+  }
+
+  function deleteVideoZoomRange(id: string) {
+    setVideoZoomRanges((ranges) => ranges.filter((range) => range.id !== id));
+  }
+}
+
+function normalizeVideoZoomRanges(ranges: SubtitleTemplateVideoZoomRange[] | undefined, duration: number) {
+  const safeDuration = Math.max(0.1, Number(duration) || 13);
+  if (!Array.isArray(ranges)) return [];
+  return ranges
+    .map((range) => {
+      const start = roundSeconds(Math.min(clampSeconds(range.start, safeDuration), Math.max(0, safeDuration - 0.1)));
+      const end = roundSeconds(Math.min(safeDuration, Math.max(start + 0.1, clampSeconds(range.end, safeDuration))));
+      return {
+        id: range.id || crypto.randomUUID(),
+        start,
+        end,
+        scale: Number((Math.max(1.01, Math.min(1.3, Number(range.scale) || 1.2))).toFixed(2))
+      };
+    })
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+    .slice(0, 12);
+}
+
+function getVideoZoomScale(ranges: SubtitleTemplateVideoZoomRange[], time: number) {
+  const activeRange = ranges.find((range) => time >= range.start && time < range.end);
+  return activeRange ? activeRange.scale : 1;
+}
+
+function getTransitionZoomSoundRange(input: {
+  currentTime: number;
+  lastPlayedAt: number;
+  lastRangeId: string;
+  soundEffect: SubtitleTransitionSoundEffect;
+  soundFx: boolean;
+  videoZoomRanges: SubtitleTemplateVideoZoomRange[];
+}) {
+  if (!input.soundFx || input.soundEffect === 'none' || input.videoZoomRanges.length === 0) return null;
+  if (input.currentTime - input.lastPlayedAt < 0.7) return null;
+  return input.videoZoomRanges.find((range) => (
+    range.id !== input.lastRangeId &&
+    input.currentTime >= range.start &&
+    input.currentTime <= Math.min(range.end, range.start + 0.5)
+  )) || null;
+}
+
+function shouldPlayTransitionSound(input: {
+  captions: SubtitleTemplateCaption[];
+  captionIndex: number;
+  currentTime: number;
+  lastPlayedAt: number;
+  soundEffect: SubtitleTransitionSoundEffect;
+  soundFx: boolean;
+}) {
+  if (!input.soundFx || input.soundEffect === 'none' || input.captionIndex <= 0) return false;
+  if (input.currentTime - input.lastPlayedAt < 1.1) return false;
+  const caption = input.captions[input.captionIndex];
+  const previous = input.captions[input.captionIndex - 1];
+  if (!caption || !previous) return false;
+  return caption.start - previous.end >= 0.25;
+}
+
+function shouldPlayCaptionSound(input: {
+  caption: SubtitleTemplateCaption;
+  captionIndex: number;
+  currentTime: number;
+  keywords: string;
+  lastPlayedAt: number;
+  rhythm: SubtitleCaptionSoundRhythm;
+  soundEffect: SubtitleCaptionSoundEffect;
+  soundFx: boolean;
+}) {
+  if (!input.soundFx || input.soundEffect === 'none' || input.rhythm === 'off') return false;
+  const minGap = input.rhythm === 'all' ? 0.45 : input.rhythm === 'boost' ? 0.9 : 1.5;
+  if (input.currentTime - input.lastPlayedAt < minGap) return false;
+  if (input.rhythm === 'all') return true;
+  if (input.captionIndex === 0 && input.currentTime <= 2.4) return true;
+
+  const text = `${input.caption.text || ''} ${input.caption.translation || ''}`;
+  const hasKeyword = normalizeCaptionSoundKeywords(input.keywords).some((keyword) => text.includes(keyword));
+  const hasEmphasisSignal = /[0-9一二三四五六七八九十百千万亿￥¥$%]|价格|优惠|重点|结论|最后|记住|必看|马上|直接|推荐|省钱|别买|划算|爆款|上新|限时|免费|教程|方法/.test(text);
+  if (input.rhythm === 'recommended') return hasKeyword || hasEmphasisSignal;
+  return hasKeyword || hasEmphasisSignal || input.captionIndex % 2 === 0;
+}
+
+function normalizeCaptionSoundKeywords(keywords: string) {
+  return keywords
+    .split(/[,，、\s]+/g)
+    .map((keyword) => keyword.trim())
+    .filter((keyword) => keyword.length >= 2);
+}
+
+function isOpeningSoundEffect(value: unknown): value is SubtitleOpeningSoundEffect {
+  return openingSoundEffectOptions.some((option) => option.value === value);
+}
+
+function isTransitionSoundEffect(value: unknown): value is SubtitleTransitionSoundEffect {
+  return transitionSoundEffectOptions.some((option) => option.value === value);
+}
+
+function isCaptionSoundEffect(value: unknown): value is SubtitleCaptionSoundEffect {
+  return captionSoundEffectOptions.some((option) => option.value === value);
+}
+
+function isCaptionSoundRhythm(value: unknown): value is SubtitleCaptionSoundRhythm {
+  return captionSoundRhythmOptions.some((option) => option.value === value);
+}
+
+function clampSeconds(value: number, duration: number) {
+  const safeValue = Number(value);
+  if (!Number.isFinite(safeValue)) return 0;
+  return Math.max(0, Math.min(Math.max(0.1, duration), safeValue));
+}
+
+function roundSeconds(value: number) {
+  return Number((Math.round(value * 100) / 100).toFixed(2));
 }
 
 function SubtitleTemplateCardCover({ template }: { template: SubtitleTemplate }) {
@@ -1056,7 +1614,7 @@ function buildKeywordList(keywords: string, captionText: string) {
 }
 
 function renderCaptionText(text: string, keywords: string[], entrance: SubtitleCaptionEntrance, delayOffset = 0) {
-  if (entrance !== 'blur-reveal') return renderHighlightedText(text, keywords);
+  if (entrance === 'none') return renderHighlightedText(text, keywords);
   const safeText = String(text || '');
   if (!safeText) return safeText;
   const parts = splitTextByKeywords(safeText, keywords);

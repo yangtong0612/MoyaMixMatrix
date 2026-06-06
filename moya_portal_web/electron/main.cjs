@@ -1327,6 +1327,27 @@ async function renderViralVideo(sourcePath, outputPath, overlay) {
       captionPosition: overlay.captionPosition,
       captions: Array.isArray(overlay.subtitleSegments) ? overlay.subtitleSegments.length : 0
     });
+    const videoZoomRanges = readOverlayVideoZoomRanges(overlay.videoZoomRanges);
+    if (videoZoomRanges.length) {
+      const baseFilter = buildViralSegmentedVideoFilter('[0:v]', renderCanvas, overlay, renderCanvas.duration, 'base');
+      const filterComplex = `${baseFilter};[base]${buildAssSubtitleFilter(assPath)}[v]`;
+      await runProcess(ffmpegPath, [
+        '-y',
+        '-i', sourcePath,
+        '-filter_complex', filterComplex,
+        '-map', '[v]',
+        '-map', '0:a?',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '20',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '160k',
+        '-movflags', '+faststart',
+        outputPath
+      ]);
+      return;
+    }
     const videoFilter = `${buildViralVideoCanvasFilter(renderCanvas, overlay)},${buildAssSubtitleFilter(assPath)}`;
     await runProcess(ffmpegPath, [
       '-y',
@@ -1954,8 +1975,11 @@ async function renderViralVideoWithPupCaps(sourcePath, outputPath, overlay) {
     if (!movStat.isFile() || movStat.size <= 0) {
       throw new Error('PupCaps 未生成有效字幕层');
     }
-    const baseFilter = buildViralVideoCanvasFilter(renderCanvas, overlay);
-    const filterComplex = `[0:v]${baseFilter}[base];[base][1:v]overlay=0:0,${buildAssSubtitleFilter(titleAssPath)}[v]`;
+    const videoZoomRanges = readOverlayVideoZoomRanges(overlay.videoZoomRanges);
+    const baseFilter = videoZoomRanges.length
+      ? buildViralSegmentedVideoFilter('[0:v]', renderCanvas, overlay, renderCanvas.duration, 'base')
+      : `[0:v]${buildViralVideoCanvasFilter(renderCanvas, overlay)}[base]`;
+    const filterComplex = `${baseFilter};[base][1:v]overlay=0:0,${buildAssSubtitleFilter(titleAssPath)}[v]`;
     await runProcess(ffmpegPath, [
       '-y',
       '-i', sourcePath,
@@ -2507,9 +2531,11 @@ function buildPupCapsCss(overlay, metadata) {
     ? resolvePupCapsFontFamily(captionTemplateStyle.fontFamily)
     : resolvePupCapsFontFamily(captionStyle.fontFamily);
   const captionEntrance = normalizeCaptionEntrance(overlay.captionEntrance);
-  const captionAnimation = captionEntrance === 'blur-reveal'
-    ? 'moyaCaptionBlurReveal 560ms cubic-bezier(0.2, 0.82, 0.18, 1) both'
-    : 'none';
+  const captionAnimation = pupCapsCaptionEntranceAnimation(captionEntrance);
+  const wordAnimation = pupCapsWordEntranceAnimation(captionEntrance);
+  const highlightedWordAnimation = captionEntrance === 'karaoke'
+    ? wordAnimation
+    : 'moyaKeywordJump 760ms cubic-bezier(0.2, 0.82, 0.18, 1) infinite';
   const top = Math.max(0, Math.round((Math.max(0, Math.min(100, Number(captionPosition.y) || 64)) / 100) * height - captionStyle.height / 2));
   const fontSize = Math.max(16, captionStyle.fontSize);
   const maxWidth = Math.max(180, Math.min(width - 48, captionStyle.width));
@@ -2556,15 +2582,19 @@ ${buildSubtitleFontFaceCss()}
   font-weight: 800;
   line-height: 1.28;
   text-shadow: ${captionTextShadow};
+  animation: ${wordAnimation};
+  will-change: transform, filter, opacity;
 }
 
 .word.highlighted {
   background: ${captionTemplateStyle ? 'transparent' : theme.keywordBackground};
   color: ${captionTemplateStyle?.keywordColor || theme.keywordColor};
   text-shadow: ${captionTemplateStyle ? captionTextShadow : 'none'};
-  animation: moyaKeywordJump 760ms cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+  animation: ${highlightedWordAnimation};
   box-shadow: ${captionTemplateStyle ? 'none' : `0 0 12px ${theme.glowColor}`};
 }
+
+${buildPupCapsKaraokeWordDelayCss(captionEntrance)}
 
 @keyframes moyaKeywordJump {
   0%, 100% { transform: translateY(0) scale(1); }
@@ -2577,7 +2607,59 @@ ${buildSubtitleFontFaceCss()}
   54% { opacity: 0.72; filter: blur(4px); transform: translateY(-1px); }
   100% { opacity: 1; filter: blur(0); transform: translateY(0); }
 }
+
+@keyframes moyaCaptionFadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes moyaCaptionRiseIn {
+  0% { opacity: 0; transform: translateY(14px); }
+  64% { opacity: 0.86; transform: translateY(-2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes moyaCaptionPopIn {
+  0% { opacity: 0; transform: scale(0.76); }
+  58% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes moyaCaptionKaraokeHighlight {
+  0% { opacity: 0.42; filter: brightness(0.82); transform: translateY(2px); }
+  42% { opacity: 1; filter: brightness(1.32); transform: translateY(-3px) scale(1.06); }
+  100% { opacity: 1; filter: brightness(1); transform: translateY(0) scale(1); }
+}
 `.trim();
+}
+
+function pupCapsCaptionEntranceAnimation(entrance) {
+  switch (normalizeCaptionEntrance(entrance)) {
+    case 'blur-reveal':
+      return 'moyaCaptionBlurReveal 560ms cubic-bezier(0.2, 0.82, 0.18, 1) both';
+    case 'fade':
+      return 'moyaCaptionFadeIn 420ms ease-out both';
+    case 'rise':
+      return 'moyaCaptionRiseIn 520ms cubic-bezier(0.2, 0.82, 0.18, 1) both';
+    case 'pop':
+      return 'moyaCaptionPopIn 520ms cubic-bezier(0.18, 0.9, 0.22, 1.2) both';
+    default:
+      return 'none';
+  }
+}
+
+function pupCapsWordEntranceAnimation(entrance) {
+  return normalizeCaptionEntrance(entrance) === 'karaoke'
+    ? 'moyaCaptionKaraokeHighlight 900ms cubic-bezier(0.2, 0.82, 0.18, 1) both'
+    : 'none';
+}
+
+function buildPupCapsKaraokeWordDelayCss(entrance) {
+  if (normalizeCaptionEntrance(entrance) !== 'karaoke') return '';
+  return Array.from({ length: 32 }, (_, index) => {
+    const child = index + 1;
+    return `.word:nth-child(${child}) { animation-delay: ${index * 42}ms; }`;
+  }).join('\n');
 }
 
 function buildViralTitleAss(overlay, metadata) {
@@ -2689,10 +2771,20 @@ function buildViralAss(overlay, metadata) {
 
 function buildCaptionAssPrefix(overlay, captionPoint) {
   const basePosition = `\\an5\\pos(${captionPoint.x},${captionPoint.y})`;
-  if (normalizeCaptionEntrance(overlay.captionEntrance) !== 'blur-reveal') {
-    return `{${basePosition}}`;
+  switch (normalizeCaptionEntrance(overlay.captionEntrance)) {
+    case 'blur-reveal':
+      return `{\\fad(180,0)\\blur8\\t(0,560,\\blur0)${basePosition}}`;
+    case 'fade':
+      return `{\\fad(260,0)${basePosition}}`;
+    case 'rise':
+      return `{\\an5\\move(${captionPoint.x},${captionPoint.y + 14},${captionPoint.x},${captionPoint.y},0,520)\\fad(120,0)}`;
+    case 'pop':
+      return `{\\fad(90,0)\\fscx76\\fscy76\\t(0,320,\\fscx112\\fscy112)\\t(320,520,\\fscx100\\fscy100)${basePosition}}`;
+    case 'karaoke':
+      return `{\\fad(80,0)\\t(0,280,\\fscx106\\fscy106)\\t(280,700,\\fscx100\\fscy100)${basePosition}}`;
+    default:
+      return `{${basePosition}}`;
   }
-  return `{\\fad(180,0)\\blur8\\t(0,560,\\blur0)${basePosition}}`;
 }
 
 function readOverlayTitleEnd(overlay, duration) {
@@ -2715,7 +2807,7 @@ function buildOverlayCaptionText(caption, isBilingual) {
 }
 
 function normalizeCaptionEntrance(value) {
-  return value === 'blur-reveal' ? 'blur-reveal' : 'none';
+  return ['blur-reveal', 'fade', 'rise', 'pop', 'karaoke'].includes(String(value || '')) ? String(value) : 'none';
 }
 
 function buildViralRenderCanvas(metadata, overlay) {
@@ -2730,6 +2822,10 @@ function buildViralRenderCanvas(metadata, overlay) {
 function buildViralVideoCanvasFilter(canvas, overlay) {
   const width = Math.max(1, Number(canvas.width) || 720);
   const height = Math.max(1, Number(canvas.height) || 1280);
+  return buildViralBaseVideoCanvasFilter(width, height, overlay);
+}
+
+function buildViralBaseVideoCanvasFilter(width, height, overlay) {
   const fit = overlay.previewVideoFit || 'cover';
   if (fit === 'fill') return `scale=${width}:${height}`;
   if (fit === 'contain') {
@@ -2738,10 +2834,82 @@ function buildViralVideoCanvasFilter(canvas, overlay) {
   return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`;
 }
 
+function readOverlayVideoZoomRanges(ranges) {
+  if (!Array.isArray(ranges)) return [];
+  return ranges
+    .map((range) => {
+      const start = Number(range?.start);
+      const end = Number(range?.end);
+      const scale = Number(range?.scale);
+      return {
+        start: Number.isFinite(start) ? Math.max(0, start) : 0,
+        end: Number.isFinite(end) ? Math.max(0, end) : 0,
+        scale: clampNumber(Number.isFinite(scale) ? scale : 1.2, 1, 1.3)
+      };
+    })
+    .filter((range) => range.end > range.start && range.scale > 1.001)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+    .slice(0, 12);
+}
+
+function buildViralSegmentedVideoFilter(inputLabel, canvas, overlay, duration, outputName) {
+  const width = Math.max(1, Number(canvas.width) || 720);
+  const height = Math.max(1, Number(canvas.height) || 1280);
+  const safeDuration = Math.max(0.1, Number(duration) || Number(canvas.duration) || readOverlayDuration(overlay));
+  const segments = buildVideoZoomSegments(safeDuration, readOverlayVideoZoomRanges(overlay.videoZoomRanges));
+  const baseCanvasFilter = buildViralBaseVideoCanvasFilter(width, height, overlay);
+  if (segments.length <= 1) {
+    const scale = segments[0]?.scale || 1;
+    const zoomFilter = scale > 1.001 ? `,${buildStaticVideoZoomFilter(width, height, scale)}` : '';
+    return `${inputLabel}trim=start=0:end=${formatFfmpegSeconds(safeDuration)},setpts=PTS-STARTPTS,${baseCanvasFilter}${zoomFilter}[${outputName}]`;
+  }
+
+  const inputLabels = segments.map((_, index) => `[vzsrc${index}]`);
+  const chains = [`${inputLabel}split=${segments.length}${inputLabels.join('')}`];
+  segments.forEach((segment, index) => {
+    const zoomFilter = segment.scale > 1.001 ? `,${buildStaticVideoZoomFilter(width, height, segment.scale)}` : '';
+    chains.push(
+      `${inputLabels[index]}trim=start=${formatFfmpegSeconds(segment.start)}:end=${formatFfmpegSeconds(segment.end)},setpts=PTS-STARTPTS,${baseCanvasFilter}${zoomFilter}[vzseg${index}]`
+    );
+  });
+  const concatInputs = segments.map((_, index) => `[vzseg${index}]`).join('');
+  chains.push(`${concatInputs}concat=n=${segments.length}:v=1:a=0[${outputName}]`);
+  return chains.join(';');
+}
+
+function buildVideoZoomSegments(duration, ranges) {
+  const safeDuration = Math.max(0.1, Number(duration) || 0.1);
+  const segments = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    const start = Math.max(0, Math.min(safeDuration, Number(range.start) || 0));
+    const end = Math.max(0, Math.min(safeDuration, Number(range.end) || 0));
+    if (end <= cursor || end <= start) continue;
+    if (start > cursor) {
+      segments.push({ start: cursor, end: start, scale: 1 });
+    }
+    segments.push({ start: Math.max(start, cursor), end, scale: range.scale });
+    cursor = end;
+  }
+  if (cursor < safeDuration) {
+    segments.push({ start: cursor, end: safeDuration, scale: 1 });
+  }
+  return segments.filter((segment) => segment.end - segment.start > 0.01);
+}
+
+function buildStaticVideoZoomFilter(width, height, scale) {
+  const zoomWidth = Math.max(width, evenFloor(width * scale));
+  const zoomHeight = Math.max(height, evenFloor(height * scale));
+  return `scale=${zoomWidth}:${zoomHeight},crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2`;
+}
+
 function normalizeViralOverlay(overlay) {
   if (!overlay || typeof overlay !== 'object') return null;
   if (!Array.isArray(overlay.subtitleSegments) && !overlay.hook && !overlay.templateName) return null;
-  return overlay;
+  return {
+    ...overlay,
+    videoZoomRanges: readOverlayVideoZoomRanges(overlay.videoZoomRanges)
+  };
 }
 
 function readOverlayTextStyle(style, fallback, canvasWidth = 720) {

@@ -1,7 +1,11 @@
 import type { CSSProperties } from 'react';
 
-export type SubtitleTemplateTab = 'template' | 'captions' | 'sound';
-export type SubtitleCaptionEntrance = 'none' | 'blur-reveal';
+export type SubtitleTemplateTab = 'template' | 'captions' | 'video' | 'sound';
+export type SubtitleCaptionEntrance = 'none' | 'blur-reveal' | 'fade' | 'rise' | 'pop' | 'karaoke';
+export type SubtitleOpeningSoundEffect = 'none' | 'pop-soft' | 'pop-light' | 'hit-light' | 'whoosh-gentle';
+export type SubtitleTransitionSoundEffect = 'none' | 'whoosh-fast' | 'whoosh-short' | 'glitch-soft' | 'glitch-sci-fi';
+export type SubtitleCaptionSoundEffect = 'none' | 'soft-pop' | 'bright-ding' | 'click-clack' | 'tech-beep';
+export type SubtitleCaptionSoundRhythm = 'off' | 'recommended' | 'boost' | 'all';
 
 export interface SubtitleTemplateTextStyle {
   fontSize: number;
@@ -47,7 +51,18 @@ export interface SubtitleTemplateSoundSettings {
   bgmVolume: number;
   music: boolean;
   soundFx: boolean;
+  openingSoundEffect: SubtitleOpeningSoundEffect;
+  transitionSoundEffect: SubtitleTransitionSoundEffect;
+  captionSoundEffect: SubtitleCaptionSoundEffect;
+  captionSoundRhythm: SubtitleCaptionSoundRhythm;
   noiseReduction: boolean;
+}
+
+export interface SubtitleTemplateVideoZoomRange {
+  id: string;
+  start: number;
+  end: number;
+  scale: number;
 }
 
 export interface SubtitleTemplateOverlay {
@@ -63,6 +78,11 @@ export interface SubtitleTemplateOverlay {
   captionTextStyle: SubtitleTemplateTextStyle;
   previewVideoFit: 'cover' | 'contain' | 'fill';
   captionEntrance: SubtitleCaptionEntrance;
+  openingSoundEffect: SubtitleOpeningSoundEffect;
+  transitionSoundEffect: SubtitleTransitionSoundEffect;
+  captionSoundEffect: SubtitleCaptionSoundEffect;
+  captionSoundRhythm: SubtitleCaptionSoundRhythm;
+  videoZoomRanges: SubtitleTemplateVideoZoomRange[];
   keywords: string;
   subtitleSegments: Array<{
     time: string;

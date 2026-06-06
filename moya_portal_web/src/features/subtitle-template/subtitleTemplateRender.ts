@@ -1,4 +1,14 @@
-import type { SubtitleCaptionEntrance, SubtitleTemplate, SubtitleTemplateCaption, SubtitleTemplateOverlay } from './subtitleTemplateTypes';
+import type {
+  SubtitleCaptionEntrance,
+  SubtitleCaptionSoundEffect,
+  SubtitleCaptionSoundRhythm,
+  SubtitleOpeningSoundEffect,
+  SubtitleTemplate,
+  SubtitleTemplateCaption,
+  SubtitleTemplateOverlay,
+  SubtitleTemplateVideoZoomRange,
+  SubtitleTransitionSoundEffect
+} from './subtitleTemplateTypes';
 
 export function buildSubtitleOverlay(input: {
   template: SubtitleTemplate;
@@ -6,6 +16,11 @@ export function buildSubtitleOverlay(input: {
   title: string;
   keywords: string;
   captionEntrance?: SubtitleCaptionEntrance;
+  openingSoundEffect?: SubtitleOpeningSoundEffect;
+  transitionSoundEffect?: SubtitleTransitionSoundEffect;
+  captionSoundEffect?: SubtitleCaptionSoundEffect;
+  captionSoundRhythm?: SubtitleCaptionSoundRhythm;
+  videoZoomRanges?: SubtitleTemplateVideoZoomRange[];
 }): SubtitleTemplateOverlay {
   return {
     templateKey: input.template.id,
@@ -20,6 +35,11 @@ export function buildSubtitleOverlay(input: {
     captionTextStyle: input.template.captionTextStyle,
     previewVideoFit: 'cover',
     captionEntrance: input.captionEntrance || 'none',
+    openingSoundEffect: input.openingSoundEffect || 'none',
+    transitionSoundEffect: input.transitionSoundEffect || 'none',
+    captionSoundEffect: input.captionSoundEffect || 'none',
+    captionSoundRhythm: input.captionSoundRhythm || 'recommended',
+    videoZoomRanges: normalizeVideoZoomRanges(input.videoZoomRanges),
     keywords: input.keywords,
     subtitleSegments: input.captions.map((caption) => ({
       time: `${formatSubtitleTime(caption.start)} - ${formatSubtitleTime(caption.end)}`,
@@ -27,6 +47,28 @@ export function buildSubtitleOverlay(input: {
       translation: input.template.bilingual ? caption.translation || buildCaptionTranslation(caption.text) : undefined
     }))
   };
+}
+
+function normalizeVideoZoomRanges(ranges?: SubtitleTemplateVideoZoomRange[]) {
+  if (!Array.isArray(ranges)) return [];
+  return ranges
+    .map((range, index) => {
+      const start = roundSeconds(Math.max(0, Number(range.start) || 0));
+      const end = roundSeconds(Math.max(0, Number(range.end) || 0));
+      return {
+        id: String(range.id || `video-zoom-${index}-${start}-${end}`),
+        start,
+        end,
+        scale: Number((Math.max(1.01, Math.min(1.3, Number(range.scale) || 1.2))).toFixed(2))
+      };
+    })
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+    .slice(0, 12);
+}
+
+function roundSeconds(value: number) {
+  return Number((Math.round(value * 100) / 100).toFixed(2));
 }
 
 export function buildOpeningTitle(template: SubtitleTemplate, text: string) {
