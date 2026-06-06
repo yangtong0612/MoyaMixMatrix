@@ -978,6 +978,71 @@ progress::-webkit-progress-value {
   text-decoration: none;
 }
 
+.home-digital-human-brief {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgb(142 162 255 / 18%);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgb(20 184 166 / 14%), transparent 42%),
+    #15171c;
+}
+
+.home-digital-human-brief > div:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.home-digital-human-brief svg {
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  border: 1px solid rgb(142 162 255 / 22%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 5%);
+  color: #dbe7ff;
+  box-sizing: border-box;
+}
+
+.home-digital-human-brief strong {
+  color: #f8fbff;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.home-digital-human-brief > span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.home-digital-human-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-digital-human-steps em {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgb(142 162 255 / 18%);
+  border-radius: 999px;
+  background: rgb(var(--accent-rgb) / 10%);
+  color: #dbe7ff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .home-product-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -6908,6 +6973,34 @@ progress::-webkit-progress-value {
 
 .theme-light .home-section-heading a {
   color: #17202e;
+}
+
+.theme-light .home-digital-human-brief {
+  border-color: #dce5f1;
+  background:
+    linear-gradient(90deg, rgb(20 184 166 / 10%), transparent 42%),
+    #ffffff;
+  box-shadow: 0 14px 34px rgb(15 23 42 / 6%);
+}
+
+.theme-light .home-digital-human-brief strong {
+  color: #17202e;
+}
+
+.theme-light .home-digital-human-brief > span {
+  color: #64748b;
+}
+
+.theme-light .home-digital-human-brief svg {
+  color: #334155;
+  border-color: rgb(91 126 255 / 22%);
+  background: #eef3ff;
+}
+
+.theme-light .home-digital-human-steps em {
+  border-color: rgb(91 126 255 / 16%);
+  background: #eef3ff;
+  color: #4f63d8;
 }
 
 .theme-light .home-product-card:hover {

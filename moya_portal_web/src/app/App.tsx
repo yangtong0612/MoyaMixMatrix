@@ -19,7 +19,6 @@ import {
   Moon,
   Package,
   PlayCircle,
-  Repeat2,
   RotateCcw,
   Settings,
   ShoppingBag,
@@ -52,6 +51,9 @@ import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
 import { buildMaterialSplitSegments, materialSplitPresets, type MaterialSplitPlanSegment, type MaterialSplitPresetKey } from '@/shared/mediaSplit';
 import type { MediaCacheResult, MediaCropResult, MediaProbeResult, MediaSplitResult, OssUploadProgress, OssUploadResult } from '@/shared/types/electron';
 
+const DIGITAL_HUMAN_ROUTE = '/digital-human';
+const LEGACY_PRODUCT_VIDEO_ROUTE = '/product-video/create';
+
 const navItems = [
   { to: '/', label: '首页', icon: Home },
   { to: '/materials', label: '素材库', icon: ImagePlus },
@@ -61,14 +63,18 @@ const navItems = [
   { to: '/settings', label: '设置', icon: Settings }
 ];
 
+const digitalHumanNavItem = { to: DIGITAL_HUMAN_ROUTE, label: '数字人口播', icon: UserRound };
+
 const workspaceNavItems = [
   ...navItems.slice(0, 4),
+  digitalHumanNavItem,
   { to: '/subtitle-template', label: '字幕模板', icon: Type },
   ...navItems.slice(4)
 ];
 
 const sidebarNavItems = [
   ...navItems.slice(0, 4),
+  digitalHumanNavItem,
   { to: '/subtitle-template', label: '字幕模板', icon: WandSparkles },
   ...navItems.slice(4)
 ];
@@ -151,6 +157,10 @@ const PRODUCT_VIDEO_TASKS_STORE_KEY = 'moya-product-video-tasks-by-scenario';
 const LEGACY_PRODUCT_VIDEO_TASKS_STORAGE_KEY = 'moya-product-video-tasks';
 const MAX_PRODUCT_VIDEO_TASKS_PER_SCENARIO = 12;
 
+function digitalHumanScenarioPath(scenario: ProductVideoScenarioKey) {
+  return `${DIGITAL_HUMAN_ROUTE}?scenario=${scenario}`;
+}
+
 const productVideoScenarios: Array<{
   key: ProductVideoScenarioKey;
   title: string;
@@ -163,36 +173,36 @@ const productVideoScenarios: Array<{
   {
     key: 'product-spokesperson',
     title: '商品口播',
-    subtitle: '商品图 + 卖点，一键生成真人讲解口播',
-    prompt: '上传商品图 / 详情页',
+    subtitle: '商品图、卖点和数字人形象统一生成带货讲解',
+    prompt: '商品图 / 卖点 / 数字人',
     output: '卖点脚本 · 数字人口播 · 爆款字幕',
     icon: ShoppingBag,
     tone: 'speech'
   },
   {
     key: 'product-showcase',
-    title: '商品展示',
-    subtitle: '围绕产品外观、细节、使用场景生成展示视频',
-    prompt: '上传商品主图 / 场景图',
-    output: '细节镜头 · 功能亮点 · 节奏卡点',
+    title: '产品讲解',
+    subtitle: '围绕外观、细节和使用场景生成数字人讲解',
+    prompt: '商品主图 / 场景图 / 讲解角度',
+    output: '数字人讲解 · 细节镜头 · 功能亮点',
     icon: Package,
     tone: 'showcase'
   },
   {
     key: 'store-traffic',
-    title: '门店引流',
-    subtitle: '门头、环境、团购活动自动包装成本地生活视频',
+    title: '门店口播',
+    subtitle: '门头、环境和活动信息生成同城到店口播',
     prompt: '上传门店图 / 活动海报',
-    output: '位置引导 · 到店理由 · 优惠 CTA',
+    output: '到店理由 · 数字人讲解 · 优惠 CTA',
     icon: Store,
     tone: 'store'
   },
   {
     key: 'hot-replica',
-    title: '爆款复刻',
-    subtitle: '参考爆款结构，复刻标题、节奏、字幕和转化钩子',
+    title: '爆款口播复刻',
+    subtitle: '参考爆款结构，复刻口播节奏、字幕和转化钩子',
     prompt: '粘贴爆款链接 / 上传参考视频',
-    output: '拆解结构 · 同款节奏 · 差异化成片',
+    output: '拆解结构 · 同款口播 · 差异化成片',
     icon: Flame,
     tone: 'replica'
   }
@@ -201,7 +211,7 @@ const productVideoScenarios: Array<{
 const materialSourceCategories = [
   {
     title: '商品素材',
-    subtitle: '商品图、详情页、卖点标签集中沉淀，生成商品视频时直接调用',
+    subtitle: '商品图、详情页、卖点标签集中沉淀，生成数字人口播时直接调用',
     source: '商品图 / 详情页',
     action: '整理商品素材',
     to: '/cloud-drive',
@@ -213,8 +223,8 @@ const materialSourceCategories = [
     title: '爆款参考',
     subtitle: '收藏爆款视频链接、拆解结构和参考片段，给复刻任务提供来源',
     source: '参考视频 / 爆款链接',
-    action: '创建复刻任务',
-    to: '/product-video/create?scenario=hot-replica',
+    action: '创建口播复刻',
+    to: digitalHumanScenarioPath('hot-replica'),
     icon: Flame,
     tone: 'viral',
     tags: ['参考视频', '爆款链接', '结构拆解']
@@ -223,8 +233,8 @@ const materialSourceCategories = [
     title: '门店素材',
     subtitle: '沉淀门头、环境、活动海报和团购图，快速生成同城引流内容',
     source: '门头 / 环境 / 活动',
-    action: '生成门店视频',
-    to: '/product-video/create?scenario=store-traffic',
+    action: '生成门店口播',
+    to: digitalHumanScenarioPath('store-traffic'),
     icon: Store,
     tone: 'store',
     tags: ['门店图', '活动海报', '团购']
@@ -383,18 +393,18 @@ function buildAvatarLooks(image: string): DigitalHumanLook[] {
     },
     {
       id: 'product-live',
-      label: '商品口播',
+      label: '口播讲解',
       scene: '直播间 / 产品台',
       image,
-      prompt: '同一人物出现在商品口播、产品展示或直播间场景，可手持商品、指向产品或坐在产品台前讲解。',
+      prompt: '同一人物出现在商品口播、产品讲解或直播间场景，可手持商品、指向产品或坐在产品台前讲解。',
       className: 'scene-product'
     },
     {
       id: 'store-traffic',
-      label: '门店引流',
-      scene: '门店 / 探店 / 爆款复刻',
+      label: '门店口播',
+      scene: '门店 / 探店 / 口播复刻',
       image,
-      prompt: '同一人物出现在门店、本地生活、探店或爆款复刻场景，保持身份一致，只改变背景和镜头结构。',
+      prompt: '同一人物出现在门店、本地生活、探店或爆款口播复刻场景，保持身份一致，只改变背景和镜头结构。',
       className: 'scene-store'
     }
   ];
@@ -445,7 +455,7 @@ const digitalHumanAvatars = [
     id: 'xiaoning',
     name: '夏宁',
     role: '门店制服女导购',
-    prompt: '中国女性，门店导购、前台或服务制服造型，适合门店引流、活动介绍和新品推荐，表达清爽有亲和力。',
+    prompt: '中国女性，门店导购、前台或服务制服造型，适合门店口播、活动介绍和新品推荐，表达清爽有亲和力。',
     image: 'https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop',
     variants: buildAvatarLooks('https://images.pexels.com/photos/30870216/pexels-photo-30870216.jpeg?auto=compress&cs=tinysrgb&w=420&h=560&fit=crop')
   },
@@ -1207,7 +1217,7 @@ export function App() {
   const navigationLockReason = useEditorStore((state) => state.navigationLockReason);
   const isEditorRoute = location.pathname.startsWith('/editor');
   const isSubtitleTemplateRoute = location.pathname.startsWith('/subtitle-template');
-  const isProductCreateRoute = location.pathname.startsWith('/product-video/create');
+  const isProductCreateRoute = location.pathname.startsWith(DIGITAL_HUMAN_ROUTE) || location.pathname.startsWith(LEGACY_PRODUCT_VIDEO_ROUTE);
   const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return localStorage.getItem('moya-theme') === 'light' ? 'light' : 'dark';
@@ -1337,7 +1347,8 @@ export function App() {
                 </EditorRouteBoundary>
               )}
             />
-            <Route path="/product-video/create" element={<ProductVideoCreateView />} />
+            <Route path={DIGITAL_HUMAN_ROUTE} element={<ProductVideoCreateView />} />
+            <Route path={LEGACY_PRODUCT_VIDEO_ROUTE} element={<ProductVideoCreateView />} />
             <Route path="/transfers" element={<CloudDrivePage initialMenu="transport" />} />
             <Route path="/settings" element={<SettingsView />} />
           </Routes>
@@ -1434,6 +1445,11 @@ function HomeView() {
           <strong>网感剪辑</strong>
           <span>导入原视频，一键生成字幕、花字、贴纸、音效和动效包装</span>
         </NavLink>
+        <NavLink to={digitalHumanScenarioPath('product-spokesperson')} className="home-module-card">
+          <UserRound size={28} />
+          <strong>数字人口播</strong>
+          <span>选择数字人形象，生成商品、门店和爆款结构口播成片</span>
+        </NavLink>
         <NavLink to="/cloud-drive" className="home-module-card">
           <Cloud size={28} />
           <strong>网盘</strong>
@@ -1459,20 +1475,33 @@ function HomeView() {
       <div className="home-product-section">
         <div className="home-section-heading">
           <div>
-            <span>商品视频创作</span>
-            <h2>选择一个增长场景，快速生成可发布视频</h2>
+            <span>数字人口播</span>
+            <h2>从素材到口播成片的统一入口</h2>
           </div>
-          <NavLink to="/editor?workflow=viral">
-            <Repeat2 size={15} />
-            <span>进入批量创作</span>
+          <NavLink to={digitalHumanScenarioPath('product-spokesperson')}>
+            <UserRound size={15} />
+            <span>打开口播台</span>
           </NavLink>
+        </div>
+
+        <div className="home-digital-human-brief">
+          <div>
+            <UserRound size={22} />
+            <strong>数字人口播工作流</strong>
+          </div>
+          <span>选择场景、绑定数字人、补充商品或门店素材，统一进入云端生成。</span>
+          <div className="home-digital-human-steps" aria-label="数字人口播流程">
+            <em>数字人</em>
+            <em>口播脚本</em>
+            <em>字幕成片</em>
+          </div>
         </div>
 
         <div className="home-product-grid">
           {productVideoScenarios.map((scenario) => (
             <NavLink
               key={scenario.key}
-              to={`/product-video/create?scenario=${scenario.key}`}
+              to={digitalHumanScenarioPath(scenario.key)}
               className={`home-product-card ${scenario.tone}`}
             >
               <div className="product-card-preview">
@@ -1492,7 +1521,7 @@ function HomeView() {
                 <small>{scenario.prompt}</small>
               </div>
               <span className="product-card-action">
-                开始创作
+                进入口播台
                 <ArrowRight size={15} />
               </span>
             </NavLink>
@@ -2250,14 +2279,14 @@ function MaterialLibraryView() {
               <span>进入剪辑生成</span>
               <ArrowRight size={15} />
             </NavLink>
-            <NavLink to="/product-video/create?scenario=product-showcase">
+            <NavLink to={digitalHumanScenarioPath('product-showcase')}>
               <Package size={16} />
-              <span>商品视频生成</span>
+              <span>产品讲解口播</span>
               <ArrowRight size={15} />
             </NavLink>
-            <NavLink to="/product-video/create?scenario=hot-replica">
+            <NavLink to={digitalHumanScenarioPath('hot-replica')}>
               <Flame size={16} />
-              <span>爆款复刻生成</span>
+              <span>爆款口播复刻</span>
               <ArrowRight size={15} />
             </NavLink>
           </div>
@@ -2351,7 +2380,7 @@ function MaterialLibraryView() {
       <div className="material-flow-panel">
         <div>
           <span>创作流向</span>
-          <strong>从素材库沉淀来源，再进入网感剪辑、商品视频和批量创作。</strong>
+          <strong>从素材库沉淀来源，再进入网感剪辑、数字人口播和批量创作。</strong>
         </div>
         <NavLink to="/editor?workflow=viral">
           <WandSparkles size={15} />
@@ -2364,10 +2393,10 @@ function MaterialLibraryView() {
 
 function taskPrompt(task: ProductVideoTaskThread) {
   if (task.description) return task.description;
-  if (task.scenario === 'store-traffic') return '给我生成一个同城探店引流的视频';
-  if (task.scenario === 'product-showcase') return '给我生成一个商品展示的视频';
-  if (task.scenario === 'hot-replica') return '给我生成一个爆款复刻的视频';
-  return '给我生成一个商品口播的视频';
+  if (task.scenario === 'store-traffic') return '给我生成一个门店数字人口播视频';
+  if (task.scenario === 'product-showcase') return '给我生成一个产品讲解口播视频';
+  if (task.scenario === 'hot-replica') return '给我生成一个爆款口播复刻视频';
+  return '给我生成一个商品数字人口播视频';
 }
 
 function taskThumbnail(task: ProductVideoTaskThread) {
@@ -2884,21 +2913,21 @@ function ProductVideoCreateView() {
   const historyEmptyText = '当前场景还没有历史任务，点击生成后会自动记录在这里。';
   const descriptionLimit = isHotReplica ? 3000 : isStoreTraffic || activeScenario === 'product-spokesperson' ? 500 : 200;
   const previewHeadline = isHotReplica
-    ? '拆解爆款元素，一键复刻专属爆款视频。'
+    ? '复刻爆款口播结构，快速生成专属成片。'
     : isStoreTraffic
-    ? '探店视频一键生成，同城客流引进店。'
+    ? '门店口播一键生成，同城客流引进店。'
     : isShowcase
-    ? '电影感运镜，打造高级感商品大片。'
-    : active.title === '商品口播'
+    ? '产品讲解一键生成，数字人把卖点讲清楚。'
+    : activeScenario === 'product-spokesperson'
       ? '带货数字人，口播营销视频量产不停！'
       : `${active.title}视频一键生成`;
   const previewSubtext = isHotReplica
-    ? '上传参考视频，AI 自动复刻爆款节奏与结构。'
+    ? '上传参考视频，AI 自动复刻爆款口播节奏与结构。'
     : isStoreTraffic
-    ? '上传门店照片与地址，一键生成同城吸客视频。'
+    ? '上传门店照片与活动信息，一键生成同城吸客口播视频。'
     : isShowcase
-    ? '上传商品图，AI 生成多角度高质感展示视频。'
-    : active.title === '商品口播'
+    ? '上传商品图，AI 生成多角度产品讲解与卖点字幕。'
+    : activeScenario === 'product-spokesperson'
       ? '上传商品图与卖点，一键生成专业带货口播视频。'
       : active.subtitle;
   const currentGenerationTask: ProductVideoTaskThread | null = isActiveScenarioGeneration
@@ -2985,7 +3014,7 @@ function ProductVideoCreateView() {
     });
     if (files[0]) {
       setReferenceVideo(files[0]);
-      setStatus('参考视频已添加，右侧爆款复刻预览已同步更新。');
+      setStatus('参考视频已添加，右侧爆款口播复刻预览已同步更新。');
     }
   }
 
@@ -3102,15 +3131,15 @@ function ProductVideoCreateView() {
       return;
     }
     if (!isShowcase && !isStoreTraffic && !isHotReplica && !productImage) {
-      setStatus('请先上传商品图，商品口播需要商品素材作为底稿。');
+      setStatus('请先上传商品图，数字人口播需要商品素材作为底稿。');
       return;
     }
     if ((isShowcase || isHotReplica) && !productImage) {
-      setStatus(isHotReplica ? '请上传商品图，AI 会把商品替换进复刻视频里。' : '请先上传商品图，用来生成商品展示视频。');
+      setStatus(isHotReplica ? '请上传商品图，AI 会把商品替换进口播复刻视频里。' : '请先上传商品图，用来生成产品讲解口播。');
       return;
     }
     if (isStoreTraffic && storeImages.length === 0) {
-      setStatus('请先上传门店图片，用来生成门店引流视频。');
+      setStatus('请先上传门店图片，用来生成门店数字人口播。');
       return;
     }
 
@@ -3381,7 +3410,7 @@ function ProductVideoCreateView() {
   return (
     <section className="product-video-create page">
       <aside className={`product-create-sidebar${isShowcase ? ' showcase-mode' : ''}${isStoreTraffic ? ' store-mode' : ''}${isHotReplica ? ' replica-mode' : ''}`}>
-        <div className="product-create-tabs" aria-label="商品视频类型">
+        <div className="product-create-tabs" aria-label="数字人口播类型">
           {productVideoScenarios.map((scenario) => (
             <button
               key={scenario.key}
@@ -3389,7 +3418,7 @@ function ProductVideoCreateView() {
               className={activeScenario === scenario.key ? 'active' : undefined}
               onClick={() => {
                 setActiveScenario(scenario.key);
-                navigate(`/product-video/create?scenario=${scenario.key}`, { replace: true });
+                navigate(digitalHumanScenarioPath(scenario.key), { replace: true });
               }}
             >
               {scenario.title}
