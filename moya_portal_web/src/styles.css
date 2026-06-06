@@ -890,8 +890,9 @@ progress::-webkit-progress-value {
 
 .home-module-card {
   display: grid;
+  align-content: start;
   gap: 10px;
-  min-height: 150px;
+  min-height: 126px;
   padding: 18px;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
@@ -933,12 +934,6 @@ progress::-webkit-progress-value {
 
 .home-module-card strong {
   font-size: 17px;
-}
-
-.home-module-card span {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
 }
 
 .home-product-section {
@@ -1054,7 +1049,7 @@ progress::-webkit-progress-value {
   display: grid;
   grid-template-rows: 180px auto 34px;
   gap: 14px;
-  min-height: 360px;
+  min-height: 300px;
   padding: 14px;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
@@ -1163,22 +1158,6 @@ progress::-webkit-progress-value {
 
 .product-card-copy strong {
   font-size: 18px;
-}
-
-.product-card-copy p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.product-card-copy small {
-  width: fit-content;
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: rgb(var(--accent-rgb) / 12%);
-  color: #cdd8ff;
-  font-size: 12px;
 }
 
 .product-card-action {
@@ -6935,8 +6914,7 @@ progress::-webkit-progress-value {
 }
 
 .theme-light .home-panel p,
-.theme-light .home-workbench-strip span,
-.theme-light .home-module-card span {
+.theme-light .home-workbench-strip span {
   color: #64748b;
 }
 
@@ -7046,15 +7024,6 @@ progress::-webkit-progress-value {
   background:
     linear-gradient(145deg, rgb(91 126 255 / 10%), rgb(15 23 42 / 3%)),
     #ffffff;
-}
-
-.theme-light .product-card-copy p {
-  color: #64748b;
-}
-
-.theme-light .product-card-copy small {
-  background: rgb(91 126 255 / 10%);
-  color: #4f63d8;
 }
 
 .theme-light .product-card-action {

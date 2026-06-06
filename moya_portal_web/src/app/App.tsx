@@ -1443,32 +1443,26 @@ function HomeView() {
         <NavLink to="/editor?workflow=viral" className="home-module-card">
           <Sparkles size={28} />
           <strong>网感剪辑</strong>
-          <span>导入原视频，一键生成字幕、花字、贴纸、音效和动效包装</span>
         </NavLink>
         <NavLink to={digitalHumanScenarioPath('product-spokesperson')} className="home-module-card">
           <UserRound size={28} />
           <strong>数字人口播</strong>
-          <span>选择数字人形象，生成商品、门店和爆款结构口播成片</span>
         </NavLink>
         <NavLink to="/cloud-drive" className="home-module-card">
           <Cloud size={28} />
           <strong>网盘</strong>
-          <span>直接管理素材、分享和传输任务</span>
         </NavLink>
         <NavLink to="/materials" className="home-module-card">
           <ImagePlus size={28} />
           <strong>素材库</strong>
-          <span>汇聚商品图、爆款参考、门店素材和贴纸音效，作为创作来源</span>
         </NavLink>
         <NavLink to="/editor" className="home-module-card">
           <Clapperboard size={28} />
           <strong>剪辑</strong>
-          <span>进入视频编辑与批量内容生产工作流</span>
         </NavLink>
         <NavLink to="/settings" className="home-module-card">
           <Settings size={28} />
           <strong>设置</strong>
-          <span>配置本地目录、导出路径和应用偏好</span>
         </NavLink>
       </div>
 
@@ -1517,8 +1511,6 @@ function HomeView() {
                   <scenario.icon size={20} />
                   <strong>{scenario.title}</strong>
                 </div>
-                <p>{scenario.subtitle}</p>
-                <small>{scenario.prompt}</small>
               </div>
               <span className="product-card-action">
                 进入口播台
