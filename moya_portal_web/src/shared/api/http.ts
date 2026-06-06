@@ -1,4 +1,4 @@
-import axios, { type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse } from 'axios';
+import axios, { AxiosHeaders, type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse } from 'axios';
 
 export const http = axios.create({
   baseURL: resolveApiBaseUrl(),
@@ -7,6 +7,12 @@ export const http = axios.create({
 });
 
 http.interceptors.request.use((config) => {
+  const accessToken = readAccessToken();
+  if (accessToken) {
+    const headers = AxiosHeaders.from(config.headers);
+    if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${accessToken}`);
+    config.headers = headers;
+  }
   return config;
 });
 
@@ -90,6 +96,15 @@ function readBridgeApiBaseUrl() {
   const bridge = (window as Window & { surgicol?: { app?: { apiBaseUrl?: string } } }).surgicol;
   const value = bridge?.app?.apiBaseUrl;
   return typeof value === 'string' ? value.replace(/\/+$/, '') : '';
+}
+
+function readAccessToken() {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.localStorage.getItem('access')?.trim() || '';
+  } catch {
+    return '';
+  }
 }
 
 function createElectronApiAdapter(): AxiosAdapter | undefined {

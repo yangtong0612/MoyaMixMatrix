@@ -1,0 +1,13 @@
+export type PageKey =
+  | 'home'
+  | 'materials'
+  | 'material-library'
+  | 'cloud-drive'
+  | 'editor'
+  | 'production'
+  | 'research'
+  | 'graphic-matrix'
+  | 'digital-human'
+  | 'subtitle-template'
+  | 'transfers'
+  | 'settings'

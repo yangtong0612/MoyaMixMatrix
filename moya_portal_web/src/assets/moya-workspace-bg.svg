@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" role="img" aria-label="Moya workspace background">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c111b"/>
+      <stop offset="0.38" stop-color="#121827"/>
+      <stop offset="0.72" stop-color="#10151a"/>
+      <stop offset="1" stop-color="#17120f"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef5ff" stop-opacity=".42"/>
+      <stop offset=".55" stop-color="#9fb8ff" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#19c8a9" stop-opacity=".12"/>
+    </linearGradient>
+    <linearGradient id="warm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5b45f" stop-opacity=".55"/>
+      <stop offset=".68" stop-color="#f06f84" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".04"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#25d6b6" stop-opacity=".62"/>
+      <stop offset="1" stop-color="#6d8bff" stop-opacity=".14"/>
+    </linearGradient>
+    <pattern id="grid" width="72" height="72" patternUnits="userSpaceOnUse">
+      <path d="M72 0H0V72" fill="none" stroke="#d7e3ff" stroke-opacity=".07" stroke-width="1"/>
+    </pattern>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <rect width="1920" height="1080" fill="url(#grid)"/>
+  <path d="M-80 808C254 704 554 724 864 796c321 74 605 58 1136-174v458H-80Z" fill="#14202c" opacity=".64"/>
+  <path d="M-50 918c274-96 531-104 774-46 329 79 602 88 1246-140v348H-50Z" fill="#0b1118" opacity=".86"/>
+
+  <g opacity=".9" filter="url(#soft)">
+    <path d="M148 138h528v248H148z" fill="url(#paper)" opacity=".5"/>
+    <path d="M1250 122h450v272h-450z" fill="url(#warm)" opacity=".42"/>
+    <path d="M994 648h540v206H994z" fill="url(#teal)" opacity=".32"/>
+  </g>
+
+  <g fill="none" stroke-linejoin="round">
+    <path d="M222 198h468v262H222z" stroke="#b8c8ff" stroke-opacity=".26" stroke-width="2"/>
+    <path d="M254 250h176M254 294h272M254 338h224" stroke="#e8f0ff" stroke-opacity=".25" stroke-width="8" stroke-linecap="round"/>
+    <path d="M478 240h154v170H478z" stroke="#24d3b5" stroke-opacity=".35" stroke-width="2"/>
+    <path d="M514 305l46-31 46 31-46 31z" fill="#24d3b5" fill-opacity=".2" stroke="#d8fff8" stroke-opacity=".28"/>
+
+    <path d="M1194 205h416v236h-416z" fill="#ffffff" fill-opacity=".035" stroke="#ffcf8a" stroke-opacity=".26" stroke-width="2"/>
+    <path d="M1234 370h322" stroke="#ffffff" stroke-opacity=".22" stroke-width="10" stroke-linecap="round"/>
+    <path d="M1234 329h178M1432 329h124" stroke="#25d6b6" stroke-opacity=".34" stroke-width="12" stroke-linecap="round"/>
+    <path d="M1276 253l96 58 96-58v114l-96 58-96-58z" fill="#f5b45f" fill-opacity=".13" stroke="#fff1ce" stroke-opacity=".28"/>
+
+    <path d="M716 563h502v282H716z" fill="#ffffff" fill-opacity=".04" stroke="#a7b9ff" stroke-opacity=".24" stroke-width="2"/>
+    <path d="M762 762h404M762 708h98M888 708h148M1064 708h102" stroke="#dce7ff" stroke-opacity=".25" stroke-width="12" stroke-linecap="round"/>
+    <path d="M770 610h118v66H770zM918 610h118v66H918zM1066 610h118v66h-118z" fill="#6d8bff" fill-opacity=".14" stroke="#cbd8ff" stroke-opacity=".22"/>
+
+    <path d="M390 660c132-86 260-100 384-42 150 70 270 53 420-74 164-139 304-157 510-72" stroke="#6d8bff" stroke-opacity=".19" stroke-width="3"/>
+    <path d="M362 708c138-74 274-80 404-18 139 67 265 39 399-68 164-132 330-139 516-26" stroke="#25d6b6" stroke-opacity=".2" stroke-width="3"/>
+  </g>
+
+  <g opacity=".55">
+    <path d="M176 816h238M176 856h318M176 896h174" stroke="#f4f7ff" stroke-opacity=".2" stroke-width="10" stroke-linecap="round"/>
+    <path d="M1460 808h236M1460 848h304M1460 888h160" stroke="#f5b45f" stroke-opacity=".19" stroke-width="10" stroke-linecap="round"/>
+  </g>
+
+  <rect width="1920" height="1080" fill="#000000" opacity=".18"/>
+</svg>

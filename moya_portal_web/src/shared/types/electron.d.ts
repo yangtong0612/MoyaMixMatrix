@@ -1,4 +1,12 @@
 import type { OpenDialogOptions } from 'electron';
+import type {
+  Collaborator,
+  FolderCollaborator,
+  MaterialLibraryExternalAsset,
+  MaterialLibraryImportProgress,
+  MaterialLibraryImportResult,
+  MaterialLibrarySnapshot
+} from '@/features/materials/types';
 
 export interface TransferTask {
   id: string;
@@ -309,6 +317,36 @@ export interface ApiBridgeResponse {
   data: unknown;
 }
 
+export interface MaterialLibraryBridgeResult {
+  ok: boolean;
+  state?: MaterialLibrarySnapshot;
+  assets?: unknown[];
+  folders?: unknown[];
+  exported?: { count: number; directory: string };
+  canceled?: boolean;
+  error?: string;
+}
+
+export interface ViralDirectorBridgeResult {
+  ok: boolean;
+  scripts?: unknown[];
+  scriptPackage?: unknown;
+  taskId?: string;
+  error?: string;
+}
+
+export interface ViralDirectorWindowAPI {
+  listViralDirectorScripts(): Promise<ViralDirectorBridgeResult>;
+  generateViralDirectorFromProduct(payload: { prompt: string; revisionInstruction?: string }): Promise<ViralDirectorBridgeResult>;
+  startViralDirectorProductStream(payload: { prompt: string; revisionInstruction?: string; taskId?: string }): Promise<ViralDirectorBridgeResult>;
+  cancelViralDirectorStream(payload: { taskId: string }): Promise<{ ok: boolean; error?: string }>;
+  onViralDirectorStreamEvent(callback: (message: unknown) => void): () => void;
+  analyzeViralDirectorFromVideoLink(payload: { url: string; revisionInstruction?: string }): Promise<ViralDirectorBridgeResult>;
+  analyzeViralDirectorFromUpload(payload: { fileName: string; mimeType?: string; bytes: number[] | Uint8Array }): Promise<ViralDirectorBridgeResult>;
+  saveViralDirectorScript(payload: { scriptPackage: unknown }): Promise<ViralDirectorBridgeResult>;
+  deleteViralDirectorScript(payload: { scriptId: string }): Promise<ViralDirectorBridgeResult>;
+}
+
 declare global {
   interface Window {
     surgicol: {
@@ -345,6 +383,27 @@ declare global {
         uploadDriveFilePart(filePath: string, options: DriveUploadPartOptions): Promise<DriveUploadPartResult>;
         onUploadDriveFileProgress(callback: (progress: DriveUploadProgress) => void): () => void;
       };
+      materialLibrary: {
+        list(): Promise<MaterialLibraryBridgeResult>;
+        createFolder(payload: { name: string; parentId: string | null }): Promise<MaterialLibraryBridgeResult>;
+        renameFolder(payload: { id: string; name: string }): Promise<MaterialLibraryBridgeResult>;
+        deleteFolder(payload: { id: string }): Promise<MaterialLibraryBridgeResult>;
+        restoreFolder(payload: { id: string }): Promise<MaterialLibraryBridgeResult>;
+        moveFolder(payload: { id: string; parentId: string | null }): Promise<MaterialLibraryBridgeResult>;
+        moveAssets(payload: { assetIds: string[]; folderId: string }): Promise<MaterialLibraryBridgeResult>;
+        renameAsset(payload: { id: string; name: string }): Promise<MaterialLibraryBridgeResult>;
+        deleteAssets(payload: { assetIds: string[] }): Promise<MaterialLibraryBridgeResult>;
+        restoreAssets(payload: { assetIds: string[] }): Promise<MaterialLibraryBridgeResult>;
+        revealAsset(payload: { id: string }): Promise<MaterialLibraryBridgeResult>;
+        exportAssets(payload: { assetIds: string[] }): Promise<MaterialLibraryBridgeResult>;
+        exportFolder(payload: { id: string }): Promise<MaterialLibraryBridgeResult>;
+        toggleAssetFavorite(payload: { id: string; favorite: boolean }): Promise<MaterialLibraryBridgeResult>;
+        importLocalEntries(payload: { folderId: string; mode: 'file' | 'folder'; taskId?: string }): Promise<MaterialLibraryImportResult>;
+        updateCollaborator(payload: { phone: string; role: Collaborator['role']; enabled: boolean }): Promise<MaterialLibraryBridgeResult>;
+        updateFolderCollaborators(payload: { folderId: string; collaborators: FolderCollaborator[] }): Promise<MaterialLibraryBridgeResult>;
+        syncExternalAssets(payload: { assets: MaterialLibraryExternalAsset[] }): Promise<MaterialLibraryBridgeResult>;
+        onImportProgress(callback: (progress: MaterialLibraryImportProgress) => void): () => void;
+      };
       media: {
         uploadToOss(filePath: string, options?: { folder?: string; contentType?: string; taskId?: string }): Promise<OssUploadResult>;
         downloadToLocal(source: string, options?: { fileName?: string; viralOverlay?: unknown }): Promise<MediaDownloadResult>;
@@ -360,6 +419,7 @@ declare global {
         onUploadToOssProgress(callback: (progress: OssUploadProgress) => void): () => void;
       };
     };
+    windowAPI?: ViralDirectorWindowAPI;
   }
 }
 

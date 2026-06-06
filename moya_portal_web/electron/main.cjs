@@ -9,6 +9,7 @@ const { fileURLToPath, pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
 const { app, BrowserWindow, Menu, dialog, ipcMain, nativeImage, net, protocol, shell } = require('electron');
 const Store = require('electron-store');
+const { createViralDirectorBackend } = require('./viral-director-backend.cjs');
 const bundledFfmpegPath = optionalRequire('ffmpeg-static') || '';
 const installedFfmpegPath = optionalRequire('@ffmpeg-installer/ffmpeg')?.path || '';
 const bundledFfprobePath = optionalRequire('ffprobe-static')?.path || '';
@@ -366,6 +367,7 @@ function attachDebugContextMenu(window) {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   registerMediaProtocol();
+  createViralDirectorBackend({ app, ipcMain });
   registerIpc();
   createWindow();
 
@@ -565,6 +567,195 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const MATERIAL_LIBRARY_STORE_KEY = 'material-library.state';
+const MATERIAL_LIBRARY_DEFAULT_FOLDERS = [
+  { id: 'folder-director-packages', name: '爆款编导', parentId: null, count: 0, shared: true },
+  { id: 'folder-ai-canvas', name: 'AI画布', parentId: null, count: 0 },
+  { id: 'folder-local-upload', name: '本地上传', parentId: null, count: 0, shared: true },
+  { id: 'folder-fission-production', name: '合成量产', parentId: null, count: 0, shared: true },
+  { id: 'folder-final-output', name: '成片输出', parentId: null, count: 0, shared: true }
+];
+const MATERIAL_LIBRARY_DEFAULT_COLLABORATORS = [
+  { name: 'ms', phone: '15812430995', role: '所有者', enabled: true },
+  { name: '刘江', phone: '18897967083', role: '可管理', enabled: true },
+  { name: '王海帆', phone: '18717932365', role: '无权限', enabled: false },
+  { name: '刘晓铭', phone: '15397504896', role: '无权限', enabled: false }
+];
+
+function registerMaterialLibraryIpc() {
+  ipcMain.handle('material-library:list', async () => okMaterialLibraryState(loadMaterialLibraryState()));
+  ipcMain.handle('material-library:create-folder', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const parentId = payload.parentId || null;
+    const name = sanitizeMaterialName(payload.name) || '新建文件夹';
+    if (parentId && !state.folders.some((folder) => folder.id === parentId && !folder.deletedAt)) {
+      throw new Error('父文件夹不存在');
+    }
+    if (hasSiblingMaterialFolderName(state.folders, parentId, name)) {
+      throw new Error(`同一层级已存在「${name}」，请换一个名称`);
+    }
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      folders: [
+        ...state.folders,
+        {
+          id: `folder-${randomUUID()}`,
+          name,
+          parentId,
+          count: 0,
+          createdAt: now,
+          updatedAt: now
+        }
+      ]
+    };
+  }));
+  ipcMain.handle('material-library:rename-folder', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const name = sanitizeMaterialName(payload.name);
+    if (!name) throw new Error('请输入文件夹名称');
+    const folder = state.folders.find((item) => item.id === payload.id);
+    if (!folder) throw new Error('文件夹不存在');
+    if (hasSiblingMaterialFolderName(state.folders, folder.parentId, name, folder.id)) {
+      throw new Error(`同一层级已存在「${name}」，请换一个名称`);
+    }
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      folders: state.folders.map((item) => item.id === folder.id ? { ...item, name, updatedAt: now } : item)
+    };
+  }));
+  ipcMain.handle('material-library:delete-folder', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const now = new Date().toISOString();
+    const folderIds = new Set([payload.id, ...getMaterialDescendantFolderIds(state.folders, payload.id)]);
+    return {
+      ...state,
+      folders: state.folders.map((folder) => folderIds.has(folder.id) ? { ...folder, deletedAt: now, updatedAt: now } : folder),
+      assets: state.assets.map((asset) => folderIds.has(asset.folderId) ? { ...asset, deletedAt: now, updatedAt: now } : asset)
+    };
+  }));
+  ipcMain.handle('material-library:restore-folder', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const now = new Date().toISOString();
+    const folderIds = new Set([payload.id, ...getMaterialDescendantFolderIds(state.folders, payload.id)]);
+    return {
+      ...state,
+      folders: state.folders.map((folder) => folderIds.has(folder.id) ? { ...folder, deletedAt: '', updatedAt: now } : folder),
+      assets: state.assets.map((asset) => folderIds.has(asset.folderId) ? { ...asset, deletedAt: '', updatedAt: now } : asset)
+    };
+  }));
+  ipcMain.handle('material-library:move-folder', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const folderId = String(payload.id || '');
+    const parentId = payload.parentId || null;
+    if (!folderId) throw new Error('文件夹不存在');
+    if (parentId === folderId || getMaterialDescendantFolderIds(state.folders, folderId).includes(parentId)) {
+      throw new Error('不能移动到自身或子文件夹中');
+    }
+    const folder = state.folders.find((item) => item.id === folderId && !item.deletedAt);
+    if (!folder) throw new Error('文件夹不存在');
+    if (parentId && !state.folders.some((item) => item.id === parentId && !item.deletedAt)) {
+      throw new Error('目标文件夹不存在');
+    }
+    if (hasSiblingMaterialFolderName(state.folders, parentId, folder.name, folderId)) {
+      throw new Error(`目标位置已存在「${folder.name}」，请先重命名`);
+    }
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      folders: state.folders.map((item) => item.id === folderId ? { ...item, parentId, updatedAt: now } : item)
+    };
+  }));
+  ipcMain.handle('material-library:move-assets', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const folderId = String(payload.folderId || '');
+    if (!state.folders.some((folder) => folder.id === folderId && !folder.deletedAt)) throw new Error('目标文件夹不存在');
+    const ids = new Set(Array.isArray(payload.assetIds) ? payload.assetIds : []);
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      assets: state.assets.map((asset) => ids.has(asset.id) ? { ...asset, folderId, updatedAt: now } : asset)
+    };
+  }));
+  ipcMain.handle('material-library:rename-asset', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const name = sanitizeMaterialName(payload.name);
+    if (!name) throw new Error('请输入素材名称');
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      assets: state.assets.map((asset) => asset.id === payload.id ? { ...asset, name, updatedAt: now } : asset)
+    };
+  }));
+  ipcMain.handle('material-library:delete-assets', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const ids = new Set(Array.isArray(payload.assetIds) ? payload.assetIds : []);
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      assets: state.assets.map((asset) => ids.has(asset.id) ? { ...asset, deletedAt: now, updatedAt: now } : asset)
+    };
+  }));
+  ipcMain.handle('material-library:restore-assets', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const ids = new Set(Array.isArray(payload.assetIds) ? payload.assetIds : []);
+    const activeFolderIds = new Set(state.folders.filter((folder) => !folder.deletedAt).map((folder) => folder.id));
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      assets: state.assets.map((asset) => ids.has(asset.id)
+        ? {
+            ...asset,
+            folderId: activeFolderIds.has(asset.folderId) ? asset.folderId : 'folder-local-upload',
+            deletedAt: '',
+            updatedAt: now
+          }
+        : asset)
+    };
+  }));
+  ipcMain.handle('material-library:toggle-asset-favorite', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const now = new Date().toISOString();
+    return {
+      ...state,
+      assets: state.assets.map((asset) => asset.id === payload.id ? { ...asset, favorite: Boolean(payload.favorite), updatedAt: now } : asset)
+    };
+  }));
+  ipcMain.handle('material-library:update-collaborator', async (_event, payload = {}) => updateMaterialLibraryState((state) => ({
+    ...state,
+    collaborators: state.collaborators.map((item) => item.phone === payload.phone
+      ? { ...item, role: normalizeCollaboratorRole(payload.role), enabled: Boolean(payload.enabled) }
+      : item)
+  })));
+  ipcMain.handle('material-library:update-folder-collaborators', async (_event, payload = {}) => updateMaterialLibraryState((state) => {
+    const folderCollaborators = normalizeFolderCollaborators(payload.collaborators);
+    let found = false;
+    const folders = state.folders.map((folder) => {
+      if (folder.id !== payload.folderId) return folder;
+      found = true;
+      return {
+        ...folder,
+        shared: folderCollaborators.length > 0,
+        collaborators: folderCollaborators,
+        updatedAt: new Date().toISOString()
+      };
+    });
+    if (!found) throw new Error('文件夹不存在');
+    return { ...state, folders };
+  }));
+  ipcMain.handle('material-library:sync-external-assets', async (_event, payload = {}) => updateMaterialLibraryState((state) => ({
+    ...state,
+    assets: mergeMaterialExternalAssets(state.assets, payload.assets)
+  })));
+  ipcMain.handle('material-library:reveal-asset', async (_event, payload = {}) => {
+    const state = loadMaterialLibraryState();
+    const asset = state.assets.find((item) => item.id === payload.id);
+    const filePath = asset?.localPath || asset?.originalPath || '';
+    if (!filePath || !fsSync.existsSync(filePath)) return { ok: false, state, error: '本地文件不存在' };
+    shell.showItemInFolder(filePath);
+    return okMaterialLibraryState(state);
+  });
+  ipcMain.handle('material-library:export-assets', async (_event, payload = {}) => exportMaterialAssets(Array.isArray(payload.assetIds) ? payload.assetIds : []));
+  ipcMain.handle('material-library:export-folder', async (_event, payload = {}) => {
+    const state = loadMaterialLibraryState();
+    const folderIds = new Set([payload.id, ...getMaterialDescendantFolderIds(state.folders, payload.id)]);
+    const assetIds = state.assets.filter((asset) => folderIds.has(asset.folderId) && !asset.deletedAt).map((asset) => asset.id);
+    return exportMaterialAssets(assetIds);
+  });
+  ipcMain.handle('material-library:import-local-entries', async (event, payload = {}) => importMaterialLocalEntries(event, payload));
+}
+
 function registerIpc() {
   ipcMain.handle('app:get-version', () => app.getVersion());
   ipcMain.handle('app:request-api', (_event, request = {}) => requestBackendApi(request));
@@ -653,6 +844,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('cloud:list-transfer-tasks', () => store.get('cloud.transfers', []));
+  registerMaterialLibraryIpc();
   ipcMain.handle('cloud:inspect-local-entries', async (_event, paths = []) => inspectLocalEntries(paths));
   ipcMain.handle('cloud:inspect-drive-file', async (_event, filePath) => {
     const stat = await fs.stat(filePath);
@@ -830,6 +1022,648 @@ function registerIpc() {
   ipcMain.handle('media:analyze-speech', async (_event, filePath) => analyzeSpeechWindow(filePath));
   ipcMain.handle('media:analyze-audio-continuity', async (_event, filePath) => analyzeAudioContinuity(filePath));
   ipcMain.handle('media:render-fission-mix', async (_event, request = {}) => renderFissionMix(request));
+}
+
+function okMaterialLibraryState(state) {
+  return { ok: true, state: normalizeMaterialLibraryState(state) };
+}
+
+function loadMaterialLibraryState() {
+  return normalizeMaterialLibraryState(store.get(MATERIAL_LIBRARY_STORE_KEY));
+}
+
+async function saveMaterialLibraryState(state) {
+  const normalized = normalizeMaterialLibraryState(state);
+  await setStoredValue(MATERIAL_LIBRARY_STORE_KEY, normalized);
+  return normalized;
+}
+
+async function updateMaterialLibraryState(updater) {
+  try {
+    const state = await updateStoredValue(MATERIAL_LIBRARY_STORE_KEY, (current) => {
+      const normalized = normalizeMaterialLibraryState(current);
+      return normalizeMaterialLibraryState(updater(normalized));
+    });
+    return okMaterialLibraryState(state);
+  } catch (error) {
+    return {
+      ok: false,
+      state: loadMaterialLibraryState(),
+      error: materialErrorMessage(error, '素材库操作失败')
+    };
+  }
+}
+
+function normalizeMaterialLibraryState(value) {
+  const record = value && typeof value === 'object' ? value : {};
+  const folders = normalizeMaterialFolders(record.folders);
+  const assets = normalizeMaterialAssets(record.assets, folders);
+  const collaborators = normalizeMaterialCollaborators(record.collaborators);
+  const foldersWithCounts = folders.map((folder) => ({
+    ...folder,
+    count: countMaterialFolderItems(folder.id, folders, assets)
+  }));
+  const activeFolders = foldersWithCounts.filter((folder) => !folder.deletedAt);
+  const activeAssets = assets.filter((asset) => !asset.deletedAt);
+  const activeSharedFolderIds = new Set(activeFolders.filter(isSharedMaterialFolder).map((folder) => folder.id));
+  const recentCutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  return {
+    folders: foldersWithCounts,
+    assets,
+    collaborators,
+    quickCounts: {
+      total: activeFolders.length + activeAssets.length,
+      collaboration: activeSharedFolderIds.size,
+      favorites: activeAssets.filter((asset) => asset.favorite || String(asset.status || '').includes('收藏')).length,
+      recent: activeAssets.filter((asset) => new Date(asset.updatedAt || asset.createdAt || 0).getTime() >= recentCutoff).length,
+      teamVideos: activeAssets.filter((asset) => asset.kind === '视频' || asset.kind === '成片').length,
+      recycle: foldersWithCounts.filter((folder) => folder.deletedAt).length + assets.filter((asset) => asset.deletedAt).length
+    }
+  };
+}
+
+function normalizeMaterialFolders(value) {
+  const incoming = Array.isArray(value) ? value : [];
+  const byId = new Map();
+  for (const folder of MATERIAL_LIBRARY_DEFAULT_FOLDERS) {
+    byId.set(folder.id, { ...folder });
+  }
+  for (const item of incoming) {
+    if (!item || typeof item !== 'object') continue;
+    const id = String(item.id || '').trim();
+    const name = sanitizeMaterialName(item.name);
+    if (!id || !name) continue;
+    byId.set(id, {
+      ...item,
+      id,
+      name,
+      parentId: item.parentId || null,
+      count: Number(item.count) || 0,
+      shared: Boolean(item.shared || hasFolderCollaborators(item.collaborators)),
+      collaborators: normalizeFolderCollaborators(item.collaborators),
+      deletedAt: item.deletedAt || '',
+      createdAt: item.createdAt || '',
+      updatedAt: item.updatedAt || ''
+    });
+  }
+  const ids = new Set(byId.keys());
+  return [...byId.values()].map((folder) => ({
+    ...folder,
+    parentId: folder.parentId && ids.has(folder.parentId) ? folder.parentId : null
+  }));
+}
+
+function normalizeMaterialAssets(value, folders) {
+  const folderIds = new Set(folders.map((folder) => folder.id));
+  const incoming = Array.isArray(value) ? value : [];
+  return incoming
+    .map((item) => normalizeMaterialAsset(item, folderIds))
+    .filter(Boolean);
+}
+
+function normalizeMaterialAsset(value, folderIds) {
+  if (!value || typeof value !== 'object') return null;
+  const id = String(value.id || '').trim();
+  const name = String(value.name || '').trim();
+  if (!id || !name) return null;
+  const folderId = value.folderId && folderIds.has(value.folderId) ? value.folderId : folderForMaterialSource(value.source);
+  return {
+    id,
+    folderId,
+    name,
+    kind: normalizeMaterialKind(value.kind),
+    size: value.size || formatMaterialBytes(Number(value.bytes) || 0),
+    bytes: Number(value.bytes) || undefined,
+    duration: value.duration || undefined,
+    status: value.status || '已导入',
+    tone: value.tone || toneForMaterialKind(value.kind),
+    mimeType: value.mimeType || undefined,
+    localPath: value.localPath || undefined,
+    originalPath: value.originalPath || undefined,
+    url: value.url || undefined,
+    source: value.source || undefined,
+    sourceRef: value.sourceRef || undefined,
+    favorite: Boolean(value.favorite),
+    deletedAt: value.deletedAt || '',
+    createdAt: value.createdAt || '',
+    updatedAt: value.updatedAt || '',
+    directorPackage: value.directorPackage || undefined
+  };
+}
+
+function normalizeMaterialCollaborators(value) {
+  const incoming = Array.isArray(value) && value.length ? value : MATERIAL_LIBRARY_DEFAULT_COLLABORATORS;
+  return incoming
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => ({
+      name: String(item.name || '').trim() || String(item.phone || '').trim() || '成员',
+      phone: String(item.phone || '').trim(),
+      role: normalizeCollaboratorRole(item.role),
+      enabled: Boolean(item.enabled)
+    }))
+    .filter((item) => item.phone);
+}
+
+function normalizeCollaboratorRole(value) {
+  if (value === '所有者' || value === '可管理' || value === '仅查看' || value === '无权限') return value;
+  return '无权限';
+}
+
+function normalizeFolderCollaborators(value) {
+  const incoming = Array.isArray(value) ? value : [];
+  const byPhone = new Map();
+  for (const item of incoming) {
+    if (!item || typeof item !== 'object') continue;
+    const phone = String(item.phone || '').trim();
+    const role = item.role === '可管理' || item.role === '仅查看' ? item.role : '';
+    if (!phone || !role) continue;
+    byPhone.set(phone, { phone, role });
+  }
+  return [...byPhone.values()];
+}
+
+function hasFolderCollaborators(value) {
+  return normalizeFolderCollaborators(value).length > 0;
+}
+
+function isSharedMaterialFolder(folder) {
+  return Boolean(folder.shared || hasFolderCollaborators(folder.collaborators));
+}
+
+function countMaterialFolderItems(folderId, folders, assets) {
+  const childFolders = folders.filter((folder) => folder.parentId === folderId && !folder.deletedAt);
+  const directAssets = assets.filter((asset) => asset.folderId === folderId && !asset.deletedAt);
+  return childFolders.length + directAssets.length;
+}
+
+function getMaterialDescendantFolderIds(folders, folderId) {
+  const children = folders.filter((folder) => folder.parentId === folderId);
+  return children.flatMap((folder) => [folder.id, ...getMaterialDescendantFolderIds(folders, folder.id)]);
+}
+
+function sanitizeMaterialName(value) {
+  return String(value || '').trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 120);
+}
+
+function normalizeMaterialFolderName(value) {
+  return sanitizeMaterialName(value).toLowerCase();
+}
+
+function hasSiblingMaterialFolderName(folders, parentId, name, excludeId) {
+  const normalizedName = normalizeMaterialFolderName(name);
+  return folders.some((folder) => (
+    !folder.deletedAt
+    && folder.id !== excludeId
+    && folder.parentId === parentId
+    && normalizeMaterialFolderName(folder.name) === normalizedName
+  ));
+}
+
+function mergeMaterialExternalAssets(currentAssets, externalAssets) {
+  const incoming = Array.isArray(externalAssets) ? externalAssets : [];
+  const managedSources = new Set(['director-package', 'canvas']);
+  const managedRefs = new Set(incoming.map(materialExternalKey));
+  const retained = currentAssets.filter((asset) => {
+    if (!asset.source || !managedSources.has(asset.source)) return true;
+    return managedRefs.has(materialExternalKey(asset));
+  });
+  const byKey = new Map(retained.map((asset) => [materialExternalKey(asset), asset]));
+  for (const asset of incoming) {
+    if (!asset || typeof asset !== 'object') continue;
+    const key = materialExternalKey(asset);
+    const current = byKey.get(key);
+    byKey.set(key, {
+      ...current,
+      ...asset,
+      id: asset.id || current?.id || key.replace(/[^a-zA-Z0-9_-]/g, '-'),
+      folderId: folderForMaterialSource(asset.source),
+      kind: normalizeMaterialKind(asset.kind),
+      size: asset.size || formatMaterialBytes(Number(asset.bytes) || 0),
+      status: asset.status || '已导入',
+      tone: asset.tone || toneForMaterialKind(asset.kind),
+      favorite: asset.favorite ?? current?.favorite ?? false,
+      deletedAt: asset.deletedAt ?? current?.deletedAt ?? ''
+    });
+  }
+  return [...byKey.values()].sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')));
+}
+
+function materialExternalKey(asset) {
+  return `${asset?.source || 'asset'}:${asset?.sourceRef || asset?.id || randomUUID()}`;
+}
+
+function folderForMaterialSource(source) {
+  if (source === 'director-package') return 'folder-director-packages';
+  if (source === 'canvas') return 'folder-ai-canvas';
+  return 'folder-local-upload';
+}
+
+function normalizeMaterialKind(kind) {
+  return ['视频', '图片', '音频', '工程', '成片'].includes(kind) ? kind : '工程';
+}
+
+function toneForMaterialKind(kind) {
+  if (kind === '视频') return 'blue';
+  if (kind === '图片') return 'cyan';
+  if (kind === '音频') return 'purple';
+  if (kind === '成片') return 'green';
+  return 'orange';
+}
+
+function materialKindForFile(filePath, mimeType = contentTypeForFile(filePath)) {
+  if (mimeType.startsWith('video/')) return '视频';
+  if (mimeType.startsWith('image/')) return '图片';
+  if (mimeType.startsWith('audio/')) return '音频';
+  const ext = path.extname(filePath).toLowerCase();
+  if (['.prproj', '.aep', '.json', '.xlsx', '.xls', '.csv', '.doc', '.docx', '.pdf'].includes(ext)) return '工程';
+  return '工程';
+}
+
+function formatMaterialBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function formatMaterialDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes.toString().padStart(2, '0')}:${rest.toString().padStart(2, '0')}`;
+}
+
+function materialErrorMessage(error, fallback) {
+  return error instanceof Error ? error.message : (error?.message || fallback);
+}
+
+async function importMaterialLocalEntries(event, payload = {}) {
+  const mode = payload.mode === 'folder' ? 'folder' : 'file';
+  const taskId = String(payload.taskId || `material-import-${Date.now()}`);
+  const targetFolderId = String(payload.folderId || 'folder-local-upload');
+  const selectedPaths = await pickMaterialImportPaths(mode);
+  const state = loadMaterialLibraryState();
+  if (!selectedPaths.length) {
+    sendMaterialImportProgress(event, {
+      taskId,
+      mode,
+      stage: 'canceled',
+      message: '已取消导入',
+      totalFiles: 0,
+      completedFiles: 0,
+      failedFiles: 0,
+      overallPercent: 0,
+      files: []
+    });
+    return { ok: false, canceled: true, state };
+  }
+
+  try {
+    const plan = await buildMaterialImportPlan(state, selectedPaths, mode, targetFolderId);
+    const files = plan.entries.map((entry) => ({
+      id: entry.id,
+      name: path.basename(entry.sourcePath),
+      relativePath: entry.relativePath,
+      size: formatMaterialBytes(entry.bytes || 0),
+      bytes: entry.bytes || 0,
+      status: 'queued',
+      percent: 0
+    }));
+    sendMaterialImportProgress(event, {
+      taskId,
+      mode,
+      stage: 'uploading',
+      message: `准备导入 ${plan.entries.length} 个文件`,
+      totalFiles: plan.entries.length,
+      completedFiles: 0,
+      failedFiles: 0,
+      overallPercent: 0,
+      files
+    });
+
+    const importedAssets = [];
+    let completedFiles = 0;
+    let failedFiles = 0;
+    for (let index = 0; index < plan.entries.length; index += 1) {
+      const entry = plan.entries[index];
+      files[index] = { ...files[index], status: 'uploading', percent: 12 };
+      sendMaterialImportProgress(event, {
+        taskId,
+        mode,
+        stage: 'uploading',
+        message: `正在导入 ${files[index].name}`,
+        totalFiles: files.length,
+        completedFiles,
+        failedFiles,
+        overallPercent: Math.round((index / Math.max(files.length, 1)) * 100),
+        currentFileId: entry.id,
+        files
+      });
+      try {
+        const asset = await materialAssetFromLocalFile(entry.sourcePath, entry.folderId);
+        importedAssets.push(asset);
+        files[index] = { ...files[index], status: 'done', percent: 100 };
+        completedFiles += 1;
+      } catch (error) {
+        failedFiles += 1;
+        files[index] = {
+          ...files[index],
+          status: 'failed',
+          percent: 100,
+          message: materialErrorMessage(error, '导入失败')
+        };
+      }
+      sendMaterialImportProgress(event, {
+        taskId,
+        mode,
+        stage: index === plan.entries.length - 1 ? 'done' : 'uploading',
+        message: failedFiles ? `已完成 ${completedFiles} 个，失败 ${failedFiles} 个` : `已完成 ${completedFiles} 个文件`,
+        totalFiles: files.length,
+        completedFiles,
+        failedFiles,
+        overallPercent: Math.round(((index + 1) / Math.max(files.length, 1)) * 100),
+        currentFileId: entry.id,
+        files
+      });
+    }
+
+    const now = new Date().toISOString();
+    const importedIds = new Set(importedAssets.map((asset) => asset.id));
+    const nextState = await saveMaterialLibraryState({
+      ...plan.state,
+      folders: plan.state.folders.map((folder) => plan.touchedFolderIds.has(folder.id) ? { ...folder, updatedAt: now } : folder),
+      assets: [
+        ...importedAssets,
+        ...plan.state.assets.filter((asset) => !importedIds.has(asset.id))
+      ]
+    });
+    sendMaterialImportProgress(event, {
+      taskId,
+      mode,
+      stage: 'done',
+      message: failedFiles ? `导入完成，${failedFiles} 个文件失败` : '导入完成',
+      totalFiles: files.length,
+      completedFiles,
+      failedFiles,
+      overallPercent: 100,
+      files
+    });
+    return {
+      ok: true,
+      state: nextState,
+      assets: importedAssets,
+      folders: plan.createdFolders
+    };
+  } catch (error) {
+    const latestState = loadMaterialLibraryState();
+    sendMaterialImportProgress(event, {
+      taskId,
+      mode,
+      stage: 'failed',
+      message: materialErrorMessage(error, '导入失败'),
+      totalFiles: 0,
+      completedFiles: 0,
+      failedFiles: 0,
+      overallPercent: 0,
+      files: []
+    });
+    return { ok: false, state: latestState, error: materialErrorMessage(error, '导入失败') };
+  }
+}
+
+async function pickMaterialImportPaths(mode) {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: mode === 'folder' ? '选择要导入的素材文件夹' : '选择要导入的素材文件',
+    properties: mode === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections'],
+    filters: mode === 'folder'
+      ? undefined
+      : [
+          { name: '素材文件', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi', 'mp3', 'wav', 'm4a', 'aac', 'flac', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'json', 'pdf', 'doc', 'docx', 'xlsx', 'csv'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+  });
+  return result.canceled ? [] : result.filePaths;
+}
+
+async function buildMaterialImportPlan(inputState, selectedPaths, mode, targetFolderId) {
+  const state = normalizeMaterialLibraryState(inputState);
+  const activeFolderIds = new Set(state.folders.filter((folder) => !folder.deletedAt).map((folder) => folder.id));
+  const safeTargetFolderId = activeFolderIds.has(targetFolderId) ? targetFolderId : 'folder-local-upload';
+  const createdFolders = [];
+  const touchedFolderIds = new Set([safeTargetFolderId]);
+  const entries = [];
+
+  if (mode === 'file') {
+    for (const sourcePath of selectedPaths) {
+      const stat = await fs.stat(sourcePath);
+      if (!stat.isFile()) continue;
+      entries.push({
+        id: `import-${randomUUID()}`,
+        sourcePath,
+        relativePath: path.basename(sourcePath),
+        folderId: safeTargetFolderId,
+        bytes: stat.size
+      });
+    }
+    return { state, entries, createdFolders, touchedFolderIds };
+  }
+
+  for (const rootPath of selectedPaths) {
+    const rootStat = await fs.stat(rootPath);
+    if (!rootStat.isDirectory()) continue;
+    const rootFolderId = ensureMaterialFolderInState(state, safeTargetFolderId, path.basename(rootPath), createdFolders);
+    touchedFolderIds.add(rootFolderId);
+    const files = await collectMaterialImportFiles(rootPath);
+    const folderCache = new Map([['', rootFolderId]]);
+    for (const file of files) {
+      const relativeDir = normalizeRelativeMaterialDir(path.dirname(file.relativePath));
+      const folderId = ensureMaterialImportFolderPath(state, rootFolderId, relativeDir, folderCache, createdFolders);
+      touchedFolderIds.add(folderId);
+      entries.push({
+        id: `import-${randomUUID()}`,
+        sourcePath: file.sourcePath,
+        relativePath: path.join(path.basename(rootPath), file.relativePath),
+        folderId,
+        bytes: file.bytes
+      });
+    }
+  }
+
+  return { state, entries, createdFolders, touchedFolderIds };
+}
+
+async function collectMaterialImportFiles(rootPath, relativeDir = '') {
+  const output = [];
+  const entries = await fs.readdir(rootPath, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === '.DS_Store' || entry.name === 'Thumbs.db') continue;
+    const sourcePath = path.join(rootPath, entry.name);
+    const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      output.push(...await collectMaterialImportFiles(sourcePath, relativePath));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const stat = await fs.stat(sourcePath);
+    output.push({ sourcePath, relativePath, bytes: stat.size });
+    if (output.length > 1200) throw new Error('单次最多导入 1200 个文件，请分批导入');
+  }
+  return output;
+}
+
+function ensureMaterialImportFolderPath(state, rootFolderId, relativeDir, folderCache, createdFolders) {
+  const normalized = normalizeRelativeMaterialDir(relativeDir);
+  if (!normalized) return rootFolderId;
+  if (folderCache.has(normalized)) return folderCache.get(normalized);
+  const parts = normalized.split('/').filter(Boolean);
+  let parentId = rootFolderId;
+  let currentPath = '';
+  for (const part of parts) {
+    currentPath = currentPath ? `${currentPath}/${part}` : part;
+    if (folderCache.has(currentPath)) {
+      parentId = folderCache.get(currentPath);
+      continue;
+    }
+    parentId = ensureMaterialFolderInState(state, parentId, part, createdFolders);
+    folderCache.set(currentPath, parentId);
+  }
+  return parentId;
+}
+
+function ensureMaterialFolderInState(state, parentId, rawName, createdFolders) {
+  const name = sanitizeMaterialName(rawName) || '未命名文件夹';
+  const existing = state.folders.find((folder) => (
+    !folder.deletedAt
+    && folder.parentId === parentId
+    && normalizeMaterialFolderName(folder.name) === normalizeMaterialFolderName(name)
+  ));
+  if (existing) return existing.id;
+  const now = new Date().toISOString();
+  const folder = {
+    id: `folder-${randomUUID()}`,
+    name,
+    parentId,
+    count: 0,
+    createdAt: now,
+    updatedAt: now
+  };
+  state.folders.push(folder);
+  createdFolders.push(folder);
+  return folder.id;
+}
+
+function normalizeRelativeMaterialDir(value) {
+  const normalized = String(value || '').replace(/\\/g, '/');
+  return normalized === '.' ? '' : normalized.replace(/^\/+|\/+$/g, '');
+}
+
+async function materialAssetFromLocalFile(sourcePath, folderId) {
+  const stat = await fs.stat(sourcePath);
+  if (!stat.isFile()) throw new Error('只能导入文件');
+  const id = `asset-${randomUUID()}`;
+  const mimeType = contentTypeForFile(sourcePath);
+  const kind = materialKindForFile(sourcePath, mimeType);
+  const managedPath = await copyMaterialFileToManagedLibrary(sourcePath, id);
+  let duration = '';
+  if (kind === '视频' || kind === '音频') {
+    const metadata = await probeMedia(managedPath).catch(() => null);
+    if (metadata?.duration) duration = formatMaterialDuration(metadata.duration);
+  }
+  const now = new Date().toISOString();
+  return {
+    id,
+    folderId,
+    name: path.basename(sourcePath),
+    kind,
+    size: formatMaterialBytes(stat.size),
+    bytes: stat.size,
+    duration,
+    status: '已导入',
+    tone: toneForMaterialKind(kind),
+    mimeType,
+    localPath: managedPath,
+    originalPath: sourcePath,
+    source: 'local-file',
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+async function copyMaterialFileToManagedLibrary(sourcePath, id) {
+  const safeName = safeMaterialFileName(path.basename(sourcePath));
+  const datePart = new Date().toISOString().slice(0, 10);
+  const targetDir = path.join(app.getPath('userData'), 'material-library', 'assets', datePart);
+  await fs.mkdir(targetDir, { recursive: true });
+  const targetPath = await uniqueMaterialFilePath(targetDir, `${id}-${safeName}`);
+  await fs.copyFile(sourcePath, targetPath);
+  return targetPath;
+}
+
+async function uniqueMaterialFilePath(targetDir, fileName) {
+  const ext = path.extname(fileName);
+  const base = path.basename(fileName, ext);
+  let candidate = path.join(targetDir, fileName);
+  let index = 1;
+  while (fsSync.existsSync(candidate)) {
+    candidate = path.join(targetDir, `${base}-${index}${ext}`);
+    index += 1;
+  }
+  return candidate;
+}
+
+function safeMaterialFileName(fileName) {
+  const ext = path.extname(fileName);
+  const base = path.basename(fileName, ext)
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100);
+  return `${base || 'material'}${ext}`;
+}
+
+function sendMaterialImportProgress(event, progress) {
+  event.sender.send('material-library:import-progress', progress);
+}
+
+async function exportMaterialAssets(assetIds) {
+  const state = loadMaterialLibraryState();
+  const ids = new Set(assetIds);
+  const assets = state.assets.filter((asset) => ids.has(asset.id) && !asset.deletedAt);
+  if (!assets.length) return { ok: false, state, error: '请选择要导出的素材' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择导出目录',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true, state };
+  const targetDir = result.filePaths[0];
+  let count = 0;
+  for (const asset of assets) {
+    const sourcePath = asset.localPath || asset.originalPath || '';
+    if (sourcePath && fsSync.existsSync(sourcePath)) {
+      const targetPath = await uniqueMaterialFilePath(targetDir, safeMaterialFileName(asset.name || path.basename(sourcePath)));
+      await fs.copyFile(sourcePath, targetPath);
+      count += 1;
+      continue;
+    }
+    const jsonName = safeMaterialFileName(`${asset.name || asset.id}.json`);
+    const targetPath = await uniqueMaterialFilePath(targetDir, jsonName);
+    await fs.writeFile(targetPath, JSON.stringify(asset, null, 2), 'utf8');
+    count += 1;
+  }
+  shell.showItemInFolder(targetDir);
+  return {
+    ok: true,
+    state,
+    exported: {
+      count,
+      directory: targetDir
+    }
+  };
 }
 
 function readOptimizedImageData(filePath, options = {}) {

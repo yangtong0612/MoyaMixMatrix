@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type DragEvent, type ErrorInfo, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type DragEvent, type ErrorInfo, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { flushSync } from 'react-dom';
 import {
@@ -15,12 +15,16 @@ import {
   ImagePlus,
   Info,
   ListVideo,
+  LockKeyhole,
+  LogOut,
+  Mail,
   MonitorSmartphone,
   Moon,
   Package,
   PlayCircle,
   RotateCcw,
   Settings,
+  ShieldCheck,
   ShoppingBag,
   Search,
   X,
@@ -31,12 +35,15 @@ import {
   Type,
   Upload,
   UserRound,
+  UserPlus,
   Volume2,
   WandSparkles
 } from 'lucide-react';
 import { CloudDrivePage } from '@/features/cloud-drive/CloudDrivePage';
+import { MaterialLibraryPage } from '@/features/materials/pages/MaterialLibraryPage';
 import { CaptionTemplateEmpty, CaptionTemplateShowcase, filterCaptionTemplatePresets } from '@/features/caption-templates';
 import { useEditorStore } from '@/features/editor/editorStore';
+import { ViralDirectorPage } from '@/pages/ViralDirectorPage';
 import {
   cacheProductVideoAssetLocally,
   createProductVideoTask,
@@ -47,36 +54,166 @@ import {
   uploadProductVideoAsset,
   type ProductVideoTaskStatus
 } from '@/features/product-video/productVideoApi';
+import { getMe, type CurrentUserView } from '@/features/cloud-drive/api/netdisk';
+import { useCloudDriveStore } from '@/features/cloud-drive/cloudDriveStore';
 import moyaMatrixLogo from '@/assets/moya-matrix-logo.svg';
 import { buildMaterialSplitSegments, materialSplitPresets, type MaterialSplitPlanSegment, type MaterialSplitPresetKey } from '@/shared/mediaSplit';
 import type { MediaCacheResult, MediaCropResult, MediaProbeResult, MediaSplitResult, OssUploadProgress, OssUploadResult } from '@/shared/types/electron';
+import type { PageKey } from '@/types';
 
 const DIGITAL_HUMAN_ROUTE = '/digital-human';
 const LEGACY_PRODUCT_VIDEO_ROUTE = '/product-video/create';
+const AUTH_SESSION_KEY = 'moya-auth-session';
+const AUTH_ACCOUNTS_KEY = 'moya-auth-accounts';
+const AUTH_LOGGED_OUT_KEY = 'moya-auth-logged-out';
 
-const navItems = [
+type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  org: string;
+};
+
+type StoredAuthAccount = AuthUser & {
+  password: string;
+};
+
+const defaultAuthUser: AuthUser = {
+  id: 'default-admin',
+  name: 'admin',
+  email: 'admin@moya.local',
+  role: '企业管理员',
+  org: 'moya矩阵'
+};
+
+const defaultAuthAccount: StoredAuthAccount = {
+  ...defaultAuthUser,
+  password: '123456'
+};
+
+function readJsonValue<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveAuthSession(user: AuthUser) {
+  window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(user));
+  window.localStorage.removeItem(AUTH_LOGGED_OUT_KEY);
+}
+
+function clearAuthSession() {
+  window.localStorage.removeItem(AUTH_SESSION_KEY);
+  window.localStorage.setItem(AUTH_LOGGED_OUT_KEY, '1');
+}
+
+function loadAuthAccounts(): StoredAuthAccount[] {
+  const stored = readJsonValue<StoredAuthAccount[]>(AUTH_ACCOUNTS_KEY, []);
+  const normalizedStored = stored.map(normalizeStoredAuthAccount);
+  const hasDefault = normalizedStored.some((account) => isDefaultAuthIdentity(account));
+  const accounts = hasDefault ? normalizedStored : [defaultAuthAccount, ...normalizedStored];
+  if (!hasDefault || JSON.stringify(accounts) !== JSON.stringify(stored)) {
+    window.localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(accounts));
+  }
+  return accounts;
+}
+
+function saveAuthAccounts(accounts: StoredAuthAccount[]) {
+  window.localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(accounts));
+}
+
+function loadInitialAuthUser(): AuthUser | null {
+  const session = normalizeAuthUser(readJsonValue<AuthUser | null>(AUTH_SESSION_KEY, null));
+  if (session?.id && session.email) {
+    saveAuthSession(session);
+    return session;
+  }
+  if (window.localStorage.getItem(AUTH_LOGGED_OUT_KEY) === '1') return null;
+  loadAuthAccounts();
+  saveAuthSession(defaultAuthUser);
+  return defaultAuthUser;
+}
+
+function normalizeAuthUser(user: AuthUser | null): AuthUser | null {
+  if (!user) return null;
+  if (isDefaultAuthIdentity(user) && user.name === '张伟') {
+    return {
+      ...defaultAuthUser,
+      email: user.email || defaultAuthUser.email
+    };
+  }
+  return user;
+}
+
+function normalizeStoredAuthAccount(account: StoredAuthAccount): StoredAuthAccount {
+  if (isDefaultAuthIdentity(account) && account.name === '张伟') {
+    return {
+      ...account,
+      ...defaultAuthUser,
+      password: account.password || defaultAuthAccount.password
+    };
+  }
+  return account;
+}
+
+function isDefaultAuthIdentity(user: Partial<Pick<AuthUser, 'id' | 'email'>>) {
+  return user.id === defaultAuthUser.id || (typeof user.email === 'string' && user.email.toLowerCase() === defaultAuthUser.email.toLowerCase());
+}
+
+function authInitials(name: string) {
+  const clean = String(name || '').trim();
+  if (!clean) return 'M';
+  return clean.length >= 2 ? clean.slice(0, 2).toUpperCase() : clean.toUpperCase();
+}
+
+function authUserFromDriveUser(user: CurrentUserView): AuthUser {
+  const username = optionalText(user.username);
+  const displayName = optionalText(user.displayName) || username || optionalText(user.email) || optionalText(user.phone) || 'moya用户';
+  const contact = optionalText(user.email) || optionalText(user.phone) || username || `${user.id}@moya.local`;
+  return {
+    id: user.id,
+    name: displayName,
+    email: contact,
+    role: username === 'local_drive' ? '本地网盘' : '网盘账号',
+    org: 'moya矩阵'
+  };
+}
+
+function isSameAuthUser(left: AuthUser | null, right: AuthUser) {
+  return Boolean(
+    left
+    && left.id === right.id
+    && left.name === right.name
+    && left.email === right.email
+    && left.role === right.role
+    && left.org === right.org
+  );
+}
+
+const primaryNavItems = [
   { to: '/', label: '首页', icon: Home },
   { to: '/materials', label: '素材库', icon: ImagePlus },
+  { to: '/viral-director', label: '爆款编导', icon: Flame },
   { to: '/cloud-drive', label: '网盘', icon: Cloud },
-  { to: '/editor', label: '剪辑', icon: Clapperboard },
-  { to: '/transfers', label: '传输', icon: Download },
-  { to: '/settings', label: '设置', icon: Settings }
+  { to: '/editor', label: '剪辑', icon: Clapperboard }
 ];
 
 const digitalHumanNavItem = { to: DIGITAL_HUMAN_ROUTE, label: '数字人口播', icon: UserRound };
 
 const workspaceNavItems = [
-  ...navItems.slice(0, 4),
+  ...primaryNavItems,
   digitalHumanNavItem,
-  { to: '/subtitle-template', label: '字幕模板', icon: Type },
-  ...navItems.slice(4)
+  { to: '/subtitle-template', label: '字幕模板', icon: Type }
 ];
 
 const sidebarNavItems = [
-  ...navItems.slice(0, 4),
+  ...primaryNavItems.filter((item) => item.to !== '/cloud-drive'),
   digitalHumanNavItem,
-  { to: '/subtitle-template', label: '字幕模板', icon: WandSparkles },
-  ...navItems.slice(4)
+  { to: '/subtitle-template', label: '字幕模板', icon: WandSparkles }
 ];
 
 const editorLoadingStages = [
@@ -1213,21 +1350,56 @@ function scenarioVideoLines(key: ProductVideoScenarioKey, sampleCopy: string) {
 
 export function App() {
   const location = useLocation();
+  const navigate = useNavigate();
   const isNavigationLocked = useEditorStore((state) => state.isNavigationLocked);
   const navigationLockReason = useEditorStore((state) => state.navigationLockReason);
   const isEditorRoute = location.pathname.startsWith('/editor');
   const isSubtitleTemplateRoute = location.pathname.startsWith('/subtitle-template');
   const isProductCreateRoute = location.pathname.startsWith(DIGITAL_HUMAN_ROUTE) || location.pathname.startsWith(LEGACY_PRODUCT_VIDEO_ROUTE);
-  const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers');
+  const isViralDirectorRoute = location.pathname.startsWith('/viral-director');
+  const isCloudRoute = location.pathname.startsWith('/cloud-drive') || location.pathname.startsWith('/transfers') || location.pathname.startsWith('/materials');
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return localStorage.getItem('moya-theme') === 'light' ? 'light' : 'dark';
   });
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => loadInitialAuthUser());
+  const [authMenuOpen, setAuthMenuOpen] = useState(false);
+  const driveCurrentUser = useCloudDriveStore((state) => state.currentUser);
+  const setDriveCurrentUser = useCloudDriveStore((state) => state.setCurrentUser);
+  const clearCloudWorkspace = useCloudDriveStore((state) => state.clearWorkspace);
 
   useEffect(() => {
     localStorage.setItem('moya-theme', theme);
     document.documentElement.dataset.theme = theme;
     window.surgicol?.app?.setTitlebarTheme(theme).catch(() => undefined);
   }, [theme]);
+
+  function applyDriveUserToAuthSession(user: CurrentUserView) {
+    if (window.localStorage.getItem(AUTH_LOGGED_OUT_KEY) === '1') return;
+    const nextUser = authUserFromDriveUser(user);
+    saveAuthSession(nextUser);
+    setAuthUser((currentUser) => (isSameAuthUser(currentUser, nextUser) ? currentUser : nextUser));
+  }
+
+  useEffect(() => {
+    if (!driveCurrentUser) return;
+    applyDriveUserToAuthSession(driveCurrentUser);
+  }, [driveCurrentUser]);
+
+  useEffect(() => {
+    if (!authUser) return undefined;
+    if (window.localStorage.getItem(AUTH_LOGGED_OUT_KEY) === '1') return undefined;
+    let canceled = false;
+    getMe()
+      .then((user) => {
+        if (canceled) return;
+        setDriveCurrentUser(user);
+        applyDriveUserToAuthSession(user);
+      })
+      .catch(() => undefined);
+    return () => {
+      canceled = true;
+    };
+  }, [authUser?.id, setDriveCurrentUser]);
 
   useEffect(() => {
     if (!isNavigationLocked) return undefined;
@@ -1251,8 +1423,102 @@ export function App() {
     return true;
   }
 
+  function handleFeatureNavigate(page: PageKey) {
+    if (page === 'production') {
+      navigate('/editor?workflow=fission');
+      return;
+    }
+    if (page === 'research') {
+      navigate('/cloud-drive');
+      return;
+    }
+    if (page === 'material-library' || page === 'materials') {
+      navigate('/materials');
+      return;
+    }
+    if (page === 'digital-human') {
+      navigate(DIGITAL_HUMAN_ROUTE);
+      return;
+    }
+    if (page === 'editor') {
+      navigate('/editor');
+    }
+  }
+
+  function handleLogin(email: string, password: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const account = loadAuthAccounts().find((item) => item.email.toLowerCase() === normalizedEmail);
+    if (!account || account.password !== password) {
+      return '账号或密码不正确';
+    }
+    const user: AuthUser = {
+      id: account.id,
+      name: account.name,
+      email: account.email,
+      role: account.role,
+      org: account.org
+    };
+    saveAuthSession(user);
+    setAuthUser(user);
+    navigate('/');
+    return '';
+  }
+
+  function handleRegister(payload: { name: string; email: string; password: string; role: string; org: string }) {
+    const name = payload.name.trim();
+    const email = payload.email.trim().toLowerCase();
+    const password = payload.password.trim();
+    const role = payload.role.trim() || '团队成员';
+    const org = payload.org.trim() || 'moya矩阵';
+    if (!name) return '请输入姓名';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return '请输入有效邮箱';
+    if (password.length < 6) return '密码至少 6 位';
+    const accounts = loadAuthAccounts();
+    if (accounts.some((account) => account.email.toLowerCase() === email)) return '该邮箱已注册';
+    const account: StoredAuthAccount = {
+      id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      email,
+      password,
+      role,
+      org
+    };
+    saveAuthAccounts([account, ...accounts]);
+    const user: AuthUser = {
+      id: account.id,
+      name: account.name,
+      email: account.email,
+      role: account.role,
+      org: account.org
+    };
+    saveAuthSession(user);
+    setAuthUser(user);
+    navigate('/');
+    return '';
+  }
+
+  function handleLogout() {
+    if (isNavigationLocked) return;
+    clearAuthSession();
+    setAuthMenuOpen(false);
+    clearCloudWorkspace();
+    setAuthUser(null);
+    navigate('/');
+  }
+
+  if (!authUser) {
+    return (
+      <AuthScreen
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onLogin={handleLogin}
+        onRegister={handleRegister}
+      />
+    );
+  }
+
   return (
-    <div className={`app-window theme-${theme}${isEditorRoute || isSubtitleTemplateRoute || isProductCreateRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
+    <div className={`app-window theme-${theme}${isEditorRoute || isSubtitleTemplateRoute || isProductCreateRoute || isViralDirectorRoute ? ' editor-workbench' : ''}${isCloudRoute ? ' cloud-workbench' : ''}`}>
       <header className="app-titlebar">
         <NavLink
           className={isNavigationLocked ? 'titlebar-brand route-lock-disabled' : 'titlebar-brand'}
@@ -1268,7 +1534,7 @@ export function App() {
             <span>{theme === 'dark' ? '暗夜模式' : '白天模式'}</span>
           </div>
         </NavLink>
-        {isEditorRoute || isSubtitleTemplateRoute || isProductCreateRoute ? (
+        {isEditorRoute || isSubtitleTemplateRoute || isProductCreateRoute || isViralDirectorRoute ? (
           <nav className="titlebar-nav" aria-label="功能切换">
             {workspaceNavItems.map((item) => (
               <NavLink
@@ -1287,6 +1553,17 @@ export function App() {
           </nav>
         ) : null}
         <div className="titlebar-actions">
+          <NavLink
+            className={({ isActive }) => `titlebar-action-link${isActive ? ' active' : ''}${isNavigationLocked ? ' route-lock-disabled' : ''}`}
+            to="/settings"
+            onClick={(event) => {
+              void preventLockedNavigation(event, '/settings');
+            }}
+            title={isNavigationLocked ? navigationLockTitle : '设置'}
+          >
+            <Settings size={15} />
+            <span>设置</span>
+          </NavLink>
           <button className="theme-toggle" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
             <span>{theme === 'dark' ? '白天' : '暗夜'}</span>
@@ -1320,12 +1597,41 @@ export function App() {
               </NavLink>
             ))}
           </nav>
+          <div className="sidebar-user-area">
+            <button
+              className={`sidebar-user-card${authMenuOpen ? ' open' : ''}`}
+              type="button"
+              onClick={() => setAuthMenuOpen((open) => !open)}
+              aria-expanded={authMenuOpen}
+            >
+              <span className="sidebar-user-avatar">{authInitials(authUser.name)}</span>
+              <span className="sidebar-user-copy">
+                <strong>{authUser.name}</strong>
+                <small>{authUser.email}</small>
+              </span>
+              <ChevronDown size={16} />
+            </button>
+            {authMenuOpen ? (
+              <div className="sidebar-user-menu">
+                <div className="sidebar-user-meta">
+                  <span>{authUser.org} · {authUser.role}</span>
+                  <small>{authUser.email}</small>
+                </div>
+                <button type="button" onClick={handleLogout} disabled={isNavigationLocked} title={isNavigationLocked ? navigationLockTitle : undefined}>
+                  <LogOut size={15} />
+                  <span>退出系统</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
         </aside>
 
         <main className="app-main">
           <Routes>
             <Route path="/" element={<HomeView />} />
-            <Route path="/materials" element={<MaterialLibraryView />} />
+            <Route path="/materials" element={<MaterialLibraryPage onNavigate={handleFeatureNavigate} />} />
+            <Route path="/material-library" element={<MaterialLibraryPage onNavigate={handleFeatureNavigate} />} />
+            <Route path="/viral-director" element={<ViralDirectorPage onNavigate={handleFeatureNavigate} />} />
             <Route path="/cloud-drive" element={<CloudDrivePage />} />
             <Route
               path="/editor"
@@ -1354,6 +1660,208 @@ export function App() {
           </Routes>
         </main>
       </div>
+    </div>
+  );
+}
+
+function AuthScreen({
+  theme,
+  onToggleTheme,
+  onLogin,
+  onRegister
+}: {
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
+  onLogin: (email: string, password: string) => string;
+  onRegister: (payload: { name: string; email: string; password: string; role: string; org: string }) => string;
+}) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('admin@moya.local');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [role, setRole] = useState('企业管理员');
+  const [org, setOrg] = useState('moya矩阵');
+  const [message, setMessage] = useState('');
+
+  function switchMode(nextMode: 'login' | 'register') {
+    setMode(nextMode);
+    setMessage('');
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage('');
+    if (mode === 'login') {
+      if (!email.trim() || !password.trim()) {
+        setMessage('请输入账号和密码');
+        return;
+      }
+      const error = onLogin(email, password);
+      if (error) setMessage(error);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setMessage('两次输入的密码不一致');
+      return;
+    }
+    const error = onRegister({ name, email, password, role, org });
+    if (error) setMessage(error);
+  }
+
+  return (
+    <div className={`app-window auth-window theme-${theme}`}>
+      <header className="app-titlebar auth-titlebar">
+        <div className="titlebar-brand">
+          <img src={moyaMatrixLogo} alt="moya矩阵" />
+          <div>
+            <strong>moya矩阵</strong>
+            <span>企业内容工作台</span>
+          </div>
+        </div>
+        <div className="titlebar-actions">
+          <button className="theme-toggle" type="button" onClick={onToggleTheme}>
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            <span>{theme === 'dark' ? '白天' : '暗夜'}</span>
+          </button>
+        </div>
+      </header>
+
+      <main className="auth-page">
+        <div className="auth-motion-field" aria-hidden="true">
+          <span className="auth-data-lane lane-a"><i /></span>
+          <span className="auth-data-lane lane-b"><i /></span>
+          <span className="auth-data-lane lane-c"><i /></span>
+          <span className="auth-corner-mark mark-a" />
+          <span className="auth-corner-mark mark-b" />
+        </div>
+        <section className="auth-hero-panel">
+          <img src={moyaMatrixLogo} alt="" />
+          <span className="auth-eyebrow"><ShieldCheck size={15} /> 企业账号中心</span>
+          <h1>登录 moya矩阵</h1>
+          <p>统一进入素材库、爆款编导、剪辑和数字人口播工作流。</p>
+          <div className="auth-feature-grid" aria-hidden="true">
+            <span>素材协作</span>
+            <span>脚本生产</span>
+            <span>批量剪辑</span>
+          </div>
+          <div className="auth-live-stage" aria-hidden="true">
+            <div className="auth-scan-frame">
+              <span />
+              <b />
+            </div>
+            <div className="auth-flow-card card-a">
+              <small>素材库</small>
+              <strong>144</strong>
+              <span><i /> 同步中</span>
+            </div>
+            <div className="auth-flow-card card-b">
+              <small>爆款编导</small>
+              <strong>12</strong>
+              <span><i /> 生成中</span>
+            </div>
+            <div className="auth-flow-card card-c">
+              <small>剪辑队列</small>
+              <strong>03</strong>
+              <span><i /> 待处理</span>
+            </div>
+            <div className="auth-signal-stack">
+              <span style={{ '--level': '62%' } as CSSProperties} />
+              <span style={{ '--level': '82%' } as CSSProperties} />
+              <span style={{ '--level': '46%' } as CSSProperties} />
+              <span style={{ '--level': '70%' } as CSSProperties} />
+              <span style={{ '--level': '54%' } as CSSProperties} />
+            </div>
+          </div>
+        </section>
+
+        <section className="auth-panel" aria-label="账号登录注册">
+          <div className="auth-tabs">
+            <button className={mode === 'login' ? 'active' : ''} type="button" onClick={() => switchMode('login')}>
+              <UserRound size={16} />
+              <span>登录</span>
+            </button>
+            <button className={mode === 'register' ? 'active' : ''} type="button" onClick={() => switchMode('register')}>
+              <UserPlus size={16} />
+              <span>注册</span>
+            </button>
+          </div>
+
+          <form className="auth-form" onSubmit={handleSubmit}>
+            {mode === 'register' ? (
+              <label>
+                <span>姓名</span>
+                <div className="auth-input">
+                  <UserRound size={16} />
+                  <input value={name} onChange={(event) => setName(event.target.value)} placeholder="请输入姓名" />
+                </div>
+              </label>
+            ) : null}
+
+            <label>
+              <span>邮箱账号</span>
+              <div className="auth-input">
+                <Mail size={16} />
+                <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" />
+              </div>
+            </label>
+
+            {mode === 'register' ? (
+              <div className="auth-form-grid">
+                <label>
+                  <span>组织</span>
+                  <input value={org} onChange={(event) => setOrg(event.target.value)} placeholder="企业或团队名称" />
+                </label>
+                <label>
+                  <span>角色</span>
+                  <select value={role} onChange={(event) => setRole(event.target.value)}>
+                    <option>企业管理员</option>
+                    <option>内容负责人</option>
+                    <option>团队成员</option>
+                  </select>
+                </label>
+              </div>
+            ) : null}
+
+            <label>
+              <span>密码</span>
+              <div className="auth-input">
+                <LockKeyhole size={16} />
+                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === 'login' ? '请输入密码' : '至少 6 位'} />
+              </div>
+            </label>
+
+            {mode === 'register' ? (
+              <label>
+                <span>确认密码</span>
+                <div className="auth-input">
+                  <LockKeyhole size={16} />
+                  <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="再次输入密码" />
+                </div>
+              </label>
+            ) : (
+              <div className="auth-options">
+                <label>
+                  <input type="checkbox" defaultChecked />
+                  <span>记住登录状态</span>
+                </label>
+                <button type="button" onClick={() => setMessage('请联系企业管理员重置密码')}>
+                  忘记密码
+                </button>
+              </div>
+            )}
+
+            {message ? <p className="auth-message">{message}</p> : null}
+
+            <button className="auth-submit" type="submit">
+              {mode === 'login' ? '登录系统' : '创建账号'}
+              <ArrowRight size={16} />
+            </button>
+          </form>
+
+          <p className="auth-demo-hint">默认账号：admin@moya.local，密码：123456</p>
+        </section>
+      </main>
     </div>
   );
 }
