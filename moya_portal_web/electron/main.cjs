@@ -3,7 +3,7 @@ const http = require('node:http');
 const https = require('node:https');
 const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
-const { execFile, execFileSync } = require('node:child_process');
+const { execFile, execFileSync, spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
@@ -2132,9 +2132,21 @@ function evenFloor(value) {
   return Math.max(0, Math.floor((Number(value) || 0) / 2) * 2);
 }
 
+function shouldUseBrowserPreviewRenderer(overlay) {
+  return isSubtitleTemplateOverlayKey(overlay?.templateKey);
+}
+
 async function renderViralVideo(sourcePath, outputPath, overlay) {
   if (!ffmpegPath) {
     throw new Error('未找到可用的 ffmpeg，无法渲染字幕和特效');
+  }
+  if (shouldUseBrowserPreviewRenderer(overlay)) {
+    try {
+      await renderViralVideoWithBrowserPreview(sourcePath, outputPath, overlay);
+      return;
+    } catch (error) {
+      console.warn('[moya] Browser preview render failed, falling back to subtitle renderer:', error?.message || error);
+    }
   }
   try {
     await renderViralVideoWithPupCaps(sourcePath, outputPath, overlay);
@@ -2199,6 +2211,672 @@ async function renderViralVideo(sourcePath, outputPath, overlay) {
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+async function renderViralVideoWithBrowserPreview(sourcePath, outputPath, overlay) {
+  const metadata = await probeMedia(sourcePath).catch(() => ({ width: 720, height: 1280, duration: readOverlayDuration(overlay), hasAudio: false }));
+  const canvas = buildViralRenderCanvas(metadata, overlay);
+  const fps = clampNumber(Number(overlay.browserRenderFps) || 24, 12, 30);
+  const safeDuration = Math.max(0.1, Number(canvas.duration) || readOverlayDuration(overlay));
+  const renderOptions = {
+    ...canvas,
+    duration: safeDuration,
+    fps,
+    hasAudio: Boolean(metadata?.hasAudio)
+  };
+  try {
+    await renderBrowserPreviewVideoWithPipe(sourcePath, outputPath, overlay, renderOptions);
+    return;
+  } catch (error) {
+    console.warn('[moya] Browser preview pipe render failed, falling back to PNG frames:', error?.message || error);
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'moya-browser-preview-'));
+  const framesDir = path.join(tempDir, 'frames');
+  await fs.mkdir(framesDir, { recursive: true });
+  try {
+    await renderBrowserPreviewFrames(sourcePath, framesDir, overlay, renderOptions);
+    await encodeBrowserPreviewFrames(sourcePath, outputPath, framesDir, overlay, {
+      duration: renderOptions.duration,
+      fps: renderOptions.fps,
+      width: renderOptions.width,
+      height: renderOptions.height,
+      hasAudio: renderOptions.hasAudio
+    });
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function renderBrowserPreviewVideoWithPipe(sourcePath, outputPath, overlay, canvas) {
+  const width = evenFloor(Number(canvas.width) || 720) || 720;
+  const height = evenFloor(Number(canvas.height) || 1280) || 1280;
+  const fps = Math.max(1, Number(canvas.fps) || 24);
+  const duration = Math.max(0.1, Number(canvas.duration) || readOverlayDuration(overlay));
+  const frameCount = Math.max(1, Math.ceil(duration * fps));
+  const renderWindow = createBrowserPreviewRenderWindow(width, height);
+  let ffmpegProcess = null;
+  try {
+    await prepareBrowserPreviewRenderWindow(renderWindow, sourcePath, overlay, { width, height, duration });
+    const { child, done } = startBrowserPreviewPipeEncoder(sourcePath, outputPath, overlay, {
+      duration,
+      fps,
+      width,
+      height,
+      hasAudio: Boolean(canvas.hasAudio)
+    });
+    ffmpegProcess = child;
+    for (let index = 0; index < frameCount; index += 1) {
+      const time = Math.min(duration - 0.001, index / fps);
+      const image = await captureBrowserPreviewFrame(renderWindow, time, width, height);
+      await writeStreamChunk(child.stdin, image.toBitmap());
+    }
+    child.stdin.end();
+    await done;
+  } catch (error) {
+    if (ffmpegProcess && !ffmpegProcess.killed) {
+      ffmpegProcess.kill('SIGKILL');
+    }
+    throw error;
+  } finally {
+    if (!renderWindow.isDestroyed()) renderWindow.destroy();
+  }
+}
+
+async function renderBrowserPreviewFrames(sourcePath, framesDir, overlay, canvas) {
+  const width = Math.max(1, Number(canvas.width) || 720);
+  const height = Math.max(1, Number(canvas.height) || 1280);
+  const fps = Math.max(1, Number(canvas.fps) || 24);
+  const duration = Math.max(0.1, Number(canvas.duration) || readOverlayDuration(overlay));
+  const frameCount = Math.max(1, Math.ceil(duration * fps));
+  const renderWindow = createBrowserPreviewRenderWindow(width, height);
+  try {
+    await prepareBrowserPreviewRenderWindow(renderWindow, sourcePath, overlay, { width, height, duration });
+    for (let index = 0; index < frameCount; index += 1) {
+      const time = Math.min(duration - 0.001, index / fps);
+      const frameImage = await captureBrowserPreviewFrame(renderWindow, time, width, height);
+      const framePath = path.join(framesDir, `frame-${String(index).padStart(6, '0')}.png`);
+      await fs.writeFile(framePath, frameImage.toPNG());
+    }
+  } finally {
+    if (!renderWindow.isDestroyed()) renderWindow.destroy();
+  }
+}
+
+function createBrowserPreviewRenderWindow(width, height) {
+  return new BrowserWindow({
+    width,
+    height,
+    useContentSize: true,
+    show: false,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#000000',
+    webPreferences: {
+      offscreen: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: false
+    }
+  });
+}
+
+async function prepareBrowserPreviewRenderWindow(renderWindow, sourcePath, overlay, canvas) {
+  const width = Math.max(1, Number(canvas.width) || 720);
+  const height = Math.max(1, Number(canvas.height) || 1280);
+  renderWindow.setContentSize(width, height);
+  renderWindow.webContents.setZoomFactor(1);
+  const html = buildBrowserPreviewRendererHtml(sourcePath, overlay, { width, height, duration: canvas.duration });
+  await renderWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  await renderWindow.webContents.executeJavaScript('window.moyaPreviewReady', true);
+}
+
+async function captureBrowserPreviewFrame(renderWindow, time, width, height) {
+  await renderWindow.webContents.executeJavaScript(`window.renderMoyaPreviewFrame(${JSON.stringify(time)})`, true);
+  const image = await renderWindow.webContents.capturePage({ x: 0, y: 0, width, height });
+  return normalizeBrowserPreviewFrameImage(image, width, height);
+}
+
+function normalizeBrowserPreviewFrameImage(image, width, height) {
+  const size = image.getSize();
+  if (size.width === width && size.height === height) return image;
+  return image.resize({
+    width,
+    height,
+    quality: 'best'
+  });
+}
+
+function startBrowserPreviewPipeEncoder(sourcePath, outputPath, overlay, options) {
+  const duration = Math.max(0.1, Number(options.duration) || readOverlayDuration(overlay));
+  const fps = Math.max(1, Number(options.fps) || 24);
+  const width = evenFloor(Number(options.width) || 720) || 720;
+  const height = evenFloor(Number(options.height) || 1280) || 1280;
+  const effects = collectBrowserPreviewSoundEffects(overlay, duration);
+  const args = [
+    '-y',
+    '-thread_queue_size', '1024',
+    '-f', 'rawvideo',
+    '-pix_fmt', 'bgra',
+    '-s:v', `${width}x${height}`,
+    '-r', String(fps),
+    '-i', 'pipe:0',
+    '-i', sourcePath
+  ];
+  const filters = [];
+  const audioLabels = [];
+  let nextInputIndex = 2;
+  const overlayVideoVolume = Number(overlay.videoVolume);
+  const videoVolume = Number.isFinite(overlayVideoVolume) ? clampNumber(overlayVideoVolume / 100, 0, 1) : 1;
+
+  filters.push('[0:v]setsar=1,format=yuv420p[v]');
+
+  if (options.hasAudio) {
+    filters.push(`[1:a]atrim=duration=${formatFfmpegSeconds(duration)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(videoVolume)}[basea]`);
+  } else {
+    args.push(
+      '-f', 'lavfi',
+      '-t', formatFfmpegSeconds(duration),
+      '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'
+    );
+    filters.push(`[${nextInputIndex}:a]atrim=duration=${formatFfmpegSeconds(duration)},asetpts=PTS-STARTPTS[basea]`);
+    nextInputIndex += 1;
+  }
+  audioLabels.push('[basea]');
+
+  effects.forEach((effect, index) => {
+    args.push('-i', effect.filePath);
+    const inputIndex = nextInputIndex + index;
+    const delayMs = Math.max(0, Math.round(effect.time * 1000));
+    filters.push(`[${inputIndex}:a]aresample=48000,volume=${formatFfmpegGain(effect.gain)},adelay=${delayMs}|${delayMs},atrim=duration=${formatFfmpegSeconds(duration)}[sfx${index}]`);
+    audioLabels.push(`[sfx${index}]`);
+  });
+
+  filters.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,atrim=duration=${formatFfmpegSeconds(duration)},aresample=async=1:first_pts=0[a]`);
+
+  args.push(
+    '-filter_complex', filters.join(';'),
+    '-map', '[v]',
+    '-map', '[a]',
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-crf', '22',
+    '-pix_fmt', 'yuv420p',
+    '-r', String(fps),
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-ar', '48000',
+    '-ac', '2',
+    '-shortest',
+    '-movflags', '+faststart',
+    outputPath
+  );
+
+  const child = spawn(ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+    if (stderr.length > 8000) stderr = stderr.slice(-8000);
+  });
+  const done = new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error((stderr || `ffmpeg exited with code ${code}`).slice(-1200)));
+    });
+  });
+  return { child, done };
+}
+
+function writeStreamChunk(stream, chunk) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      stream.off('error', onError);
+      stream.off('drain', onDrain);
+    };
+    stream.on('error', onError);
+    const flushed = stream.write(chunk, (error) => {
+      if (error) onError(error);
+    });
+    if (flushed) {
+      cleanup();
+      resolve();
+      return;
+    }
+    stream.once('drain', onDrain);
+  });
+}
+
+async function encodeBrowserPreviewFrames(sourcePath, outputPath, framesDir, overlay, options) {
+  const duration = Math.max(0.1, Number(options.duration) || readOverlayDuration(overlay));
+  const fps = Math.max(1, Number(options.fps) || 24);
+  const width = evenFloor(Number(options.width) || 720) || 720;
+  const height = evenFloor(Number(options.height) || 1280) || 1280;
+  const effects = collectBrowserPreviewSoundEffects(overlay, duration);
+  const args = [
+    '-y',
+    '-thread_queue_size', '1024',
+    '-framerate', String(fps),
+    '-i', path.join(framesDir, 'frame-%06d.png'),
+    '-i', sourcePath
+  ];
+  const filters = [];
+  const audioLabels = [];
+  let nextInputIndex = 2;
+  const overlayVideoVolume = Number(overlay.videoVolume);
+  const videoVolume = Number.isFinite(overlayVideoVolume) ? clampNumber(overlayVideoVolume / 100, 0, 1) : 1;
+
+  filters.push(`[0:v]scale=${width}:${height},setsar=1,format=yuv420p[v]`);
+
+  if (options.hasAudio) {
+    filters.push(`[1:a]atrim=duration=${formatFfmpegSeconds(duration)},asetpts=PTS-STARTPTS,volume=${formatFfmpegGain(videoVolume)}[basea]`);
+  } else {
+    args.push(
+      '-f', 'lavfi',
+      '-t', formatFfmpegSeconds(duration),
+      '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000'
+    );
+    filters.push(`[${nextInputIndex}:a]atrim=duration=${formatFfmpegSeconds(duration)},asetpts=PTS-STARTPTS[basea]`);
+    nextInputIndex += 1;
+  }
+  audioLabels.push('[basea]');
+
+  effects.forEach((effect, index) => {
+    args.push('-i', effect.filePath);
+    const inputIndex = nextInputIndex + index;
+    const delayMs = Math.max(0, Math.round(effect.time * 1000));
+    filters.push(`[${inputIndex}:a]aresample=48000,volume=${formatFfmpegGain(effect.gain)},adelay=${delayMs}|${delayMs},atrim=duration=${formatFfmpegSeconds(duration)}[sfx${index}]`);
+    audioLabels.push(`[sfx${index}]`);
+  });
+
+  filters.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,atrim=duration=${formatFfmpegSeconds(duration)},aresample=async=1:first_pts=0[a]`);
+
+  args.push(
+    '-filter_complex', filters.join(';'),
+    '-map', '[v]',
+    '-map', '[a]',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '20',
+    '-pix_fmt', 'yuv420p',
+    '-r', String(fps),
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-ar', '48000',
+    '-ac', '2',
+    '-shortest',
+    '-movflags', '+faststart',
+    outputPath
+  );
+
+  await runProcess(ffmpegPath, args, { timeout: 300000 });
+}
+
+function buildBrowserPreviewRendererHtml(sourcePath, overlay, canvas) {
+  const renderOverlay = buildBrowserPreviewOverlaySnapshot(overlay, canvas);
+  const sourceUrl = pathToFileURL(sourcePath).toString();
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+${buildSubtitleFontFaceCss()}
+html, body { margin: 0; width: ${canvas.width}px; height: ${canvas.height}px; overflow: hidden; background: #000; }
+body { font-family: "Moya Source Han Sans SC", "Microsoft YaHei", sans-serif; }
+.phone { position: relative; width: ${canvas.width}px; height: ${canvas.height}px; overflow: hidden; background: #080809; }
+.source-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: var(--video-fit, cover); transform-origin: 50% 50%; }
+.overlay { position: absolute; inset: 0; pointer-events: none; --s: ${canvas.width / 360}; }
+.overlay::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgb(0 0 0 / 6%), transparent 45%, rgb(0 0 0 / 22%)); }
+.title-layer, .caption-layer { position: absolute; z-index: 2; display: grid; justify-items: center; align-content: center; max-width: 88%; transform: translate(-50%, -50%); text-align: center; }
+.title-layer { gap: 0; width: min(92%, var(--subtitle-title-width)); min-height: var(--subtitle-title-height); }
+.title-layer strong { width: 100%; color: var(--subtitle-title-color); font-family: var(--subtitle-title-font); font-size: var(--subtitle-title-size); font-weight: 900; line-height: 1.05; white-space: pre-wrap; text-shadow: calc(1.5px * var(--s)) 0 0 var(--subtitle-title-stroke), calc(-1.5px * var(--s)) 0 0 var(--subtitle-title-stroke), 0 calc(1.5px * var(--s)) 0 var(--subtitle-title-stroke), 0 calc(-1.5px * var(--s)) 0 var(--subtitle-title-stroke), calc(1.5px * var(--s)) calc(1.5px * var(--s)) 0 var(--subtitle-title-stroke), calc(-1.5px * var(--s)) calc(1.5px * var(--s)) 0 var(--subtitle-title-stroke), calc(2.5px * var(--s)) calc(3.5px * var(--s)) 0 var(--subtitle-title-stroke), 0 calc(3px * var(--s)) calc(7px * var(--s)) rgb(0 0 0 / 34%), 0 calc(7px * var(--s)) calc(13px * var(--s)) rgb(0 0 0 / 30%); -webkit-text-stroke: 0; }
+.caption-layer { gap: calc(2px * var(--s)); min-width: 0; width: min(92%, var(--subtitle-caption-width)); min-height: var(--subtitle-caption-height); color: var(--subtitle-title-color); font-family: var(--subtitle-caption-font); font-size: var(--subtitle-caption-size); font-weight: 900; line-height: 1.06; }
+.caption-primary, .caption-translation { display: block; max-width: 100%; word-break: break-word; color: var(--subtitle-title-color); text-shadow: 0 calc(3px * var(--s)) calc(7px * var(--s)) rgb(0 0 0 / 34%), 0 calc(7px * var(--s)) calc(13px * var(--s)) rgb(0 0 0 / 30%); }
+.caption-translation { margin-top: 0; font-size: 0.56em; font-weight: 900; letter-spacing: 0; }
+.caption-layer mark { display: inline-block; margin: 0 calc(1px * var(--s)); padding: 0; border-radius: 0; background: transparent; color: inherit; text-shadow: inherit; }
+.caption-token { display: inline-block; will-change: transform, filter, opacity; }
+.overlay.premium-red-bilingual .title-layer { width: min(92%, var(--subtitle-title-width)); }
+.overlay.premium-red-bilingual .title-layer strong { width: 100%; color: #ffffff; font-family: var(--subtitle-title-font); font-weight: 1000; letter-spacing: 0; line-height: 1.05; text-align: center; }
+.overlay.premium-red-bilingual .caption-layer { font-family: var(--subtitle-caption-font); }
+</style>
+</head>
+<body>
+<div class="phone">
+  <video class="source-video" muted preload="auto" playsinline></video>
+  <div class="overlay"></div>
+</div>
+<script>
+const sourceUrl = ${JSON.stringify(sourceUrl)};
+const data = ${JSON.stringify(renderOverlay)};
+const video = document.querySelector('.source-video');
+const overlay = document.querySelector('.overlay');
+video.src = sourceUrl;
+video.style.setProperty('--video-fit', data.videoFit);
+overlay.className = 'overlay ' + data.templateKey;
+for (const [key, value] of Object.entries(data.vars)) overlay.style.setProperty(key, value);
+const titleLayer = document.createElement('div');
+titleLayer.className = 'title-layer';
+titleLayer.style.left = data.titlePosition.x + '%';
+titleLayer.style.top = data.titlePosition.y + '%';
+for (const line of data.titleLines) {
+  const strong = document.createElement('strong');
+  strong.textContent = line;
+  titleLayer.appendChild(strong);
+}
+const captionLayer = document.createElement('div');
+captionLayer.className = 'caption-layer';
+captionLayer.style.left = data.captionPosition.x + '%';
+captionLayer.style.top = data.captionPosition.y + '%';
+const primaryEl = document.createElement('span');
+primaryEl.className = 'caption-primary';
+const translationEl = document.createElement('span');
+translationEl.className = 'caption-translation';
+captionLayer.append(primaryEl, translationEl);
+overlay.append(titleLayer, captionLayer);
+let activeCaptionKey = '';
+
+function seekVideo(time) {
+  return new Promise((resolve, reject) => {
+    const target = Math.max(0, Math.min(Math.max(0, video.duration || data.duration) - 0.001, time));
+    const done = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+    if (Math.abs((video.currentTime || 0) - target) < 0.006 && video.readyState >= 2) {
+      done();
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      video.removeEventListener('seeked', onSeeked);
+      reject(new Error('video seek timeout'));
+    }, 8000);
+    const onSeeked = () => {
+      window.clearTimeout(timeout);
+      video.removeEventListener('seeked', onSeeked);
+      done();
+    };
+    video.addEventListener('seeked', onSeeked);
+    video.currentTime = target;
+  });
+}
+
+function splitByKeywords(text, keywords) {
+  const safe = keywords.filter((item) => item && item.length >= 2);
+  if (!safe.length) return [{ text, highlighted: false }];
+  const escaped = safe.map((item) => item.replace(/[\\^$.*+?()[\\]{}|]/g, '\\\\$&')).filter(Boolean);
+  if (!escaped.length) return [{ text, highlighted: false }];
+  const matcher = new RegExp('(' + escaped.join('|') + ')', 'gi');
+  return String(text || '').split(matcher).filter(Boolean).map((part) => ({
+    text: part,
+    highlighted: safe.some((item) => item.toLowerCase() === part.toLowerCase())
+  }));
+}
+
+function renderCaptionText(parent, text, keywords, delayOffset) {
+  parent.textContent = '';
+  let tokenIndex = delayOffset || 0;
+  for (const part of splitByKeywords(text, keywords)) {
+    const container = part.highlighted ? document.createElement('mark') : document.createDocumentFragment();
+    for (const char of Array.from(part.text || '')) {
+      if (char === '\\n') {
+        container.appendChild(document.createElement('br'));
+        continue;
+      }
+      const span = document.createElement('span');
+      span.className = 'caption-token';
+      span.dataset.index = String(tokenIndex++);
+      span.textContent = char === ' ' ? '\\u00a0' : char;
+      container.appendChild(span);
+    }
+    parent.appendChild(container);
+  }
+}
+
+function applyTokenAnimation(elapsed) {
+  const entrance = data.captionEntrance;
+  const tokens = captionLayer.querySelectorAll('.caption-token');
+  tokens.forEach((token) => {
+    const index = Number(token.dataset.index || 0);
+    const delay = index * ({ 'blur-reveal': 0.024, fade: 0.018, rise: 0.022, pop: 0.020, karaoke: 0.034 }[entrance] || 0);
+    const duration = ({ 'blur-reveal': 0.560, fade: 0.420, rise: 0.520, pop: 0.520, karaoke: 0.880 }[entrance] || 0.001);
+    const progress = Math.max(0, Math.min(1, (elapsed - delay) / duration));
+    if (entrance === 'none') {
+      token.style.opacity = '1';
+      token.style.filter = 'none';
+      token.style.transform = 'none';
+    } else if (entrance === 'blur-reveal') {
+      token.style.opacity = String(progress < 0.54 ? progress * 1.33 : 1);
+      token.style.filter = 'blur(' + ((1 - progress) * 10).toFixed(2) + 'px)';
+      token.style.transform = 'translateY(' + ((1 - progress) * 10).toFixed(2) + 'px)';
+    } else if (entrance === 'fade') {
+      token.style.opacity = String(progress);
+      token.style.filter = 'none';
+      token.style.transform = 'none';
+    } else if (entrance === 'rise') {
+      token.style.opacity = String(progress < 0.64 ? progress / 0.64 * 0.86 : 1);
+      token.style.filter = 'none';
+      token.style.transform = 'translateY(' + ((1 - progress) * 14).toFixed(2) + 'px)';
+    } else if (entrance === 'pop') {
+      const scale = progress < 0.58 ? 0.76 + (progress / 0.58) * 0.36 : 1.12 - ((progress - 0.58) / 0.42) * 0.12;
+      token.style.opacity = String(progress > 0 ? 1 : 0);
+      token.style.filter = 'none';
+      token.style.transform = 'scale(' + scale.toFixed(3) + ')';
+      token.style.transformOrigin = '50% 70%';
+    } else if (entrance === 'karaoke') {
+      const scale = progress < 0.42 ? 1 + (progress / 0.42) * 0.06 : 1.06 - ((progress - 0.42) / 0.58) * 0.06;
+      const bright = progress < 0.42 ? 0.82 + (progress / 0.42) * 0.50 : 1.32 - ((progress - 0.42) / 0.58) * 0.32;
+      token.style.opacity = String(0.42 + progress * 0.58);
+      token.style.filter = 'brightness(' + bright.toFixed(3) + ')';
+      token.style.transform = 'translateY(' + ((1 - progress) * 2 - (progress < 0.42 ? progress * 5 : 0)).toFixed(2) + 'px) scale(' + scale.toFixed(3) + ')';
+    }
+  });
+}
+
+function updateOverlay(time) {
+  titleLayer.style.display = time <= data.titleEnd ? 'grid' : 'none';
+  const caption = data.captions.find((item) => time >= item.start && time < item.end);
+  if (!caption) {
+    activeCaptionKey = '';
+    captionLayer.style.display = 'none';
+    return;
+  }
+  captionLayer.style.display = 'grid';
+  if (activeCaptionKey !== caption.key) {
+    activeCaptionKey = caption.key;
+    renderCaptionText(primaryEl, caption.text, caption.keywords, 0);
+    if (data.isBilingual && caption.translation) {
+      translationEl.style.display = 'block';
+      renderCaptionText(translationEl, caption.translation, [], 5);
+    } else {
+      translationEl.textContent = '';
+      translationEl.style.display = 'none';
+    }
+  }
+  applyTokenAnimation(Math.max(0, time - caption.start));
+}
+
+function updateVideoZoom(time) {
+  const active = data.videoZoomRanges.find((range) => time >= range.start && time < range.end);
+  video.style.transform = 'scale(' + (active ? active.scale : 1) + ')';
+}
+
+window.renderMoyaPreviewFrame = async (time) => {
+  await seekVideo(time);
+  updateVideoZoom(time);
+  updateOverlay(time);
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  return true;
+};
+window.moyaPreviewReady = new Promise((resolve, reject) => {
+  video.addEventListener('loadedmetadata', () => resolve(true), { once: true });
+  video.addEventListener('error', () => reject(new Error('video load failed')), { once: true });
+});
+</script>
+</body>
+</html>`;
+}
+
+function buildBrowserPreviewOverlaySnapshot(overlay, canvas) {
+  const scale = Math.max(1, (Number(canvas.width) || 720) / 360);
+  const duration = Math.max(0.1, Number(canvas.duration) || readOverlayDuration(overlay));
+  const captions = readBrowserPreviewCaptions(overlay, duration);
+  const titleStyle = overlay.titleTextStyle || {};
+  const captionStyle = overlay.captionTextStyle || {};
+  const theme = readOverlayTheme(overlay);
+  return {
+    duration,
+    templateKey: String(overlay.templateKey || ''),
+    videoFit: ['contain', 'fill'].includes(overlay.previewVideoFit) ? overlay.previewVideoFit : 'cover',
+    titleLines: String(overlay.hook || '').split(/\r?\n/).filter(Boolean),
+    titleEnd: readOverlayTitleEnd(overlay, duration),
+    titlePosition: overlay.titlePosition || { x: 50, y: 18 },
+    captionPosition: overlay.captionPosition || { x: 50, y: 78 },
+    captionEntrance: normalizeCaptionEntrance(overlay.captionEntrance),
+    isBilingual: isOverlayBilingual(overlay, captions),
+    videoZoomRanges: readOverlayVideoZoomRanges(overlay.videoZoomRanges),
+    captions,
+    vars: {
+      '--subtitle-title-color': theme.titleColor,
+      '--subtitle-title-stroke': theme.titleStroke,
+      '--subtitle-caption-color': theme.captionColor,
+      '--subtitle-caption-shadow': theme.captionShadow,
+      '--subtitle-keyword-bg': theme.keywordBackground,
+      '--subtitle-keyword-color': theme.keywordColor,
+      '--subtitle-card-accent': theme.accent,
+      '--subtitle-title-size': `${scaleCssNumber(titleStyle.fontSize, 24, scale)}px`,
+      '--subtitle-title-font': String(titleStyle.fontFamily || '"Moya Smiley Sans", "Microsoft YaHei", sans-serif'),
+      '--subtitle-title-width': `${scaleCssNumber(titleStyle.width, 320, scale)}px`,
+      '--subtitle-title-height': `${scaleCssNumber(titleStyle.height, 80, scale)}px`,
+      '--subtitle-caption-size': `${scaleCssNumber(captionStyle.fontSize, 16, scale)}px`,
+      '--subtitle-caption-font': String(captionStyle.fontFamily || '"Moya Resource Han Rounded CN", "Microsoft YaHei", sans-serif'),
+      '--subtitle-caption-width': `${scaleCssNumber(captionStyle.width, 300, scale)}px`,
+      '--subtitle-caption-height': `${scaleCssNumber(captionStyle.height, 58, scale)}px`
+    }
+  };
+}
+
+function readBrowserPreviewCaptions(overlay, duration) {
+  const rawCaptions = Array.isArray(overlay.subtitleSegments) && overlay.subtitleSegments.length
+    ? overlay.subtitleSegments
+    : [{ time: `00:00:00 - ${formatAssTime(duration)}`, text: overlay.name || '' }];
+  return rawCaptions.map((caption, index) => {
+    const range = parseCaptionRange(caption.time, duration);
+    return {
+      key: `${index}:${range.start}:${range.end}`,
+      start: range.start,
+      end: range.end,
+      text: String(caption.text || ''),
+      translation: String(caption.translation || ''),
+      keywords: buildOverlayKeywords(overlay.keywords || '', caption.text || '')
+    };
+  });
+}
+
+function scaleCssNumber(value, fallback, scale) {
+  const numeric = Number(value);
+  return Math.round((Number.isFinite(numeric) ? numeric : fallback) * scale);
+}
+
+function collectBrowserPreviewSoundEffects(overlay, duration) {
+  if (overlay.soundFx === false) return [];
+  const captions = readBrowserPreviewCaptions(overlay, duration);
+  const events = [];
+  const openingPath = resolveSubtitleSoundEffectPath('opening', overlay.openingSoundEffect);
+  if (openingPath) events.push({ time: 0, filePath: openingPath, gain: 0.74 });
+
+  const transitionPath = resolveSubtitleSoundEffectPath('transition', overlay.transitionSoundEffect);
+  if (transitionPath) {
+    let lastTransitionAt = -Infinity;
+    for (const range of readOverlayVideoZoomRanges(overlay.videoZoomRanges)) {
+      if (range.start - lastTransitionAt >= 0.7) {
+        events.push({ time: range.start, filePath: transitionPath, gain: 0.72 });
+        lastTransitionAt = range.start;
+      }
+    }
+    for (let index = 1; index < captions.length; index += 1) {
+      if (captions[index].start - captions[index - 1].end >= 0.25 && captions[index].start - lastTransitionAt >= 1.1) {
+        events.push({ time: captions[index].start, filePath: transitionPath, gain: 0.68 });
+        lastTransitionAt = captions[index].start;
+      }
+    }
+  }
+
+  const captionPath = resolveSubtitleSoundEffectPath('caption', overlay.captionSoundEffect);
+  const rhythm = ['off', 'recommended', 'boost', 'all'].includes(String(overlay.captionSoundRhythm)) ? String(overlay.captionSoundRhythm) : 'recommended';
+  if (captionPath && rhythm !== 'off') {
+    let lastCaptionAt = -Infinity;
+    captions.forEach((caption, index) => {
+      const minGap = rhythm === 'all' ? 0.45 : rhythm === 'boost' ? 0.9 : 1.5;
+      if (caption.start - lastCaptionAt < minGap) return;
+      if (!shouldScheduleBrowserCaptionSound(caption, index, rhythm, overlay.keywords || '')) return;
+      events.push({ time: caption.start, filePath: captionPath, gain: 0.68 });
+      lastCaptionAt = caption.start;
+    });
+  }
+
+  return events
+    .filter((event) => event.time >= 0 && event.time < duration && fsSync.existsSync(event.filePath))
+    .sort((left, right) => left.time - right.time)
+    .slice(0, 64);
+}
+
+function shouldScheduleBrowserCaptionSound(caption, index, rhythm, keywords) {
+  if (rhythm === 'all') return true;
+  if (index === 0 && caption.start <= 2.4) return true;
+  const text = `${caption.text || ''} ${caption.translation || ''}`;
+  const keywordHit = normalizeBrowserSoundKeywords(keywords).some((keyword) => text.includes(keyword));
+  const emphasisHit = /[0-9$%]/.test(text);
+  if (rhythm === 'recommended') return keywordHit || emphasisHit;
+  return keywordHit || emphasisHit || index % 2 === 0;
+}
+
+function normalizeBrowserSoundKeywords(keywords) {
+  return String(keywords || '').split(/[,，、\s]+/g).map((keyword) => keyword.trim()).filter((keyword) => keyword.length >= 2);
+}
+
+function resolveSubtitleSoundEffectPath(group, effect) {
+  const fileName = subtitleSoundEffectFileName(group, effect);
+  if (!fileName) return '';
+  const candidates = [
+    path.join(__dirname, '../src/assets/sfx', fileName),
+    path.join(__dirname, '../dist/assets/sfx', fileName),
+    process.resourcesPath ? path.join(process.resourcesPath, 'sfx', fileName) : ''
+  ].filter(Boolean);
+  return candidates.find((candidate) => fsSync.existsSync(candidate)) || '';
+}
+
+function subtitleSoundEffectFileName(group, effect) {
+  const opening = {
+    'pop-soft': 'opening-pop-soft.ogg',
+    'pop-light': 'opening-pop-light.ogg',
+    'hit-light': 'opening-hit-light.ogg',
+    'whoosh-gentle': 'opening-whoosh-gentle.wav'
+  };
+  const transition = {
+    'whoosh-fast': 'transition-whoosh-fast.wav',
+    'whoosh-short': 'transition-whoosh-short.wav',
+    'glitch-soft': 'transition-glitch-soft.ogg',
+    'glitch-sci-fi': 'transition-glitch-sci-fi.ogg'
+  };
+  const caption = {
+    'soft-pop': 'emphasis-soft-pop.ogg',
+    'bright-ding': 'emphasis-bright-ding.ogg',
+    'click-clack': 'emphasis-click-clack.ogg',
+    'tech-beep': 'emphasis-tech-beep.ogg'
+  };
+  if (group === 'opening') return opening[effect] || '';
+  if (group === 'transition') return transition[effect] || '';
+  if (group === 'caption') return caption[effect] || '';
+  return '';
 }
 
 async function renderFissionMix(request = {}) {

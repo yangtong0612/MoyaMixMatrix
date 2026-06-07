@@ -16,6 +16,8 @@ export function buildSubtitleOverlay(input: {
   title: string;
   keywords: string;
   captionEntrance?: SubtitleCaptionEntrance;
+  soundFx?: boolean;
+  videoVolume?: number;
   openingSoundEffect?: SubtitleOpeningSoundEffect;
   transitionSoundEffect?: SubtitleTransitionSoundEffect;
   captionSoundEffect?: SubtitleCaptionSoundEffect;
@@ -35,6 +37,8 @@ export function buildSubtitleOverlay(input: {
     captionTextStyle: input.template.captionTextStyle,
     previewVideoFit: 'cover',
     captionEntrance: input.captionEntrance || 'none',
+    soundFx: input.soundFx ?? true,
+    videoVolume: clampPercent(input.videoVolume, 100),
     openingSoundEffect: input.openingSoundEffect || 'none',
     transitionSoundEffect: input.transitionSoundEffect || 'none',
     captionSoundEffect: input.captionSoundEffect || 'none',
@@ -47,6 +51,12 @@ export function buildSubtitleOverlay(input: {
       translation: input.template.bilingual ? caption.translation || buildCaptionTranslation(caption.text) : undefined
     }))
   };
+}
+
+function clampPercent(value: number | undefined, fallback: number) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(100, numeric));
 }
 
 function normalizeVideoZoomRanges(ranges?: SubtitleTemplateVideoZoomRange[]) {

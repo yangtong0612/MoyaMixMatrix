@@ -824,6 +824,8 @@ export function SubtitleTemplatePage() {
       title: displayedTitle,
       keywords,
       captionEntrance,
+      soundFx: soundSettings.soundFx,
+      videoVolume: soundSettings.videoVolume,
       openingSoundEffect: soundSettings.openingSoundEffect,
       transitionSoundEffect: soundSettings.transitionSoundEffect,
       captionSoundEffect: soundSettings.captionSoundEffect,

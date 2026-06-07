@@ -78,6 +78,8 @@ export interface SubtitleTemplateOverlay {
   captionTextStyle: SubtitleTemplateTextStyle;
   previewVideoFit: 'cover' | 'contain' | 'fill';
   captionEntrance: SubtitleCaptionEntrance;
+  soundFx: boolean;
+  videoVolume: number;
   openingSoundEffect: SubtitleOpeningSoundEffect;
   transitionSoundEffect: SubtitleTransitionSoundEffect;
   captionSoundEffect: SubtitleCaptionSoundEffect;

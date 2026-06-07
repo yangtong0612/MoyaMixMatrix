@@ -66,6 +66,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "src/assets/sfx",
+        "to": "sfx",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "directories": {
